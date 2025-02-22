@@ -5,4 +5,8 @@ pub const Side = enum(u8) {
     top, // +y
     north, // -z
     south, // +z
+
+    pub inline fn int(self: Side) comptime_int {
+        return @intFromEnum(self);
+    }
 };

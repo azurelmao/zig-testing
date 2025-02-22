@@ -1,4 +1,5 @@
 const std = @import("std");
+const Side = @import("side.zig").Side;
 
 pub const Block = enum(u8) {
     const Self = @This();
@@ -197,7 +198,7 @@ pub const Block = enum(u8) {
     pub const SQUARE = expr: {
         var faces: [6][]const Vertex = undefined;
 
-        faces[0] = &.{
+        faces[Side.west.int()] = &.{
             .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 0 },
             .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 0 },
             .{ .x = 0, .y = 0, .z = 0, .u = 0, .v = 1 },
@@ -206,7 +207,7 @@ pub const Block = enum(u8) {
             .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 0 },
         };
 
-        faces[1] = &.{
+        faces[Side.east.int()] = &.{
             .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 1 },
             .{ .x = 1, .y = 1, .z = 0, .u = 1, .v = 0 },
             .{ .x = 1, .y = 1, .z = 1, .u = 0, .v = 0 },
@@ -215,7 +216,7 @@ pub const Block = enum(u8) {
             .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 1 },
         };
 
-        faces[2] = &.{
+        faces[Side.bottom.int()] = &.{
             .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
             .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 0 },
             .{ .x = 1, .y = 0, .z = 1, .u = 0, .v = 0 },
@@ -224,7 +225,7 @@ pub const Block = enum(u8) {
             .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
         };
 
-        faces[3] = &.{
+        faces[Side.top.int()] = &.{
             .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
             .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
             .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 1 },
@@ -233,7 +234,7 @@ pub const Block = enum(u8) {
             .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
         };
 
-        faces[4] = &.{
+        faces[Side.north.int()] = &.{
             .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
             .{ .x = 0, .y = 1, .z = 0, .u = 1, .v = 0 },
             .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
@@ -242,7 +243,7 @@ pub const Block = enum(u8) {
             .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
         };
 
-        faces[5] = &.{
+        faces[Side.south.int()] = &.{
             .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
             .{ .x = 0, .y = 1, .z = 1, .u = 0, .v = 0 },
             .{ .x = 0, .y = 0, .z = 1, .u = 0, .v = 1 },
