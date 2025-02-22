@@ -168,59 +168,6 @@ fn debugCallback(source: gl.@"enum", @"type": gl.@"enum", id: gl.uint, severity:
     }
 }
 
-const CHUNK_DISTANCE = 32;
-
-fn generateChunk(allocator: std.mem.Allocator, rand: std.Random, chunk_x_: usize, chunk_z_: usize) !Chunk {
-    const chunk_x = @as(i16, @intCast(chunk_x_)) - CHUNK_DISTANCE;
-    const chunk_z = @as(i16, @intCast(chunk_z_)) - CHUNK_DISTANCE;
-
-    var additional_height: u5 = 0;
-    if (chunk_x_ == (CHUNK_DISTANCE * 2 - 1) or chunk_z_ == (CHUNK_DISTANCE * 2 - 1)) {
-        additional_height = 16;
-    } else if (chunk_x_ == 0 or chunk_z_ == 0) {
-        additional_height = 24;
-    }
-
-    const chunk = try Chunk.new(allocator, .{ .x = chunk_x, .y = 0, .z = chunk_z }, .air);
-
-    for (0..Chunk.Size) |x_| {
-        for (0..Chunk.Size) |z_| {
-            const x: u5 = @intCast(x_);
-            const z: u5 = @intCast(z_);
-
-            const height = rand.intRangeAtMost(u5, 1, 7) + additional_height;
-
-            for (0..height) |y_| {
-                const y: u5 = @intCast(y_);
-
-                const block: Block = if (y == height - 1) .grass else .stone;
-                chunk.setBlock(.{ .x = x, .y = y, .z = z }, block);
-            }
-
-            if (height < 5) {
-                for (1..5) |y_| {
-                    const y: u5 = @intCast(y_);
-
-                    if (chunk.getBlock(.{ .x = x, .y = y, .z = z }) == .air) {
-                        chunk.setBlock(.{ .x = x, .y = y, .z = z }, .water);
-                    }
-                }
-            }
-        }
-    }
-
-    return chunk;
-}
-
-fn generateChunks(allocator: std.mem.Allocator, rand: std.Random, chunks: *std.AutoHashMap(Chunk.Pos, Chunk)) !void {
-    for (0..CHUNK_DISTANCE * 2) |chunk_x_| {
-        for (0..CHUNK_DISTANCE * 2) |chunk_z_| {
-            const chunk = try generateChunk(allocator, rand, chunk_x_, chunk_z_);
-            try chunks.put(chunk.pos, chunk);
-        }
-    }
-}
-
 const DrawArraysIndirectCommand = packed struct {
     count: gl.uint,
     instance_count: gl.uint,
@@ -601,7 +548,7 @@ pub fn main() !void {
     var chunks = std.AutoHashMap(Chunk.Pos, Chunk).init(allocator);
 
     debug_timer.reset();
-    try generateChunks(allocator, rand, &chunks);
+    try Chunk.generateChunks(allocator, rand, &chunks);
 
     var debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Generating chunks done. {d} s", .{debug_time});

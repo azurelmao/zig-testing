@@ -61,3 +61,56 @@ pub fn getBlock(self: Self, pos: LocalPos) Block {
 pub fn setBlock(self: Self, pos: LocalPos, block: Block) void {
     self.blocks[pos.index()] = block;
 }
+
+const CHUNK_DISTANCE = 32;
+
+fn generateChunks(allocator: std.mem.Allocator, rand: std.Random, chunks: *std.AutoHashMap(Pos, Self)) !void {
+    for (0..CHUNK_DISTANCE * 2) |chunk_x_| {
+        for (0..CHUNK_DISTANCE * 2) |chunk_z_| {
+            const chunk = try generateChunk(allocator, rand, chunk_x_, chunk_z_);
+            try chunks.put(chunk.pos, chunk);
+        }
+    }
+}
+
+fn generateChunk(allocator: std.mem.Allocator, rand: std.Random, chunk_x_: usize, chunk_z_: usize) !Self {
+    const chunk_x = @as(i16, @intCast(chunk_x_)) - CHUNK_DISTANCE;
+    const chunk_z = @as(i16, @intCast(chunk_z_)) - CHUNK_DISTANCE;
+
+    var additional_height: u5 = 0;
+    if (chunk_x_ == (CHUNK_DISTANCE * 2 - 1) or chunk_z_ == (CHUNK_DISTANCE * 2 - 1)) {
+        additional_height = 16;
+    } else if (chunk_x_ == 0 or chunk_z_ == 0) {
+        additional_height = 24;
+    }
+
+    const chunk = try new(allocator, .{ .x = chunk_x, .y = 0, .z = chunk_z }, .air);
+
+    for (0..Size) |x_| {
+        for (0..Size) |z_| {
+            const x: u5 = @intCast(x_);
+            const z: u5 = @intCast(z_);
+
+            const height = rand.intRangeAtMost(u5, 1, 7) + additional_height;
+
+            for (0..height) |y_| {
+                const y: u5 = @intCast(y_);
+
+                const block: Block = if (y == height - 1) .grass else .stone;
+                chunk.setBlock(.{ .x = x, .y = y, .z = z }, block);
+            }
+
+            if (height < 5) {
+                for (1..5) |y_| {
+                    const y: u5 = @intCast(y_);
+
+                    if (chunk.getBlock(.{ .x = x, .y = y, .z = z }) == .air) {
+                        chunk.setBlock(.{ .x = x, .y = y, .z = z }, .water);
+                    }
+                }
+            }
+        }
+    }
+
+    return chunk;
+}
