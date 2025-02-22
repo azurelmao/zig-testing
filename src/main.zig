@@ -11,7 +11,6 @@ const mesh = @import("mesh.zig");
 const ShaderProgram = @import("ShaderProgram.zig");
 const Matrix4x4f = @import("Matrix4x4f.zig");
 const Vec3f = @import("vec3f.zig").Vec3f;
-const model = @import("model.zig");
 
 const Texture2D = @import("Texture2D.zig");
 const TextureArray2D = @import("TextureArray2D.zig");
@@ -417,114 +416,6 @@ fn uploadCommandBuffers(chunk_mesh_layers: ChunkMeshLayers) void {
     }
 }
 
-const VertexIndices = struct {
-    west: u32,
-    east: u32,
-    bottom: u32,
-    top: u32,
-    north: u32,
-    south: u32,
-};
-
-fn populateVertexBuffer(vertex_buffer: *std.ArrayList(model.Vertex), model_id_to_vertex_indices: *std.AutoHashMap(model.ModelId, VertexIndices)) !void {
-    // for all models
-    inline for (.{model.SQUARE}) |block_model| {
-        var vertex_indices: VertexIndices = undefined;
-
-        vertex_indices.west = @intCast(vertex_buffer.items.len);
-        try vertex_buffer.appendSlice(block_model.west);
-
-        vertex_indices.east = @intCast(vertex_buffer.items.len);
-        try vertex_buffer.appendSlice(block_model.east);
-
-        vertex_indices.bottom = @intCast(vertex_buffer.items.len);
-        try vertex_buffer.appendSlice(block_model.bottom);
-
-        vertex_indices.top = @intCast(vertex_buffer.items.len);
-        try vertex_buffer.appendSlice(block_model.top);
-
-        vertex_indices.north = @intCast(vertex_buffer.items.len);
-        try vertex_buffer.appendSlice(block_model.north);
-
-        vertex_indices.south = @intCast(vertex_buffer.items.len);
-        try vertex_buffer.appendSlice(block_model.south);
-
-        try model_id_to_vertex_indices.put(block_model.id, vertex_indices);
-    }
-}
-
-fn populateVertexIdxAndTextureIdxBuffer(model_id_to_vertex_indices: std.AutoHashMap(model.ModelId, VertexIndices), vertex_idx_and_texture_idx_buffer: *std.ArrayList(model.VertexIdxAndTextureIdx), block_to_face_indices: *std.AutoHashMap(Block, mesh.FaceIndices)) !void {
-    var face_idx: u17 = 0;
-    inline for (Block.blocks_with_a_model) |block| {
-        const block_model = block.getModel();
-        const texture_idx = block.getTextureIdx();
-        const vertex_indices = model_id_to_vertex_indices.get(block_model.id) orelse std.debug.panic("Should be impossible", .{});
-        var face_indices: mesh.FaceIndices = undefined;
-
-        {
-            face_indices.west = face_idx;
-            face_idx += 1;
-            const vertex_idx_and_texture_idx = model.VertexIdxAndTextureIdx{
-                .vertex_idx = vertex_indices.west,
-                .texture_idx = texture_idx,
-            };
-            try vertex_idx_and_texture_idx_buffer.append(vertex_idx_and_texture_idx);
-        }
-
-        {
-            face_indices.east = face_idx;
-            face_idx += 1;
-            const vertex_idx_and_texture_idx = model.VertexIdxAndTextureIdx{
-                .vertex_idx = vertex_indices.east,
-                .texture_idx = texture_idx,
-            };
-            try vertex_idx_and_texture_idx_buffer.append(vertex_idx_and_texture_idx);
-        }
-
-        {
-            face_indices.bottom = face_idx;
-            face_idx += 1;
-            const vertex_idx_and_texture_idx = model.VertexIdxAndTextureIdx{
-                .vertex_idx = vertex_indices.bottom,
-                .texture_idx = texture_idx,
-            };
-            try vertex_idx_and_texture_idx_buffer.append(vertex_idx_and_texture_idx);
-        }
-
-        {
-            face_indices.top = face_idx;
-            face_idx += 1;
-            const vertex_idx_and_texture_idx = model.VertexIdxAndTextureIdx{
-                .vertex_idx = vertex_indices.top,
-                .texture_idx = texture_idx,
-            };
-            try vertex_idx_and_texture_idx_buffer.append(vertex_idx_and_texture_idx);
-        }
-
-        {
-            face_indices.north = face_idx;
-            face_idx += 1;
-            const vertex_idx_and_texture_idx = model.VertexIdxAndTextureIdx{
-                .vertex_idx = vertex_indices.north,
-                .texture_idx = texture_idx,
-            };
-            try vertex_idx_and_texture_idx_buffer.append(vertex_idx_and_texture_idx);
-        }
-
-        {
-            face_indices.south = face_idx;
-            face_idx += 1;
-            const vertex_idx_and_texture_idx = model.VertexIdxAndTextureIdx{
-                .vertex_idx = vertex_indices.south,
-                .texture_idx = texture_idx,
-            };
-            try vertex_idx_and_texture_idx_buffer.append(vertex_idx_and_texture_idx);
-        }
-
-        try block_to_face_indices.put(block, face_indices);
-    }
-}
-
 fn ShaderStorageBuffer(comptime T: type) type {
     return struct {
         buffer: std.ArrayList(T),
@@ -543,13 +434,13 @@ pub const ChunkMeshBuffers = struct {
     const Self = @This();
 
     len: std.ArrayList(gl.uint),
-    mesh: ShaderStorageBuffer(mesh.LocalPosAndFaceIdx),
+    mesh: ShaderStorageBuffer(mesh.LocalPosAndModelIdx),
     command: ShaderStorageBuffer(DrawArraysIndirectCommand),
 
     pub fn new(allocator: std.mem.Allocator) Self {
         return .{
             .len = std.ArrayList(gl.uint).init(allocator),
-            .mesh = ShaderStorageBuffer(mesh.LocalPosAndFaceIdx).new(allocator),
+            .mesh = ShaderStorageBuffer(mesh.LocalPosAndModelIdx).new(allocator),
             .command = ShaderStorageBuffer(DrawArraysIndirectCommand).new(allocator),
         };
     }
@@ -576,13 +467,13 @@ pub const ChunkMeshLayers = struct {
 pub const SingleChunkMeshFaces = struct {
     const Self = @This();
 
-    faces: [6]std.ArrayList(mesh.LocalPosAndFaceIdx),
+    faces: [6]std.ArrayList(mesh.LocalPosAndModelIdx),
 
     pub fn new(allocator: std.mem.Allocator) Self {
-        var faces: [6]std.ArrayList(mesh.LocalPosAndFaceIdx) = undefined;
+        var faces: [6]std.ArrayList(mesh.LocalPosAndModelIdx) = undefined;
 
         for (0..6) |face_idx| {
-            faces[face_idx] = std.ArrayList(mesh.LocalPosAndFaceIdx).init(allocator);
+            faces[face_idx] = std.ArrayList(mesh.LocalPosAndModelIdx).init(allocator);
         }
 
         return .{ .faces = faces };
@@ -605,7 +496,7 @@ pub const SingleChunkMeshLayers = struct {
     }
 };
 
-fn populateChunkMeshLayers(allocator: std.mem.Allocator, chunks: std.AutoHashMap(Chunk.Pos, Chunk), block_to_face_indices: std.AutoHashMap(Block, mesh.FaceIndices), chunk_mesh_layers: *ChunkMeshLayers) !void {
+fn populateChunkMeshLayers(allocator: std.mem.Allocator, chunks: std.AutoHashMap(Chunk.Pos, Chunk), chunk_mesh_layers: *ChunkMeshLayers) !void {
     var single_chunk_mesh_layers = SingleChunkMeshLayers.new(allocator);
 
     var chunk_iter = chunks.valueIterator();
@@ -625,7 +516,7 @@ fn populateChunkMeshLayers(allocator: std.mem.Allocator, chunks: std.AutoHashMap
 
         try chunk_mesh_layers.pos.buffer.append(pos.toVec3f());
 
-        try mesh.generate(&single_chunk_mesh_layers, block_to_face_indices, chunk.*, &neighbors);
+        try mesh.generate(&single_chunk_mesh_layers, chunk.*, &neighbors);
 
         inline for (0..2) |layer_idx| {
             const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
@@ -723,31 +614,12 @@ pub fn main() !void {
     window.setFramebufferSizeCallback(framebufferSizeCallback);
     window.setKeyCallback(keyCallback);
 
-    var cobble_image = try zstbi.Image.loadFromFile("assets/textures/cobble.png", 0);
-    defer cobble_image.deinit();
-
-    var grass_image = try zstbi.Image.loadFromFile("assets/textures/grass.png", 0);
-    defer grass_image.deinit();
-
-    var bricks_image = try zstbi.Image.loadFromFile("assets/textures/bricks.png", 0);
-    defer bricks_image.deinit();
-
-    var water_image = try zstbi.Image.loadFromFile("assets/textures/water.png", 0);
-    defer water_image.deinit();
-
-    var ice_image = try zstbi.Image.loadFromFile("assets/textures/ice.png", 0);
-    defer ice_image.deinit();
-
-    var glass_image = try zstbi.Image.loadFromFile("assets/textures/glass.png", 0);
-    defer glass_image.deinit();
-
     var images = std.ArrayList(zstbi.Image).init(allocator);
-    try images.append(cobble_image);
-    try images.append(grass_image);
-    try images.append(bricks_image);
-    try images.append(water_image);
-    try images.append(ice_image);
-    try images.append(glass_image);
+
+    for (Block.Texture.TEXTURES) |texture| {
+        const image = try zstbi.Image.loadFromFile(Block.Texture.TEXTURE_TO_PATH[@intFromEnum(texture)], 0);
+        try images.append(image);
+    }
 
     const texture_array = try TextureArray2D.new(images.items, 16, 16, .{
         .wrap_s = .clamp_to_edge,
@@ -757,36 +629,19 @@ pub fn main() !void {
     });
     texture_array.bind(0);
 
-    var vertex_buffer = std.ArrayList(model.Vertex).init(allocator);
-    var model_id_to_vertex_indices = std.AutoHashMap(model.ModelId, VertexIndices).init(allocator);
-
     var debug_timer = try std.time.Timer.start();
-    try populateVertexBuffer(&vertex_buffer, &model_id_to_vertex_indices);
-
-    var debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
-    std.log.info("Vertex buffer done. {d} s", .{debug_time});
-
-    var vertex_idx_and_texture_idx_buffer = std.ArrayList(model.VertexIdxAndTextureIdx).init(allocator);
-    var block_to_face_indices = std.AutoHashMap(Block, mesh.FaceIndices).init(allocator);
-
-    debug_timer.reset();
-    try populateVertexIdxAndTextureIdxBuffer(model_id_to_vertex_indices, &vertex_idx_and_texture_idx_buffer, &block_to_face_indices);
-
-    debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
-    std.log.info("Vertex idx buffer done. {d} s", .{debug_time});
-
     var chunks = std.AutoHashMap(Chunk.Pos, Chunk).init(allocator);
 
     debug_timer.reset();
     try generateChunks(allocator, rand, &chunks);
 
-    debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
+    var debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Generating chunks done. {d} s", .{debug_time});
 
     var chunk_mesh_layers = ChunkMeshLayers.new(allocator);
 
     debug_timer.reset();
-    try populateChunkMeshLayers(allocator, chunks, block_to_face_indices, &chunk_mesh_layers);
+    try populateChunkMeshLayers(allocator, chunks, &chunk_mesh_layers);
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Chunk mesh buffers done. {d} s", .{debug_time});
@@ -801,8 +656,8 @@ pub fn main() !void {
     gl.CreateBuffers(1, @ptrCast(&vertex_buffer_handle));
     gl.NamedBufferStorage(
         vertex_buffer_handle,
-        @intCast((@sizeOf(model.Vertex)) * vertex_buffer.items.len),
-        @ptrCast(vertex_buffer.items.ptr),
+        @intCast((@sizeOf(Block.Vertex)) * Block.VERTEX_BUFFER.len),
+        @ptrCast(Block.VERTEX_BUFFER.ptr),
         gl.DYNAMIC_STORAGE_BIT,
     );
     gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, vertex_buffer_handle);
@@ -811,8 +666,8 @@ pub fn main() !void {
     gl.CreateBuffers(1, @ptrCast(&vertex_idx_and_texture_idx_buffer_handle));
     gl.NamedBufferStorage(
         vertex_idx_and_texture_idx_buffer_handle,
-        @intCast((@sizeOf(model.VertexIdxAndTextureIdx)) * vertex_idx_and_texture_idx_buffer.items.len),
-        @ptrCast(vertex_idx_and_texture_idx_buffer.items.ptr),
+        @intCast((@sizeOf(Block.VertexIdxAndTextureIdx)) * Block.VERTEX_IDX_AND_TEXTURE_IDX_BUFFER.len),
+        @ptrCast(Block.VERTEX_IDX_AND_TEXTURE_IDX_BUFFER.ptr),
         gl.DYNAMIC_STORAGE_BIT,
     );
     gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 1, vertex_idx_and_texture_idx_buffer_handle);
@@ -833,7 +688,7 @@ pub fn main() !void {
             gl.CreateBuffers(1, @ptrCast(&chunk_mesh_layer.mesh.handle));
             gl.NamedBufferStorage(
                 chunk_mesh_layer.mesh.handle,
-                @intCast((@sizeOf(mesh.LocalPosAndFaceIdx)) * chunk_mesh_layer.mesh.buffer.items.len),
+                @intCast((@sizeOf(mesh.LocalPosAndModelIdx)) * chunk_mesh_layer.mesh.buffer.items.len),
                 @ptrCast(chunk_mesh_layer.mesh.buffer.items.ptr),
                 gl.DYNAMIC_STORAGE_BIT,
             );
@@ -926,5 +781,10 @@ pub fn main() !void {
 
         window.swapBuffers();
         glfw.pollEvents();
+    }
+
+    for (images.items) |image_| {
+        var image = image_;
+        image.deinit();
     }
 }

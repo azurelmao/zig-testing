@@ -4,14 +4,13 @@ const print = std.debug.print;
 const Chunk = @import("Chunk.zig");
 const LocalPos = Chunk.LocalPos;
 const Block = @import("block.zig").Block;
-const main = @import("main.zig");
-const SingleChunkMeshLayers = main.SingleChunkMeshLayers;
+const SingleChunkMeshLayers = @import("main.zig").SingleChunkMeshLayers;
 
-pub const LocalPosAndFaceIdx = packed struct(u32) {
+pub const LocalPosAndModelIdx = packed struct(u32) {
     x: u5,
     y: u5,
     z: u5,
-    face_idx: u17,
+    model_idx: u17,
 };
 
 fn inWestEdge(pos: LocalPos) bool {
@@ -95,16 +94,7 @@ pub const NeighborChunks = struct {
     south: ?Chunk,
 };
 
-pub const FaceIndices = packed struct {
-    west: u17,
-    east: u17,
-    bottom: u17,
-    top: u17,
-    north: u17,
-    south: u17,
-};
-
-pub fn generate(single_chunk_mesh_layers: *SingleChunkMeshLayers, block_to_face_indices: std.AutoHashMap(Block, FaceIndices), chunk: Chunk, neighbor_chunks: *const NeighborChunks) !void {
+pub fn generate(single_chunk_mesh_layers: *SingleChunkMeshLayers, chunk: Chunk, neighbor_chunks: *const NeighborChunks) !void {
     var single_chunk_mesh_faces = &single_chunk_mesh_layers.layers[0];
 
     for (0..Chunk.Size) |x| {
@@ -123,21 +113,21 @@ pub fn generate(single_chunk_mesh_layers: *SingleChunkMeshLayers, block_to_face_
                     single_chunk_mesh_faces = &single_chunk_mesh_layers.layers[0];
                 }
 
-                const face_indices = block_to_face_indices.get(block) orelse std.debug.panic("Solid block {s} is missing its model", .{@tagName(block)});
+                const model_indices = Block.BLOCK_TO_MODEL_INDICES[@intFromEnum(block)];
 
                 if (inWestEdge(pos)) {
                     if (neighbor_chunks.west) |neighbor_chunk| {
                         const neighbor_block = getWestNeighborBlock(neighbor_chunk, pos);
 
                         if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                            try single_chunk_mesh_faces.faces[0].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .face_idx = face_indices.west });
+                            try single_chunk_mesh_faces.faces[0].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[0] });
                         }
                     }
                 } else {
                     const neighbor_block = getWestBlock(chunk, pos);
 
                     if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                        try single_chunk_mesh_faces.faces[0].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .face_idx = face_indices.west });
+                        try single_chunk_mesh_faces.faces[0].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[0] });
                     }
                 }
 
@@ -146,14 +136,14 @@ pub fn generate(single_chunk_mesh_layers: *SingleChunkMeshLayers, block_to_face_
                         const neighbor_block = getEastNeighborBlock(neighbor_chunk, pos);
 
                         if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                            try single_chunk_mesh_faces.faces[1].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .face_idx = face_indices.east });
+                            try single_chunk_mesh_faces.faces[1].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[1] });
                         }
                     }
                 } else {
                     const neighbor_block = getEastBlock(chunk, pos);
 
                     if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                        try single_chunk_mesh_faces.faces[1].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .face_idx = face_indices.east });
+                        try single_chunk_mesh_faces.faces[1].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[1] });
                     }
                 }
 
@@ -163,7 +153,7 @@ pub fn generate(single_chunk_mesh_layers: *SingleChunkMeshLayers, block_to_face_
                     const neighbor_block = getBottomBlock(chunk, pos);
 
                     if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                        try single_chunk_mesh_faces.faces[2].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .face_idx = face_indices.bottom });
+                        try single_chunk_mesh_faces.faces[2].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[2] });
                     }
                 }
 
@@ -173,7 +163,7 @@ pub fn generate(single_chunk_mesh_layers: *SingleChunkMeshLayers, block_to_face_
                     const neighbor_block = getTopBlock(chunk, pos);
 
                     if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                        try single_chunk_mesh_faces.faces[3].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .face_idx = face_indices.top });
+                        try single_chunk_mesh_faces.faces[3].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[3] });
                     }
                 }
 
@@ -182,14 +172,14 @@ pub fn generate(single_chunk_mesh_layers: *SingleChunkMeshLayers, block_to_face_
                         const neighbor_block = getNorthNeighborBlock(neighbor_chunk, pos);
 
                         if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                            try single_chunk_mesh_faces.faces[4].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .face_idx = face_indices.north });
+                            try single_chunk_mesh_faces.faces[4].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[4] });
                         }
                     }
                 } else {
                     const neighbor_block = getNorthBlock(chunk, pos);
 
                     if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                        try single_chunk_mesh_faces.faces[4].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .face_idx = face_indices.north });
+                        try single_chunk_mesh_faces.faces[4].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[4] });
                     }
                 }
 
@@ -198,14 +188,14 @@ pub fn generate(single_chunk_mesh_layers: *SingleChunkMeshLayers, block_to_face_
                         const neighbor_block = getSouthNeighborBlock(neighbor_chunk, pos);
 
                         if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                            try single_chunk_mesh_faces.faces[5].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .face_idx = face_indices.south });
+                            try single_chunk_mesh_faces.faces[5].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[5] });
                         }
                     }
                 } else {
                     const neighbor_block = getSouthBlock(chunk, pos);
 
                     if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                        try single_chunk_mesh_faces.faces[5].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .face_idx = face_indices.south });
+                        try single_chunk_mesh_faces.faces[5].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[5] });
                     }
                 }
             }
