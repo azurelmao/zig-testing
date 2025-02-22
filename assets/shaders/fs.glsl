@@ -1,7 +1,7 @@
 #version 460 core
 
-in vec3 pTextureUVW;
-// flat in uint pTextureIdx;
+in vec2 pTextureUV;
+flat in uint pTextureIdx;
 flat in float pNormalLight;
 
 layout (location = 0) out vec4 oColor;
@@ -9,7 +9,7 @@ layout (location = 0) out vec4 oColor;
 layout (binding = 0, location = 1) uniform sampler2DArray uTexture;
 
 void main() {
-    vec4 texColor = texture(uTexture, pTextureUVW);
+    vec4 texColor = texture(uTexture, vec3(pTextureUV, pTextureIdx));
     oColor = vec4(texColor.rgb * pNormalLight, texColor.a);
 }
 

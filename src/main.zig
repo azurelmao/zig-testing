@@ -77,7 +77,7 @@ var window_height: gl.sizei = INITIAL_WINDOW_HEIGHT;
 var fov_x: gl.float = 90.0;
 var aspect_ratio: gl.float = @as(gl.float, INITIAL_WINDOW_WIDTH) / @as(gl.float, INITIAL_WINDOW_HEIGHT);
 var near: gl.float = 0.1;
-var far: gl.float = CHUNK_DISTANCE * 2 * Chunk.Size * std.math.sqrt(3.0);
+var far: gl.float = 32 * Chunk.Size * std.math.sqrt(3.0);
 
 fn cacheAspectRatio() void {
     aspect_ratio = @as(gl.float, @floatFromInt(window_width)) / @as(gl.float, @floatFromInt(window_height));
@@ -169,7 +169,7 @@ fn debugCallback(source: gl.@"enum", @"type": gl.@"enum", id: gl.uint, severity:
     }
 }
 
-const CHUNK_DISTANCE = 0;
+const CHUNK_DISTANCE = 32;
 
 fn generateChunk(allocator: std.mem.Allocator, rand: std.Random, chunk_x_: usize, chunk_z_: usize) !Chunk {
     const chunk_x = @as(i16, @intCast(chunk_x_)) - CHUNK_DISTANCE;
@@ -214,8 +214,8 @@ fn generateChunk(allocator: std.mem.Allocator, rand: std.Random, chunk_x_: usize
 }
 
 fn generateChunks(allocator: std.mem.Allocator, rand: std.Random, chunks: *std.AutoHashMap(Chunk.Pos, Chunk)) !void {
-    for (0..1) |chunk_x_| {
-        for (0..1) |chunk_z_| {
+    for (0..CHUNK_DISTANCE * 2) |chunk_x_| {
+        for (0..CHUNK_DISTANCE * 2) |chunk_z_| {
             const chunk = try generateChunk(allocator, rand, chunk_x_, chunk_z_);
             try chunks.put(chunk.pos, chunk);
         }
@@ -260,18 +260,17 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
 
     const camera_pos = camera_position.toChunkPos();
 
-    for (chunk_mesh_layers.pos.buffer.items, 0..) |chunk_mesh_pos, chunk_mesh_idx| {
+    for (chunk_mesh_layers.pos.buffer.items, 0..) |chunk_mesh_pos, chunk_mesh_idx_| {
         const chunk_pos = chunk_mesh_pos.toChunkPos();
+        const chunk_mesh_idx = chunk_mesh_idx_ * 6;
 
         if (chunk_pos.equal(camera_pos)) {
             inline for (0..2) |layer_idx| {
-                const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
+                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
                 inline for (0..6) |face_idx| {
-                    const chunk_mesh_face = chunk_mesh_layer.faces[face_idx];
-
-                    if (chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                        chunk_mesh_face.command.buffer.items[chunk_mesh_idx].instance_count = 1;
+                    if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].base_instance > 0) {
+                        chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = 1;
                     }
                 }
             }
@@ -287,13 +286,11 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
             (point.dot(top_nrm) < -Chunk.Radius))
         {
             inline for (0..2) |layer_idx| {
-                const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
+                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
                 inline for (0..6) |face_idx| {
-                    const chunk_mesh_face = chunk_mesh_layer.faces[face_idx];
-
-                    if (chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                        chunk_mesh_face.command.buffer.items[chunk_mesh_idx].instance_count = 0;
+                    if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].base_instance > 0) {
+                        chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = 0;
                     }
                 }
             }
@@ -305,129 +302,102 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
 
         if (diff.x < 0) {
             inline for (0..2) |layer_idx| {
-                const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
+                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-                const west_chunk_mesh_face = chunk_mesh_layer.faces[0];
-                const east_chunk_mesh_face = chunk_mesh_layer.faces[1];
-
-                if (west_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                    west_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
+                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].instance_count = 1;
                 }
 
-                east_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 0;
+                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].instance_count = 0;
             }
         } else if (diff.x > 0) {
             inline for (0..2) |layer_idx| {
-                const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
+                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-                const west_chunk_mesh_face = chunk_mesh_layer.faces[0];
-                const east_chunk_mesh_face = chunk_mesh_layer.faces[1];
+                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].instance_count = 0;
 
-                if (east_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                    east_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].base_instance > 0) {
+                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].instance_count = 1;
                 }
-
-                west_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 0;
             }
         } else {
             inline for (0..2) |layer_idx| {
-                const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
+                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-                const west_chunk_mesh_face = chunk_mesh_layer.faces[0];
-                const east_chunk_mesh_face = chunk_mesh_layer.faces[1];
-
-                if (west_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                    west_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
+                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].instance_count = 1;
                 }
 
-                if (east_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                    east_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].base_instance > 0) {
+                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].instance_count = 1;
                 }
             }
         }
 
         if (diff.y < 0) {
             inline for (0..2) |layer_idx| {
-                const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
+                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-                const bottom_chunk_mesh_face = chunk_mesh_layer.faces[2];
-                const top_chunk_mesh_face = chunk_mesh_layer.faces[3];
-
-                if (bottom_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                    bottom_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].base_instance > 0) {
+                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].instance_count = 1;
                 }
 
-                top_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 0;
+                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].instance_count = 0;
             }
         } else if (diff.y > 0) {
             inline for (0..2) |layer_idx| {
-                const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
+                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-                const bottom_chunk_mesh_face = chunk_mesh_layer.faces[2];
-                const top_chunk_mesh_face = chunk_mesh_layer.faces[3];
+                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].instance_count = 0;
 
-                if (top_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                    top_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].base_instance > 0) {
+                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].instance_count = 1;
                 }
-
-                bottom_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 0;
             }
         } else {
             inline for (0..2) |layer_idx| {
-                const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
+                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-                const bottom_chunk_mesh_face = chunk_mesh_layer.faces[2];
-                const top_chunk_mesh_face = chunk_mesh_layer.faces[3];
-
-                if (bottom_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                    bottom_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].base_instance > 0) {
+                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].instance_count = 1;
                 }
 
-                if (top_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                    top_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].base_instance > 0) {
+                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].instance_count = 1;
                 }
             }
         }
 
         if (diff.z < 0) {
             inline for (0..2) |layer_idx| {
-                const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
+                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-                const north_chunk_mesh_face = chunk_mesh_layer.faces[4];
-                const south_chunk_mesh_face = chunk_mesh_layer.faces[5];
-
-                if (north_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                    north_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].base_instance > 0) {
+                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].instance_count = 1;
                 }
 
-                south_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 0;
+                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].instance_count = 0;
             }
         } else if (diff.z > 0) {
             inline for (0..2) |layer_idx| {
-                const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
+                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-                const north_chunk_mesh_face = chunk_mesh_layer.faces[4];
-                const south_chunk_mesh_face = chunk_mesh_layer.faces[5];
+                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].instance_count = 0;
 
-                if (south_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                    south_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].base_instance > 0) {
+                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].instance_count = 1;
                 }
-
-                north_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 0;
             }
         } else {
             inline for (0..2) |layer_idx| {
-                const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
+                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-                const north_chunk_mesh_face = chunk_mesh_layer.faces[4];
-                const south_chunk_mesh_face = chunk_mesh_layer.faces[5];
-
-                if (north_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                    north_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].base_instance > 0) {
+                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].instance_count = 1;
                 }
 
-                if (south_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance > 0) {
-                    south_chunk_mesh_face.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                if (chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].base_instance > 0) {
+                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].instance_count = 1;
                 }
             }
         }
@@ -435,15 +405,15 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
 }
 
 fn uploadCommandBuffers(chunk_mesh_layers: ChunkMeshLayers) void {
-    inline for (chunk_mesh_layers.layers) |chunk_mesh_layer| {
-        inline for (chunk_mesh_layer.faces) |chunk_mesh_face| {
-            gl.NamedBufferSubData(
-                chunk_mesh_face.command.handle,
-                0,
-                @intCast(@sizeOf(DrawArraysIndirectCommand) * chunk_mesh_face.command.buffer.items.len),
-                @ptrCast(chunk_mesh_face.command.buffer.items.ptr),
-            );
-        }
+    inline for (0..2) |layer_idx| {
+        const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
+
+        gl.NamedBufferSubData(
+            chunk_mesh_layer.command.handle,
+            0,
+            @intCast(@sizeOf(DrawArraysIndirectCommand) * chunk_mesh_layer.command.buffer.items.len),
+            @ptrCast(chunk_mesh_layer.command.buffer.items.ptr),
+        );
     }
 }
 
@@ -822,7 +792,7 @@ pub fn main() !void {
     std.log.info("Chunk mesh buffers done. {d} s", .{debug_time});
 
     debug_timer.reset();
-    // cullChunkFacesAndFrustum(&chunk_mesh_layers);
+    cullChunkFacesAndFrustum(&chunk_mesh_layers);
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Culling done. {d} s", .{debug_time});
@@ -856,47 +826,27 @@ pub fn main() !void {
     );
     gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 2, chunk_mesh_layers.pos.handle);
 
-    var mesh_handle: gl.uint = undefined;
-    gl.CreateBuffers(1, @ptrCast(&mesh_handle));
-    gl.NamedBufferStorage(
-        mesh_handle,
-        @intCast((@sizeOf(mesh.LocalPosAndFaceIdx)) * chunk_mesh_layers.layers[0].mesh.buffer.items.len),
-        @ptrCast(chunk_mesh_layers.layers[0].mesh.buffer.items.ptr),
-        gl.DYNAMIC_STORAGE_BIT,
-    );
-    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 3, mesh_handle);
+    inline for (0..2) |layer_idx| {
+        const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-    var command_handle: gl.uint = undefined;
-    gl.CreateBuffers(1, @ptrCast(&command_handle));
-    gl.NamedBufferStorage(
-        command_handle,
-        @intCast(@sizeOf(DrawArraysIndirectCommand) * chunk_mesh_layers.layers[0].command.buffer.items.len),
-        @ptrCast(chunk_mesh_layers.layers[0].command.buffer.items.ptr),
-        gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT,
-    );
-    gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, command_handle);
+        if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
+            gl.CreateBuffers(1, @ptrCast(&chunk_mesh_layer.mesh.handle));
+            gl.NamedBufferStorage(
+                chunk_mesh_layer.mesh.handle,
+                @intCast((@sizeOf(mesh.LocalPosAndFaceIdx)) * chunk_mesh_layer.mesh.buffer.items.len),
+                @ptrCast(chunk_mesh_layer.mesh.buffer.items.ptr),
+                gl.DYNAMIC_STORAGE_BIT,
+            );
+        }
 
-    // inline for (0..2) |layer_idx| {
-    //     const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-    //     if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
-    //         gl.CreateBuffers(1, @ptrCast(&chunk_mesh_layer.mesh.handle));
-    //         gl.NamedBufferStorage(
-    //             chunk_mesh_layer.mesh.handle,
-    //             @intCast((@sizeOf(mesh.LocalPosAndFaceIdx)) * chunk_mesh_layer.mesh.buffer.items.len),
-    //             @ptrCast(chunk_mesh_layer.mesh.buffer.items.ptr),
-    //             gl.DYNAMIC_STORAGE_BIT,
-    //         );
-    //     }
-
-    //     gl.CreateBuffers(1, @ptrCast(&chunk_mesh_layer.command.handle));
-    //     gl.NamedBufferStorage(
-    //         chunk_mesh_layer.command.handle,
-    //         @intCast(@sizeOf(DrawArraysIndirectCommand) * chunk_mesh_layer.command.buffer.items.len),
-    //         @ptrCast(chunk_mesh_layer.command.buffer.items.ptr),
-    //         gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT,
-    //     );
-    // }
+        gl.CreateBuffers(1, @ptrCast(&chunk_mesh_layer.command.handle));
+        gl.NamedBufferStorage(
+            chunk_mesh_layer.command.handle,
+            @intCast(@sizeOf(DrawArraysIndirectCommand) * chunk_mesh_layer.command.buffer.items.len),
+            @ptrCast(chunk_mesh_layer.command.buffer.items.ptr),
+            gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT,
+        );
+    }
 
     if (chunk_mesh_layers.layers[0].command.buffer.items.len != chunk_mesh_layers.layers[1].command.buffer.items.len) std.debug.panic("layers dont have the same amount of draw commands", .{});
 
@@ -914,7 +864,7 @@ pub fn main() !void {
     gl.Enable(gl.BLEND);
     gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    const movement_speed: gl.float = 16.0;
+    const movement_speed: gl.float = 128.0;
     var timer = try std.time.Timer.start();
 
     while (!window.shouldClose()) {
@@ -958,21 +908,19 @@ pub fn main() !void {
             cacheViewProjectionMatrix();
             shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
 
-            // cullChunkFacesAndFrustum(&chunk_mesh_layers);
-            // uploadCommandBuffers(chunk_mesh_layers);
+            cullChunkFacesAndFrustum(&chunk_mesh_layers);
+            uploadCommandBuffers(chunk_mesh_layers);
         }
 
-        // inline for (0..2) |layer_idx| {
-        //     const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
+        inline for (0..2) |layer_idx| {
+            const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
 
-        //     if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
-        //         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 3, chunk_mesh_layer.mesh.handle);
-        //         gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, chunk_mesh_layer.command.handle);
-        //         gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.buffer.items.len), 0);
-        //     }
-        // }
-
-        gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layers.layers[0].command.buffer.items.len), 0);
+            if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
+                gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 3, chunk_mesh_layer.mesh.handle);
+                gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, chunk_mesh_layer.command.handle);
+                gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.buffer.items.len), 0);
+            }
+        }
 
         delta_time = @floatCast(@as(f64, @floatFromInt(timer.lap())) / 1_000_000_000.0);
 

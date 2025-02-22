@@ -13,18 +13,18 @@ layout(binding = 1, std430) readonly buffer ssbo2 {
     VertexIdxAndTextureIdx sVertexIdxAndTextureIdx[];
 };
 
-layout(binding = 2, std430) readonly buffer ssbo4 {
+layout(binding = 2, std430) readonly buffer ssbo3 {
     vec3 sChunkPos[];
 };
 
-layout(binding = 3, std430) readonly buffer ssbo3 {
+layout(binding = 3, std430) readonly buffer ssbo4 {
     uint sLocalPosAndFaceIdx[];
 };
 
 uniform mat4 uViewProjection;
 
-out vec3 pTextureUVW;
-// flat out uint pTextureIdx;
+out vec2 pTextureUV;
+flat out uint pTextureIdx;
 flat out float pNormalLight;
 
 vec3 unpackLocalPosition(uint data) {
@@ -85,10 +85,10 @@ void main() {
     vec3 modelPosition = unpackModelPosition(perVertexData);
     vec2 textureUV = unpackTextureUV(perVertexData);
     
-    pTextureUVW = vec3(textureUV, textureIdx);
-    // pTextureIdx = textureIdx;
+    pTextureUV = textureUV;
+    pTextureIdx = textureIdx;
     pNormalLight = normalLight[gl_DrawID % 6];
-    gl_Position = uViewProjection * vec4(modelPosition + localPosition + sChunkPos[gl_DrawID % 6], 1.0);
+    gl_Position = uViewProjection * vec4(modelPosition + localPosition + sChunkPos[gl_DrawID / 6], 1.0);
 }
 
 // iXXX for input
