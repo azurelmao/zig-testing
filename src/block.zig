@@ -189,6 +189,11 @@ pub const Block = enum(u8) {
         faces: [6][]const Vertex,
     };
 
+    pub const Quad = struct {
+        vertices: []const Vertex,
+        texture: Texture,
+    };
+
     pub const SQUARE = expr: {
         var faces: [6][]const Vertex = undefined;
 

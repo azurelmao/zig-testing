@@ -4,7 +4,24 @@ const print = std.debug.print;
 const Chunk = @import("Chunk.zig");
 const LocalPos = Chunk.LocalPos;
 const Block = @import("block.zig").Block;
-const SingleChunkMeshLayers = @import("main.zig").SingleChunkMeshLayers;
+
+const Self = @This();
+
+layers: [2]SingleChunkMeshFaces,
+
+const SingleChunkMeshFaces = struct {
+    faces: [6]std.ArrayList(LocalPosAndModelIdx),
+
+    pub fn new(allocator: std.mem.Allocator) SingleChunkMeshFaces {
+        var faces: [6]std.ArrayList(LocalPosAndModelIdx) = undefined;
+
+        for (0..6) |face_idx| {
+            faces[face_idx] = std.ArrayList(LocalPosAndModelIdx).init(allocator);
+        }
+
+        return .{ .faces = faces };
+    }
+};
 
 pub const LocalPosAndModelIdx = packed struct(u32) {
     x: u5,
@@ -13,78 +30,14 @@ pub const LocalPosAndModelIdx = packed struct(u32) {
     model_idx: u17,
 };
 
-fn inWestEdge(pos: LocalPos) bool {
-    return pos.x == 0;
-}
+pub fn new(allocator: std.mem.Allocator) Self {
+    var layers: [2]SingleChunkMeshFaces = undefined;
 
-fn inEastEdge(pos: LocalPos) bool {
-    return pos.x == Chunk.Edge;
-}
+    for (0..2) |layer_idx| {
+        layers[layer_idx] = SingleChunkMeshFaces.new(allocator);
+    }
 
-fn inBottomEdge(pos: LocalPos) bool {
-    return pos.y == 0;
-}
-
-fn inTopEdge(pos: LocalPos) bool {
-    return pos.y == Chunk.Edge;
-}
-
-fn inNorthEdge(pos: LocalPos) bool {
-    return pos.z == 0;
-}
-
-fn inSouthEdge(pos: LocalPos) bool {
-    return pos.z == Chunk.Edge;
-}
-
-fn getWestBlock(chunk: Chunk, pos: LocalPos) Block {
-    const offset_pos = LocalPos{ .x = pos.x - 1, .y = pos.y, .z = pos.z };
-    return chunk.getBlock(offset_pos);
-}
-
-fn getEastBlock(chunk: Chunk, pos: LocalPos) Block {
-    const offset_pos = LocalPos{ .x = pos.x + 1, .y = pos.y, .z = pos.z };
-    return chunk.getBlock(offset_pos);
-}
-
-fn getBottomBlock(chunk: Chunk, pos: LocalPos) Block {
-    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y - 1, .z = pos.z };
-    return chunk.getBlock(offset_pos);
-}
-
-fn getTopBlock(chunk: Chunk, pos: LocalPos) Block {
-    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y + 1, .z = pos.z };
-    return chunk.getBlock(offset_pos);
-}
-
-fn getNorthBlock(chunk: Chunk, pos: LocalPos) Block {
-    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y, .z = pos.z - 1 };
-    return chunk.getBlock(offset_pos);
-}
-
-fn getSouthBlock(chunk: Chunk, pos: LocalPos) Block {
-    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y, .z = pos.z + 1 };
-    return chunk.getBlock(offset_pos);
-}
-
-fn getWestNeighborBlock(neighbor_chunk: Chunk, pos: LocalPos) Block {
-    const offset_pos = LocalPos{ .x = Chunk.Edge, .y = pos.y, .z = pos.z };
-    return neighbor_chunk.getBlock(offset_pos);
-}
-
-fn getEastNeighborBlock(neighbor_chunk: Chunk, pos: LocalPos) Block {
-    const offset_pos = LocalPos{ .x = 0, .y = pos.y, .z = pos.z };
-    return neighbor_chunk.getBlock(offset_pos);
-}
-
-fn getNorthNeighborBlock(neighbor_chunk: Chunk, pos: LocalPos) Block {
-    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y, .z = Chunk.Edge };
-    return neighbor_chunk.getBlock(offset_pos);
-}
-
-fn getSouthNeighborBlock(neighbor_chunk: Chunk, pos: LocalPos) Block {
-    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y, .z = 0 };
-    return neighbor_chunk.getBlock(offset_pos);
+    return .{ .layers = layers };
 }
 
 pub const NeighborChunks = struct {
@@ -94,7 +47,7 @@ pub const NeighborChunks = struct {
     south: ?Chunk,
 };
 
-pub fn generate(single_chunk_mesh_layers: *SingleChunkMeshLayers, chunk: Chunk, neighbor_chunks: *const NeighborChunks) !void {
+pub fn generate(single_chunk_mesh_layers: *Self, chunk: Chunk, neighbor_chunks: *const NeighborChunks) !void {
     var single_chunk_mesh_faces = &single_chunk_mesh_layers.layers[0];
 
     for (0..Chunk.Size) |x| {
@@ -201,4 +154,78 @@ pub fn generate(single_chunk_mesh_layers: *SingleChunkMeshLayers, chunk: Chunk, 
             }
         }
     }
+}
+
+fn inWestEdge(pos: LocalPos) bool {
+    return pos.x == 0;
+}
+
+fn inEastEdge(pos: LocalPos) bool {
+    return pos.x == Chunk.Edge;
+}
+
+fn inBottomEdge(pos: LocalPos) bool {
+    return pos.y == 0;
+}
+
+fn inTopEdge(pos: LocalPos) bool {
+    return pos.y == Chunk.Edge;
+}
+
+fn inNorthEdge(pos: LocalPos) bool {
+    return pos.z == 0;
+}
+
+fn inSouthEdge(pos: LocalPos) bool {
+    return pos.z == Chunk.Edge;
+}
+
+fn getWestBlock(chunk: Chunk, pos: LocalPos) Block {
+    const offset_pos = LocalPos{ .x = pos.x - 1, .y = pos.y, .z = pos.z };
+    return chunk.getBlock(offset_pos);
+}
+
+fn getEastBlock(chunk: Chunk, pos: LocalPos) Block {
+    const offset_pos = LocalPos{ .x = pos.x + 1, .y = pos.y, .z = pos.z };
+    return chunk.getBlock(offset_pos);
+}
+
+fn getBottomBlock(chunk: Chunk, pos: LocalPos) Block {
+    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y - 1, .z = pos.z };
+    return chunk.getBlock(offset_pos);
+}
+
+fn getTopBlock(chunk: Chunk, pos: LocalPos) Block {
+    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y + 1, .z = pos.z };
+    return chunk.getBlock(offset_pos);
+}
+
+fn getNorthBlock(chunk: Chunk, pos: LocalPos) Block {
+    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y, .z = pos.z - 1 };
+    return chunk.getBlock(offset_pos);
+}
+
+fn getSouthBlock(chunk: Chunk, pos: LocalPos) Block {
+    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y, .z = pos.z + 1 };
+    return chunk.getBlock(offset_pos);
+}
+
+fn getWestNeighborBlock(neighbor_chunk: Chunk, pos: LocalPos) Block {
+    const offset_pos = LocalPos{ .x = Chunk.Edge, .y = pos.y, .z = pos.z };
+    return neighbor_chunk.getBlock(offset_pos);
+}
+
+fn getEastNeighborBlock(neighbor_chunk: Chunk, pos: LocalPos) Block {
+    const offset_pos = LocalPos{ .x = 0, .y = pos.y, .z = pos.z };
+    return neighbor_chunk.getBlock(offset_pos);
+}
+
+fn getNorthNeighborBlock(neighbor_chunk: Chunk, pos: LocalPos) Block {
+    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y, .z = Chunk.Edge };
+    return neighbor_chunk.getBlock(offset_pos);
+}
+
+fn getSouthNeighborBlock(neighbor_chunk: Chunk, pos: LocalPos) Block {
+    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y, .z = 0 };
+    return neighbor_chunk.getBlock(offset_pos);
 }

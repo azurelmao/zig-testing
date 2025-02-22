@@ -7,7 +7,7 @@ const print = std.debug.print;
 const Chunk = @import("Chunk.zig");
 const Block = @import("block.zig").Block;
 
-const mesh = @import("mesh.zig");
+const SingleChunkMeshLayers = @import("SingleChunkMeshLayers.zig");
 const ShaderProgram = @import("ShaderProgram.zig");
 const Matrix4x4f = @import("Matrix4x4f.zig");
 const Vec3f = @import("vec3f.zig").Vec3f;
@@ -434,13 +434,13 @@ pub const ChunkMeshBuffers = struct {
     const Self = @This();
 
     len: std.ArrayList(gl.uint),
-    mesh: ShaderStorageBuffer(mesh.LocalPosAndModelIdx),
+    mesh: ShaderStorageBuffer(SingleChunkMeshLayers.LocalPosAndModelIdx),
     command: ShaderStorageBuffer(DrawArraysIndirectCommand),
 
     pub fn new(allocator: std.mem.Allocator) Self {
         return .{
             .len = std.ArrayList(gl.uint).init(allocator),
-            .mesh = ShaderStorageBuffer(mesh.LocalPosAndModelIdx).new(allocator),
+            .mesh = ShaderStorageBuffer(SingleChunkMeshLayers.LocalPosAndModelIdx).new(allocator),
             .command = ShaderStorageBuffer(DrawArraysIndirectCommand).new(allocator),
         };
     }
@@ -464,38 +464,6 @@ pub const ChunkMeshLayers = struct {
     }
 };
 
-pub const SingleChunkMeshFaces = struct {
-    const Self = @This();
-
-    faces: [6]std.ArrayList(mesh.LocalPosAndModelIdx),
-
-    pub fn new(allocator: std.mem.Allocator) Self {
-        var faces: [6]std.ArrayList(mesh.LocalPosAndModelIdx) = undefined;
-
-        for (0..6) |face_idx| {
-            faces[face_idx] = std.ArrayList(mesh.LocalPosAndModelIdx).init(allocator);
-        }
-
-        return .{ .faces = faces };
-    }
-};
-
-pub const SingleChunkMeshLayers = struct {
-    const Self = @This();
-
-    layers: [2]SingleChunkMeshFaces,
-
-    pub fn new(allocator: std.mem.Allocator) Self {
-        var layers: [2]SingleChunkMeshFaces = undefined;
-
-        for (0..2) |layer_idx| {
-            layers[layer_idx] = SingleChunkMeshFaces.new(allocator);
-        }
-
-        return .{ .layers = layers };
-    }
-};
-
 fn populateChunkMeshLayers(allocator: std.mem.Allocator, chunks: std.AutoHashMap(Chunk.Pos, Chunk), chunk_mesh_layers: *ChunkMeshLayers) !void {
     var single_chunk_mesh_layers = SingleChunkMeshLayers.new(allocator);
 
@@ -507,7 +475,7 @@ fn populateChunkMeshLayers(allocator: std.mem.Allocator, chunks: std.AutoHashMap
         const north_pos = Chunk.Pos{ .x = pos.x, .y = pos.y, .z = pos.z - 1 };
         const south_pos = Chunk.Pos{ .x = pos.x, .y = pos.y, .z = pos.z + 1 };
 
-        const neighbors = mesh.NeighborChunks{
+        const neighbors = SingleChunkMeshLayers.NeighborChunks{
             .west = chunks.get(west_pos),
             .east = chunks.get(east_pos),
             .north = chunks.get(north_pos),
@@ -516,7 +484,7 @@ fn populateChunkMeshLayers(allocator: std.mem.Allocator, chunks: std.AutoHashMap
 
         try chunk_mesh_layers.pos.buffer.append(pos.toVec3f());
 
-        try mesh.generate(&single_chunk_mesh_layers, chunk.*, &neighbors);
+        try SingleChunkMeshLayers.generate(&single_chunk_mesh_layers, chunk.*, &neighbors);
 
         inline for (0..2) |layer_idx| {
             const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
@@ -688,7 +656,7 @@ pub fn main() !void {
             gl.CreateBuffers(1, @ptrCast(&chunk_mesh_layer.mesh.handle));
             gl.NamedBufferStorage(
                 chunk_mesh_layer.mesh.handle,
-                @intCast((@sizeOf(mesh.LocalPosAndModelIdx)) * chunk_mesh_layer.mesh.buffer.items.len),
+                @intCast((@sizeOf(SingleChunkMeshLayers.LocalPosAndModelIdx)) * chunk_mesh_layer.mesh.buffer.items.len),
                 @ptrCast(chunk_mesh_layer.mesh.buffer.items.ptr),
                 gl.DYNAMIC_STORAGE_BIT,
             );
