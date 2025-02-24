@@ -55,14 +55,14 @@ pub const Block = enum(u8) {
 
         for (Block.BLOCKS_WITH_A_MODEL) |block| {
             const model = block.getModel();
-            const texture = block.getTexture();
+            const texture_schema = block.getTextureSchema();
 
             var model_indices: ModelIndices = undefined;
 
             for (0..6) |face_idx| {
                 const vertex_idx_and_texture_idx = VertexIdxAndTextureIdx{
                     .vertex_idx = model_to_vertex_indices[@intFromEnum(model)].faces[face_idx],
-                    .texture_idx = @intFromEnum(texture),
+                    .texture_idx = @intFromEnum(texture_schema.faces[face_idx]),
                 };
 
                 model_indices.faces[face_idx] = @intCast(vertex_idx_and_texture_idx_buffer.len);
@@ -83,37 +83,70 @@ pub const Block = enum(u8) {
     pub const VERTEX_IDX_AND_TEXTURE_IDX_BUFFER = tmp.vertex_idx_and_texture_idx_buffer;
     pub const BLOCK_TO_MODEL_INDICES = tmp.block_to_model_indices;
 
-    // comptime {
-    //     var face_model_idx: u17 = 0;
-    //     for (BLOCKS_WITH_A_MODEL) |block| {
-    //         const block_model = block.getModel();
-    //         const texture_idx = block.getTextureIdx();
-    //         const vertex_indices = model_id_to_vertex_indices.get(block_model.id) orelse std.debug.panic("Should be impossible", .{});
-    //         var face_indices: FaceIndices = undefined;
+    pub fn isNotSolid(self: Self) bool {
+        return switch (self) {
+            .air, .water => true,
+            else => false,
+        };
+    }
 
-    //         for (0..6) |face_idx| {
-    //             face_indices[face_idx] = face_model_idx;
-    //             face_model_idx += 1;
-    //             const vertex_idx_and_texture_idx = model.VertexIdxAndTextureIdx{
-    //                 .vertex_idx = vertex_indices[face_idx],
-    //                 .texture_idx = texture_idx,
-    //             };
-    //             try vertex_idx_and_texture_idx_buffer.append(vertex_idx_and_texture_idx);
-    //         }
+    pub fn letsLightThrough(self: Self) bool {
+        return switch (self) {
+            .air, .water, .glass => true,
+            else => false,
+        };
+    }
 
-    //         try block_to_face_indices.put(block, face_indices);
-    //     }
-    // }
+    pub const Texture = enum {
+        cobble,
+        grass_top,
+        grass_side,
+        dirt,
+        bricks,
+        water,
+        ice,
+        glass,
+        glass_tinted,
 
-    pub fn getTexture(comptime self: Self) Texture {
+        pub const TEXTURES = std.enums.values(Texture);
+
+        pub const TEXTURE_TO_PATH = expr: {
+            var texture_to_path: [TEXTURES.len][:0]const u8 = undefined;
+
+            for (TEXTURES) |texture| {
+                texture_to_path[@intFromEnum(texture)] = "assets/textures/" ++ @tagName(texture) ++ ".png";
+            }
+
+            break :expr texture_to_path;
+        };
+    };
+
+    pub const TextureScheme = struct {
+        faces: [6]Texture,
+
+        pub fn allSides(texture: Texture) TextureScheme {
+            return .{ .faces = @splat(texture) };
+        }
+
+        pub fn grass(top: Texture, bottom: Texture, sides: Texture) TextureScheme {
+            var faces: [6]Texture = @splat(sides);
+
+            faces[Side.top.int()] = top;
+            faces[Side.bottom.int()] = bottom;
+
+            return .{ .faces = faces };
+        }
+    };
+
+    pub fn getTextureSchema(comptime self: Self) TextureScheme {
         return switch (self) {
             .air => std.debug.panic("Air doesn't have a texture", .{}),
-            .stone => .cobble,
-            .grass => .grass,
-            .bricks => .bricks,
-            .water => .water,
-            .ice => .ice,
-            .glass => .glass,
+            .stone => TextureScheme.allSides(.cobble),
+            .grass => TextureScheme.grass(.grass_top, .dirt, .grass_side),
+            .bricks => TextureScheme.allSides(.bricks),
+            .water => TextureScheme.allSides(.water),
+            .ice => TextureScheme.allSides(.ice),
+            .glass => TextureScheme.allSides(.glass),
         };
     }
 
@@ -131,32 +164,16 @@ pub const Block = enum(u8) {
         };
     }
 
-    pub fn isNotSolid(self: Self) bool {
-        return switch (self) {
-            .air, .water => true,
-            else => false,
-        };
-    }
+    pub const Model = enum {
+        square,
 
-    pub const Texture = enum {
-        cobble,
-        grass,
-        bricks,
-        water,
-        ice,
-        glass,
+        pub fn getData(comptime self: Model) ModelData {
+            return switch (self) {
+                .square => SQUARE,
+            };
+        }
 
-        pub const TEXTURES = std.enums.values(Texture);
-
-        pub const TEXTURE_TO_PATH = expr: {
-            var texture_to_path: [TEXTURES.len][:0]const u8 = undefined;
-
-            for (TEXTURES) |texture| {
-                texture_to_path[@intFromEnum(texture)] = "assets/textures/" ++ @tagName(texture) ++ ".png";
-            }
-
-            break :expr texture_to_path;
-        };
+        pub const MODELS = std.enums.values(Model);
     };
 
     pub const Vertex = packed struct(u32) {
@@ -174,25 +191,8 @@ pub const Block = enum(u8) {
         _: u21 = 0,
     };
 
-    pub const Model = enum {
-        square,
-
-        pub fn getData(comptime self: Model) ModelData {
-            return switch (self) {
-                .square => SQUARE,
-            };
-        }
-
-        pub const MODELS = std.enums.values(Model);
-    };
-
     pub const ModelData = struct {
         faces: [6][]const Vertex,
-    };
-
-    pub const Quad = struct {
-        vertices: []const Vertex,
-        texture: Texture,
     };
 
     pub const SQUARE = expr: {

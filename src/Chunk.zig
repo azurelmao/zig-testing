@@ -13,14 +13,29 @@ pub const Area = Size * Size;
 pub const Volume = Size * Size * Size;
 
 blocks: *[Volume]Block,
+light: *[Volume]Light,
 pos: Pos,
 
 pub fn new(allocator: std.mem.Allocator, pos: Pos, default_block: Block) !Self {
     const blocks = try allocator.create([Volume]Block);
     @memset(blocks, default_block);
 
-    return .{ .blocks = blocks, .pos = pos };
+    const light = try allocator.create([Volume]Light);
+    @memset(light, .{ .red = 0, .green = 0, .blue = 0, .sunlight = 1 });
+
+    return .{
+        .blocks = blocks,
+        .light = light,
+        .pos = pos,
+    };
 }
+
+pub const Light = packed struct(u16) {
+    red: u4,
+    green: u4,
+    blue: u4,
+    sunlight: u4,
+};
 
 pub const Pos = struct {
     x: i16,
@@ -29,6 +44,10 @@ pub const Pos = struct {
 
     pub fn toVec3f(self: Pos) Vec3f {
         return .{ .x = @floatFromInt(self.x << BitSize), .y = @floatFromInt(self.y << BitSize), .z = @floatFromInt(self.z << BitSize) };
+    }
+
+    pub fn add(self: Pos, other: Pos) Pos {
+        return .{ .x = self.x + other.x, .y = self.y + other.y, .z = self.z + other.z };
     }
 
     pub fn subtract(self: Pos, other: Pos) Pos {
@@ -54,6 +73,14 @@ pub const LocalPos = packed struct(u15) {
     }
 };
 
+pub fn getLight(self: Self, pos: LocalPos) Light {
+    return self.light[pos.index()];
+}
+
+pub fn setLight(self: Self, pos: LocalPos, light: Light) void {
+    self.light[pos.index()] = light;
+}
+
 pub fn getBlock(self: Self, pos: LocalPos) Block {
     return self.blocks[pos.index()];
 }
@@ -62,9 +89,9 @@ pub fn setBlock(self: Self, pos: LocalPos, block: Block) void {
     self.blocks[pos.index()] = block;
 }
 
-const CHUNK_DISTANCE = 32;
+const CHUNK_DISTANCE = 4;
 
-fn generateChunks(allocator: std.mem.Allocator, rand: std.Random, chunks: *std.AutoHashMap(Pos, Self)) !void {
+pub fn generateChunks(allocator: std.mem.Allocator, rand: std.Random, chunks: *std.AutoHashMap(Pos, Self)) !void {
     for (0..CHUNK_DISTANCE * 2) |chunk_x_| {
         for (0..CHUNK_DISTANCE * 2) |chunk_z_| {
             const chunk = try generateChunk(allocator, rand, chunk_x_, chunk_z_);
@@ -73,7 +100,7 @@ fn generateChunks(allocator: std.mem.Allocator, rand: std.Random, chunks: *std.A
     }
 }
 
-fn generateChunk(allocator: std.mem.Allocator, rand: std.Random, chunk_x_: usize, chunk_z_: usize) !Self {
+pub fn generateChunk(allocator: std.mem.Allocator, rand: std.Random, chunk_x_: usize, chunk_z_: usize) !Self {
     const chunk_x = @as(i16, @intCast(chunk_x_)) - CHUNK_DISTANCE;
     const chunk_z = @as(i16, @intCast(chunk_z_)) - CHUNK_DISTANCE;
 

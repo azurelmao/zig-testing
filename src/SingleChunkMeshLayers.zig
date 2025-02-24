@@ -3,6 +3,7 @@ const gl = @import("gl");
 const print = std.debug.print;
 const Chunk = @import("Chunk.zig");
 const LocalPos = Chunk.LocalPos;
+const Light = Chunk.Light;
 const Block = @import("block.zig").Block;
 
 const Self = @This();
@@ -23,11 +24,13 @@ const SingleChunkMeshFaces = struct {
     }
 };
 
-pub const LocalPosAndModelIdx = packed struct(u32) {
+pub const LocalPosAndModelIdx = packed struct(u64) {
     x: u5,
     y: u5,
     z: u5,
     model_idx: u17,
+    light: Chunk.Light,
+    _: u16 = 0,
 };
 
 pub fn new(allocator: std.mem.Allocator) Self {
@@ -71,32 +74,60 @@ pub fn generate(single_chunk_mesh_layers: *Self, chunk: Chunk, neighbor_chunks: 
                 if (inWestEdge(pos)) {
                     if (neighbor_chunks.west) |neighbor_chunk| {
                         const neighbor_block = getWestNeighborBlock(neighbor_chunk, pos);
+                        const neighbor_light = getWestNeighborLight(neighbor_chunk, pos);
 
                         if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                            try single_chunk_mesh_faces.faces[0].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[0] });
+                            try single_chunk_mesh_faces.faces[0].append(.{
+                                .x = pos.x,
+                                .y = pos.y,
+                                .z = pos.z,
+                                .model_idx = model_indices.faces[0],
+                                .light = neighbor_light,
+                            });
                         }
                     }
                 } else {
                     const neighbor_block = getWestBlock(chunk, pos);
+                    const neighbor_light = getWestLight(chunk, pos);
 
                     if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                        try single_chunk_mesh_faces.faces[0].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[0] });
+                        try single_chunk_mesh_faces.faces[0].append(.{
+                            .x = pos.x,
+                            .y = pos.y,
+                            .z = pos.z,
+                            .model_idx = model_indices.faces[0],
+                            .light = neighbor_light,
+                        });
                     }
                 }
 
                 if (inEastEdge(pos)) {
                     if (neighbor_chunks.east) |neighbor_chunk| {
                         const neighbor_block = getEastNeighborBlock(neighbor_chunk, pos);
+                        const neighbor_light = getEastNeighborLight(neighbor_chunk, pos);
 
                         if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                            try single_chunk_mesh_faces.faces[1].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[1] });
+                            try single_chunk_mesh_faces.faces[1].append(.{
+                                .x = pos.x,
+                                .y = pos.y,
+                                .z = pos.z,
+                                .model_idx = model_indices.faces[1],
+                                .light = neighbor_light,
+                            });
                         }
                     }
                 } else {
                     const neighbor_block = getEastBlock(chunk, pos);
+                    const neighbor_light = getEastLight(chunk, pos);
 
                     if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                        try single_chunk_mesh_faces.faces[1].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[1] });
+                        try single_chunk_mesh_faces.faces[1].append(.{
+                            .x = pos.x,
+                            .y = pos.y,
+                            .z = pos.z,
+                            .model_idx = model_indices.faces[1],
+                            .light = neighbor_light,
+                        });
                     }
                 }
 
@@ -104,9 +135,16 @@ pub fn generate(single_chunk_mesh_layers: *Self, chunk: Chunk, neighbor_chunks: 
                     // :ditto:
                 } else {
                     const neighbor_block = getBottomBlock(chunk, pos);
+                    const neighbor_light = getBottomLight(chunk, pos);
 
                     if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                        try single_chunk_mesh_faces.faces[2].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[2] });
+                        try single_chunk_mesh_faces.faces[2].append(.{
+                            .x = pos.x,
+                            .y = pos.y,
+                            .z = pos.z,
+                            .model_idx = model_indices.faces[2],
+                            .light = neighbor_light,
+                        });
                     }
                 }
 
@@ -114,41 +152,76 @@ pub fn generate(single_chunk_mesh_layers: *Self, chunk: Chunk, neighbor_chunks: 
                     // :ditto:
                 } else {
                     const neighbor_block = getTopBlock(chunk, pos);
+                    const neighbor_light = getTopLight(chunk, pos);
 
                     if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                        try single_chunk_mesh_faces.faces[3].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[3] });
+                        try single_chunk_mesh_faces.faces[3].append(.{
+                            .x = pos.x,
+                            .y = pos.y,
+                            .z = pos.z,
+                            .model_idx = model_indices.faces[3],
+                            .light = neighbor_light,
+                        });
                     }
                 }
 
                 if (inNorthEdge(pos)) {
                     if (neighbor_chunks.north) |neighbor_chunk| {
                         const neighbor_block = getNorthNeighborBlock(neighbor_chunk, pos);
+                        const neighbor_light = getNorthNeighborLight(neighbor_chunk, pos);
 
                         if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                            try single_chunk_mesh_faces.faces[4].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[4] });
+                            try single_chunk_mesh_faces.faces[4].append(.{
+                                .x = pos.x,
+                                .y = pos.y,
+                                .z = pos.z,
+                                .model_idx = model_indices.faces[4],
+                                .light = neighbor_light,
+                            });
                         }
                     }
                 } else {
                     const neighbor_block = getNorthBlock(chunk, pos);
+                    const neighbor_light = getNorthLight(chunk, pos);
 
                     if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                        try single_chunk_mesh_faces.faces[4].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[4] });
+                        try single_chunk_mesh_faces.faces[4].append(.{
+                            .x = pos.x,
+                            .y = pos.y,
+                            .z = pos.z,
+                            .model_idx = model_indices.faces[4],
+                            .light = neighbor_light,
+                        });
                     }
                 }
 
                 if (inSouthEdge(pos)) {
                     if (neighbor_chunks.south) |neighbor_chunk| {
                         const neighbor_block = getSouthNeighborBlock(neighbor_chunk, pos);
+                        const neighbor_light = getSouthNeighborLight(neighbor_chunk, pos);
 
                         if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                            try single_chunk_mesh_faces.faces[5].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[5] });
+                            try single_chunk_mesh_faces.faces[5].append(.{
+                                .x = pos.x,
+                                .y = pos.y,
+                                .z = pos.z,
+                                .model_idx = model_indices.faces[5],
+                                .light = neighbor_light,
+                            });
                         }
                     }
                 } else {
                     const neighbor_block = getSouthBlock(chunk, pos);
+                    const neighbor_light = getSouthLight(chunk, pos);
 
                     if (neighbor_block.isNotSolid() and neighbor_block != block) {
-                        try single_chunk_mesh_faces.faces[5].append(.{ .x = pos.x, .y = pos.y, .z = pos.z, .model_idx = model_indices.faces[5] });
+                        try single_chunk_mesh_faces.faces[5].append(.{
+                            .x = pos.x,
+                            .y = pos.y,
+                            .z = pos.z,
+                            .model_idx = model_indices.faces[5],
+                            .light = neighbor_light,
+                        });
                     }
                 }
             }
@@ -228,4 +301,54 @@ fn getNorthNeighborBlock(neighbor_chunk: Chunk, pos: LocalPos) Block {
 fn getSouthNeighborBlock(neighbor_chunk: Chunk, pos: LocalPos) Block {
     const offset_pos = LocalPos{ .x = pos.x, .y = pos.y, .z = 0 };
     return neighbor_chunk.getBlock(offset_pos);
+}
+
+fn getWestLight(chunk: Chunk, pos: LocalPos) Light {
+    const offset_pos = LocalPos{ .x = pos.x - 1, .y = pos.y, .z = pos.z };
+    return chunk.getLight(offset_pos);
+}
+
+fn getEastLight(chunk: Chunk, pos: LocalPos) Light {
+    const offset_pos = LocalPos{ .x = pos.x + 1, .y = pos.y, .z = pos.z };
+    return chunk.getLight(offset_pos);
+}
+
+fn getBottomLight(chunk: Chunk, pos: LocalPos) Light {
+    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y - 1, .z = pos.z };
+    return chunk.getLight(offset_pos);
+}
+
+fn getTopLight(chunk: Chunk, pos: LocalPos) Light {
+    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y + 1, .z = pos.z };
+    return chunk.getLight(offset_pos);
+}
+
+fn getNorthLight(chunk: Chunk, pos: LocalPos) Light {
+    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y, .z = pos.z - 1 };
+    return chunk.getLight(offset_pos);
+}
+
+fn getSouthLight(chunk: Chunk, pos: LocalPos) Light {
+    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y, .z = pos.z + 1 };
+    return chunk.getLight(offset_pos);
+}
+
+fn getWestNeighborLight(neighbor_chunk: Chunk, pos: LocalPos) Light {
+    const offset_pos = LocalPos{ .x = Chunk.Edge, .y = pos.y, .z = pos.z };
+    return neighbor_chunk.getLight(offset_pos);
+}
+
+fn getEastNeighborLight(neighbor_chunk: Chunk, pos: LocalPos) Light {
+    const offset_pos = LocalPos{ .x = 0, .y = pos.y, .z = pos.z };
+    return neighbor_chunk.getLight(offset_pos);
+}
+
+fn getNorthNeighborLight(neighbor_chunk: Chunk, pos: LocalPos) Light {
+    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y, .z = Chunk.Edge };
+    return neighbor_chunk.getLight(offset_pos);
+}
+
+fn getSouthNeighborLight(neighbor_chunk: Chunk, pos: LocalPos) Light {
+    const offset_pos = LocalPos{ .x = pos.x, .y = pos.y, .z = 0 };
+    return neighbor_chunk.getLight(offset_pos);
 }
