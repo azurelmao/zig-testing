@@ -15,15 +15,23 @@ pub const Vec3f = packed struct(u128) {
     }
 
     pub fn toChunkPos(self: Self) Chunk.Pos {
-        const x = @as(i16, @intFromFloat(@floor(self.x))) >> Chunk.BitSize;
-        const y = @as(i16, @intFromFloat(@floor(self.y))) >> Chunk.BitSize;
-        const z = @as(i16, @intFromFloat(@floor(self.z))) >> Chunk.BitSize;
+        const x = @as(i11, @intFromFloat(@floor(self.x))) >> Chunk.BitSize;
+        const y = @as(i11, @intFromFloat(@floor(self.y))) >> Chunk.BitSize;
+        const z = @as(i11, @intFromFloat(@floor(self.z))) >> Chunk.BitSize;
 
-        return .{ .x = x, .y = y, .z = z };
+        return .{
+            .x = x,
+            .y = y,
+            .z = z,
+        };
     }
 
     pub fn new(x: gl.float, y: gl.float, z: gl.float) Self {
-        return .{ .x = x, .y = y, .z = z };
+        return .{
+            .x = x,
+            .y = y,
+            .z = z,
+        };
     }
 
     pub fn negate(self: Self) Self {

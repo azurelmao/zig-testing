@@ -4,6 +4,7 @@ const gl = @import("gl");
 const zstbi = @import("zstbi");
 const print = std.debug.print;
 
+const World = @import("World.zig");
 const Chunk = @import("Chunk.zig");
 const Block = @import("block.zig").Block;
 
@@ -28,7 +29,7 @@ var view_projection_matrix: Matrix4x4f = undefined;
 var camera_pitch: gl.float = 0.0; // up and down
 var camera_yaw: gl.float = 0.0; // left and right
 
-var camera_position = Vec3f.new(0.0, 0.0, 0.0);
+var camera_position = Vec3f.new(0.0, 6.0, 0.0);
 var camera_direction: Vec3f = undefined;
 var camera_horizontal_direction: Vec3f = undefined;
 var camera_right: Vec3f = undefined;
@@ -411,27 +412,26 @@ pub const ChunkMeshLayers = struct {
     }
 };
 
-fn populateChunkMeshLayers(allocator: std.mem.Allocator, chunks: std.AutoHashMap(Chunk.Pos, Chunk), chunk_mesh_layers: *ChunkMeshLayers) !void {
+fn populateChunkMeshLayers(allocator: std.mem.Allocator, world: *World, chunk_mesh_layers: *ChunkMeshLayers) !void {
     var single_chunk_mesh_layers = SingleChunkMeshLayers.new(allocator);
 
-    var chunk_iter = chunks.valueIterator();
+    var chunk_iter = world.chunks.valueIterator();
     while (chunk_iter.next()) |chunk| {
-        const pos = chunk.pos;
-        const west_pos = pos.add(.{ .x = -1, .y = 0, .z = 0 });
-        const east_pos = pos.add(.{ .x = 1, .y = 0, .z = 0 });
-        const north_pos = pos.add(.{ .x = 0, .y = 0, .z = -1 });
-        const south_pos = pos.add(.{ .x = 0, .y = 0, .z = 1 });
+        const chunk_pos = chunk.pos;
 
-        const neighbors = SingleChunkMeshLayers.NeighborChunks{
-            .west = chunks.get(west_pos),
-            .east = chunks.get(east_pos),
-            .north = chunks.get(north_pos),
-            .south = chunks.get(south_pos),
+        const neighbor_chunks: SingleChunkMeshLayers.NeighborChunks = expr: {
+            var chunks: [6]?*Chunk = undefined;
+
+            for (0..6) |face_idx| {
+                chunks[face_idx] = world.getChunkOrNull(chunk_pos.add(Chunk.Pos.Offsets[face_idx]));
+            }
+
+            break :expr .{ .chunks = chunks };
         };
 
-        try chunk_mesh_layers.pos.buffer.append(pos.toVec3f());
+        try chunk_mesh_layers.pos.buffer.append(chunk_pos.toVec3f());
 
-        try SingleChunkMeshLayers.generate(&single_chunk_mesh_layers, chunk.*, &neighbors);
+        try single_chunk_mesh_layers.generate(chunk.*, &neighbor_chunks);
 
         inline for (0..2) |layer_idx| {
             const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
@@ -459,208 +459,6 @@ fn populateChunkMeshLayers(allocator: std.mem.Allocator, chunks: std.AutoHashMap
     }
 }
 
-const LightNode = struct {
-    pos: Chunk.LocalPos,
-    light: Chunk.Light,
-};
-
-fn propagateLight(light_addition_queue: *std.fifo.LinearFifo(LightNode, .Dynamic), chunk: Chunk) !void {
-    for (0..light_addition_queue.readableLength()) |i| {
-        const node = light_addition_queue.peekItem(i);
-        const pos = node.pos;
-        const light = node.light;
-
-        const current_light = chunk.getLight(pos);
-        const next_light = Chunk.Light{
-            .red = @max(current_light.red, light.red),
-            .green = @max(current_light.green, light.green),
-            .blue = @max(current_light.blue, light.blue),
-            .sunlight = @max(current_light.sunlight, light.sunlight),
-        };
-
-        chunk.setLight(pos, next_light);
-    }
-
-    while (light_addition_queue.readableLength() > 0) {
-        const node = light_addition_queue.readItem().?;
-        const node_pos = node.pos;
-        const node_light = node.light;
-
-        const west_pos = Chunk.LocalPos{ .x = node_pos.x - 1, .y = node_pos.y, .z = node_pos.z };
-        const east_pos = Chunk.LocalPos{ .x = node_pos.x + 1, .y = node_pos.y, .z = node_pos.z };
-        const bottom_pos = Chunk.LocalPos{ .x = node_pos.x, .y = node_pos.y - 1, .z = node_pos.z };
-        const top_pos = Chunk.LocalPos{ .x = node_pos.x, .y = node_pos.y + 1, .z = node_pos.z };
-        const north_pos = Chunk.LocalPos{ .x = node_pos.x, .y = node_pos.y, .z = node_pos.z - 1 };
-        const south_pos = Chunk.LocalPos{ .x = node_pos.x, .y = node_pos.y, .z = node_pos.z + 1 };
-
-        inline for (.{
-            west_pos,
-            east_pos,
-            bottom_pos,
-            top_pos,
-            north_pos,
-            south_pos,
-        }) |neighbor_pos| {
-            if (chunk.getBlock(neighbor_pos).letsLightThrough()) {
-                var neighbor_light = chunk.getLight(neighbor_pos);
-
-                var next_light = Chunk.Light{
-                    .red = neighbor_light.red,
-                    .green = neighbor_light.green,
-                    .blue = neighbor_light.blue,
-                    .sunlight = neighbor_light.sunlight,
-                };
-
-                var enqueue = false;
-                if (@as(u5, @intCast(neighbor_light.red)) + 1 < node_light.red) {
-                    enqueue = true;
-
-                    next_light.red = @max(neighbor_light.red, node_light.red) - 1;
-
-                    chunk.setLight(neighbor_pos, next_light);
-                }
-
-                if (@as(u5, @intCast(neighbor_light.green)) + 1 < node_light.green) {
-                    enqueue = true;
-
-                    neighbor_light = chunk.getLight(neighbor_pos);
-
-                    next_light.green = @max(neighbor_light.green, node_light.green) - 1;
-
-                    chunk.setLight(neighbor_pos, next_light);
-                }
-
-                if (@as(u5, @intCast(neighbor_light.blue)) + 1 < node_light.blue) {
-                    enqueue = true;
-
-                    neighbor_light = chunk.getLight(neighbor_pos);
-
-                    next_light.blue = @max(neighbor_light.blue, node_light.blue) - 1;
-
-                    chunk.setLight(neighbor_pos, next_light);
-                }
-
-                if (enqueue) {
-                    try light_addition_queue.writeItem(.{
-                        .pos = neighbor_pos,
-                        .light = next_light,
-                    });
-                }
-            }
-        }
-    }
-}
-
-fn addLight(allocator: std.mem.Allocator, chunk: Chunk, pos: Chunk.LocalPos, light: Chunk.Light) !void {
-    var light_addition_queue = std.fifo.LinearFifo(LightNode, .Dynamic).init(allocator);
-    try light_addition_queue.writeItem(.{
-        .pos = pos,
-        .light = light,
-    });
-
-    try propagateLight(&light_addition_queue, chunk);
-}
-
-fn removeLight(allocator: std.mem.Allocator, chunk: Chunk, pos: Chunk.LocalPos) !void {
-    var light_removal_queue = std.fifo.LinearFifo(LightNode, .Dynamic).init(allocator);
-    var light_addition_queue = std.fifo.LinearFifo(LightNode, .Dynamic).init(allocator);
-
-    const light = chunk.getLight(pos);
-    chunk.setLight(pos, .{
-        .red = 0,
-        .green = 0,
-        .blue = 0,
-        .sunlight = light.sunlight,
-    });
-    try light_removal_queue.writeItem(.{
-        .pos = pos,
-        .light = light,
-    });
-
-    while (light_removal_queue.readableLength() > 0) {
-        const node = light_removal_queue.readItem().?;
-        const node_pos = node.pos;
-        const node_light = node.light;
-
-        const west_pos = Chunk.LocalPos{ .x = node_pos.x - 1, .y = node_pos.y, .z = node_pos.z };
-        const east_pos = Chunk.LocalPos{ .x = node_pos.x + 1, .y = node_pos.y, .z = node_pos.z };
-        const bottom_pos = Chunk.LocalPos{ .x = node_pos.x, .y = node_pos.y - 1, .z = node_pos.z };
-        const top_pos = Chunk.LocalPos{ .x = node_pos.x, .y = node_pos.y + 1, .z = node_pos.z };
-        const north_pos = Chunk.LocalPos{ .x = node_pos.x, .y = node_pos.y, .z = node_pos.z - 1 };
-        const south_pos = Chunk.LocalPos{ .x = node_pos.x, .y = node_pos.y, .z = node_pos.z + 1 };
-
-        inline for (.{
-            west_pos,
-            east_pos,
-            bottom_pos,
-            top_pos,
-            north_pos,
-            south_pos,
-        }) |neighbor_pos| {
-            if (chunk.getBlock(neighbor_pos).letsLightThrough()) {
-                const neighbor_light = chunk.getLight(neighbor_pos);
-                var next_light = neighbor_light;
-
-                var some_other_light = Chunk.Light{
-                    .red = 0,
-                    .green = 0,
-                    .blue = 0,
-                    .sunlight = neighbor_light.sunlight,
-                };
-
-                var enqueueRemoval = false;
-                var enqueueAddition = false;
-
-                if (neighbor_light.red > 0 and neighbor_light.red <= node_light.red) {
-                    enqueueRemoval = true;
-                    next_light.red = 0;
-
-                    chunk.setLight(neighbor_pos, next_light);
-                } else if (neighbor_light.red > node_light.red) {
-                    enqueueAddition = true;
-                    some_other_light.red = next_light.red;
-                }
-
-                if (neighbor_light.green > 0 and neighbor_light.green <= node_light.green) {
-                    enqueueRemoval = true;
-                    next_light.green = 0;
-
-                    chunk.setLight(neighbor_pos, next_light);
-                } else if (neighbor_light.green > node_light.green) {
-                    enqueueAddition = true;
-                    some_other_light.green = next_light.green;
-                }
-
-                if (neighbor_light.blue > 0 and neighbor_light.blue <= node_light.blue) {
-                    enqueueRemoval = true;
-                    next_light.blue = 0;
-
-                    chunk.setLight(neighbor_pos, next_light);
-                } else if (neighbor_light.blue > node_light.blue) {
-                    enqueueAddition = true;
-                    some_other_light.blue = next_light.blue;
-                }
-
-                if (enqueueRemoval) {
-                    try light_removal_queue.writeItem(.{
-                        .pos = neighbor_pos,
-                        .light = neighbor_light,
-                    });
-                }
-
-                if (enqueueAddition) {
-                    try light_addition_queue.writeItem(.{
-                        .pos = neighbor_pos,
-                        .light = some_other_light,
-                    });
-                }
-            }
-        }
-    }
-
-    try propagateLight(&light_addition_queue, chunk);
-}
-
 var procs: gl.ProcTable = undefined;
 
 pub fn main() !void {
@@ -670,13 +468,6 @@ pub fn main() !void {
 
     zstbi.init(allocator);
     defer zstbi.deinit();
-
-    var prng = std.Random.DefaultPrng.init(blk: {
-        var seed: u64 = undefined;
-        try std.posix.getrandom(std.mem.asBytes(&seed));
-        break :blk seed;
-    });
-    const rand = prng.random();
 
     glfw.setErrorCallback(errorCallback);
     if (!glfw.init(.{})) {
@@ -747,41 +538,31 @@ pub fn main() !void {
     texture_array.bind(0);
 
     var debug_timer = try std.time.Timer.start();
-    var chunks = std.AutoHashMap(Chunk.Pos, Chunk).init(allocator);
 
     debug_timer.reset();
-    try Chunk.generateChunks(allocator, rand, &chunks);
+    var world = try World.new(allocator);
 
     var debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
-    std.log.info("Generating chunks done. {d} s", .{debug_time});
+    std.log.info("Generating world done. {d} s", .{debug_time});
 
-    const chunk = chunks.get(.{ .x = 0, .y = 0, .z = 0 }).?;
-    try addLight(
-        allocator,
-        chunk,
-        .{ .x = 16, .y = 7, .z = 16 },
-        .{ .red = 11, .green = 0, .blue = 0, .sunlight = 0 },
+    debug_timer.reset();
+
+    try world.addLight(
+        .{ .x = 0, .y = 5, .z = 0 },
+        .{ .red = 15, .green = 0, .blue = 0, .sunlight = 0 },
     );
 
-    try addLight(
-        allocator,
-        chunk,
-        .{ .x = 13, .y = 7, .z = 13 },
-        .{ .red = 0, .green = 11, .blue = 0, .sunlight = 0 },
+    try world.addLight(
+        .{ .x = 0, .y = 5, .z = 8 },
+        .{ .red = 0, .green = 0, .blue = 15, .sunlight = 0 },
     );
 
-    try addLight(
-        allocator,
-        chunk,
-        .{ .x = 19, .y = 7, .z = 19 },
-        .{ .red = 0, .green = 0, .blue = 11, .sunlight = 0 },
+    try world.removeLight(
+        .{ .x = 0, .y = 5, .z = 0 },
+        .{ .red = 15, .green = 0, .blue = 0, .sunlight = 0 },
     );
 
-    try removeLight(
-        allocator,
-        chunk,
-        .{ .x = 16, .y = 7, .z = 16 },
-    );
+    try world.propagateLights();
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Light propagation done. {d} s", .{debug_time});
@@ -789,7 +570,7 @@ pub fn main() !void {
     var chunk_mesh_layers = ChunkMeshLayers.new(allocator);
 
     debug_timer.reset();
-    try populateChunkMeshLayers(allocator, chunks, &chunk_mesh_layers);
+    try populateChunkMeshLayers(allocator, &world, &chunk_mesh_layers);
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Chunk mesh buffers done. {d} s", .{debug_time});
