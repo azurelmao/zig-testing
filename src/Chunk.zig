@@ -94,7 +94,7 @@ pub fn new(allocator: std.mem.Allocator, pos: Pos, default_block: Block) !Self {
     @memset(blocks, default_block);
 
     const light = try allocator.create([Volume]Light);
-    @memset(light, .{ .red = 0, .green = 0, .blue = 0, .sunlight = 1 });
+    @memset(light, .{ .red = 0, .green = 0, .blue = 0, .sunlight = 0 });
 
     return .{
         .blocks = blocks,

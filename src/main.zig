@@ -548,18 +548,23 @@ pub fn main() !void {
     debug_timer.reset();
 
     try world.addLight(
-        .{ .x = 0, .y = 5, .z = 0 },
-        .{ .red = 15, .green = 0, .blue = 0, .sunlight = 0 },
+        .{ .x = 16, .y = 7, .z = 16 },
+        .{ .red = 11, .green = 0, .blue = 0, .sunlight = 0 },
     );
 
     try world.addLight(
-        .{ .x = 0, .y = 5, .z = 8 },
-        .{ .red = 0, .green = 0, .blue = 15, .sunlight = 0 },
+        .{ .x = 13, .y = 7, .z = 13 },
+        .{ .red = 0, .green = 11, .blue = 0, .sunlight = 0 },
+    );
+
+    try world.addLight(
+        .{ .x = 19, .y = 7, .z = 19 },
+        .{ .red = 0, .green = 0, .blue = 11, .sunlight = 0 },
     );
 
     try world.removeLight(
-        .{ .x = 0, .y = 5, .z = 0 },
-        .{ .red = 15, .green = 0, .blue = 0, .sunlight = 0 },
+        .{ .x = 16, .y = 7, .z = 16 },
+        .{ .red = 11, .green = 0, .blue = 0, .sunlight = 0 },
     );
 
     try world.propagateLights();

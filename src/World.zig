@@ -254,12 +254,20 @@ pub fn getNeighborChunks(self: *Self, origin_chunk_pos: Chunk.Pos) NeighborChunk
 }
 
 pub fn propagateLightAddition(self: *Self, chunk: *Chunk) !void {
+    const neighbor_chunks = self.getNeighborChunks(chunk.pos);
+
     for (0..chunk.light_addition_queue.readableLength()) |node_idx| {
         const node = chunk.light_addition_queue.peekItem(node_idx);
-        const local_pos = node.pos.toLocalPos();
+        const pos = node.pos;
         const light = node.light;
 
-        const current_light = chunk.getLight(local_pos);
+        const neighbor_chunk_pos = pos.toChunkPos();
+        const neighbor_local_chunk_pos = NeighborChunks.LocalChunkPos.new(chunk.pos, neighbor_chunk_pos);
+        const neighbor_chunk = neighbor_chunks.chunks[neighbor_local_chunk_pos.index()] orelse continue;
+
+        const local_pos = pos.toLocalPos();
+
+        const current_light = neighbor_chunk.getLight(local_pos);
         const next_light = Chunk.Light{
             .red = @max(current_light.red, light.red),
             .green = @max(current_light.green, light.green),
@@ -267,10 +275,8 @@ pub fn propagateLightAddition(self: *Self, chunk: *Chunk) !void {
             .sunlight = @max(current_light.sunlight, light.sunlight),
         };
 
-        chunk.setLight(local_pos, next_light);
+        neighbor_chunk.setLight(local_pos, next_light);
     }
-
-    const neighbor_chunks = self.getNeighborChunks(chunk.pos);
 
     while (chunk.light_addition_queue.readableLength() > 0) {
         const node = chunk.light_addition_queue.readItem().?;
@@ -279,24 +285,17 @@ pub fn propagateLightAddition(self: *Self, chunk: *Chunk) !void {
 
         inline for (0..6) |face_idx| {
             skip: {
-                var the_correct_chunk: *Chunk = undefined;
-
                 const neighbor_world_pos = pos.add(Pos.Offsets[face_idx]);
                 const neighbor_chunk_pos = neighbor_world_pos.toChunkPos();
                 const neighbor_local_chunk_pos = NeighborChunks.LocalChunkPos.new(chunk.pos, neighbor_chunk_pos);
 
-                if (neighbor_chunks.chunks[neighbor_local_chunk_pos.index()]) |neighbor_chunk| {
-                    the_correct_chunk = neighbor_chunk;
-                } else {
-                    // TODO: Save light nodes for unloaded chunk
-                    break :skip;
-                }
+                const neighbor_chunk = neighbor_chunks.chunks[neighbor_local_chunk_pos.index()] orelse break :skip;
 
                 const neighbor_pos = neighbor_world_pos.toLocalPos();
-                const neighbor_block = the_correct_chunk.getBlock(neighbor_pos);
+                const neighbor_block = neighbor_chunk.getBlock(neighbor_pos);
 
                 if (neighbor_block.letsLightThrough()) {
-                    var neighbor_light = the_correct_chunk.getLight(neighbor_pos);
+                    var neighbor_light = neighbor_chunk.getLight(neighbor_pos);
                     var next_light = neighbor_light;
 
                     var enqueue = false;
@@ -305,27 +304,27 @@ pub fn propagateLightAddition(self: *Self, chunk: *Chunk) !void {
 
                         next_light.red = @max(neighbor_light.red, light.red) - 1;
 
-                        the_correct_chunk.setLight(neighbor_pos, next_light);
+                        neighbor_chunk.setLight(neighbor_pos, next_light);
                     }
 
                     if (@as(u5, @intCast(neighbor_light.green)) + 1 < light.green) {
                         enqueue = true;
 
-                        neighbor_light = the_correct_chunk.getLight(neighbor_pos);
+                        neighbor_light = neighbor_chunk.getLight(neighbor_pos);
 
                         next_light.green = @max(neighbor_light.green, light.green) - 1;
 
-                        the_correct_chunk.setLight(neighbor_pos, next_light);
+                        neighbor_chunk.setLight(neighbor_pos, next_light);
                     }
 
                     if (@as(u5, @intCast(neighbor_light.blue)) + 1 < light.blue) {
                         enqueue = true;
 
-                        neighbor_light = the_correct_chunk.getLight(neighbor_pos);
+                        neighbor_light = neighbor_chunk.getLight(neighbor_pos);
 
                         next_light.blue = @max(neighbor_light.blue, light.blue) - 1;
 
-                        the_correct_chunk.setLight(neighbor_pos, next_light);
+                        neighbor_chunk.setLight(neighbor_pos, next_light);
                     }
 
                     if (enqueue) {
@@ -382,28 +381,85 @@ pub fn propagateLightRemoval(self: *Self, chunk: *Chunk) !void {
                 const neighbor_block = the_correct_chunk.getBlock(neighbor_pos);
 
                 if (neighbor_block.letsLightThrough()) {
+                    // const neighbor_light = the_correct_chunk.getLight(neighbor_pos);
+                    // var next_light = neighbor_light;
+
+                    // var enqueue_removal = false;
+                    // var enqueue_addition = false;
+
+                    // if (neighbor_light.red != 0 and neighbor_light.red < light.red) {
+                    //     next_light.red = 0;
+
+                    //     the_correct_chunk.setLight(neighbor_pos, next_light);
+                    //     enqueue_removal = true;
+                    // } else if (neighbor_light.red >= light.red) {
+                    //     enqueue_addition = true;
+                    // }
+
+                    // if (neighbor_light.blue != 0 and neighbor_light.blue < light.blue) {
+                    //     next_light.blue = 0;
+
+                    //     the_correct_chunk.setLight(neighbor_pos, next_light);
+                    //     enqueue_removal = true;
+                    // } else if (neighbor_light.blue >= light.blue) {
+                    //     enqueue_addition = true;
+                    // }
+
+                    // if (enqueue_removal) {
+                    //     try chunk.light_removal_queue.writeItem(.{
+                    //         .pos = neighbor_world_pos,
+                    //         .light = neighbor_light,
+                    //     });
+                    // }
+
+                    // if (enqueue_addition) {
+                    //     try chunk.light_addition_queue.writeItem(.{
+                    //         .pos = neighbor_world_pos,
+                    //         .light = the_correct_chunk.getLight(neighbor_pos),
+                    //     });
+                    // }
+
                     const neighbor_light = the_correct_chunk.getLight(neighbor_pos);
                     var next_light = neighbor_light;
+
+                    var some_other_light = Chunk.Light{
+                        .red = 0,
+                        .green = 0,
+                        .blue = 0,
+                        .sunlight = neighbor_light.sunlight,
+                    };
 
                     var enqueue_removal = false;
                     var enqueue_addition = false;
 
-                    if (neighbor_light.red != 0 and neighbor_light.red < light.red) {
+                    if (neighbor_light.red > 0 and neighbor_light.red <= light.red) {
+                        enqueue_removal = true;
                         next_light.red = 0;
 
                         the_correct_chunk.setLight(neighbor_pos, next_light);
-                        enqueue_removal = true;
-                    } else if (neighbor_light.red >= light.red) {
+                    } else if (neighbor_light.red > light.red) {
                         enqueue_addition = true;
+                        some_other_light.red = neighbor_light.red;
                     }
 
-                    if (neighbor_light.blue != 0 and neighbor_light.blue < light.blue) {
+                    if (neighbor_light.green > 0 and neighbor_light.green <= light.green) {
+                        enqueue_removal = true;
+                        next_light.green = 0;
+
+                        the_correct_chunk.setLight(neighbor_pos, next_light);
+                    } else if (neighbor_light.green > light.green) {
+                        enqueue_addition = true;
+                        some_other_light.green = neighbor_light.green;
+                    }
+
+                    if (neighbor_light.blue > 0 and neighbor_light.blue <= light.blue) {
+                        enqueue_removal = true;
                         next_light.blue = 0;
 
                         the_correct_chunk.setLight(neighbor_pos, next_light);
-                        enqueue_removal = true;
-                    } else if (neighbor_light.blue >= light.blue) {
+                    } else if (neighbor_light.blue > light.blue) {
                         enqueue_addition = true;
+                        some_other_light.blue = neighbor_light.blue;
                     }
 
                     if (enqueue_removal) {
@@ -416,7 +472,7 @@ pub fn propagateLightRemoval(self: *Self, chunk: *Chunk) !void {
                     if (enqueue_addition) {
                         try chunk.light_addition_queue.writeItem(.{
                             .pos = neighbor_world_pos,
-                            .light = the_correct_chunk.getLight(neighbor_pos),
+                            .light = some_other_light,
                         });
                     }
                 }
