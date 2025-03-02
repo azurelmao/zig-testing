@@ -381,44 +381,6 @@ pub fn propagateLightRemoval(self: *Self, chunk: *Chunk) !void {
                 const neighbor_block = the_correct_chunk.getBlock(neighbor_pos);
 
                 if (neighbor_block.letsLightThrough()) {
-                    // const neighbor_light = the_correct_chunk.getLight(neighbor_pos);
-                    // var next_light = neighbor_light;
-
-                    // var enqueue_removal = false;
-                    // var enqueue_addition = false;
-
-                    // if (neighbor_light.red != 0 and neighbor_light.red < light.red) {
-                    //     next_light.red = 0;
-
-                    //     the_correct_chunk.setLight(neighbor_pos, next_light);
-                    //     enqueue_removal = true;
-                    // } else if (neighbor_light.red >= light.red) {
-                    //     enqueue_addition = true;
-                    // }
-
-                    // if (neighbor_light.blue != 0 and neighbor_light.blue < light.blue) {
-                    //     next_light.blue = 0;
-
-                    //     the_correct_chunk.setLight(neighbor_pos, next_light);
-                    //     enqueue_removal = true;
-                    // } else if (neighbor_light.blue >= light.blue) {
-                    //     enqueue_addition = true;
-                    // }
-
-                    // if (enqueue_removal) {
-                    //     try chunk.light_removal_queue.writeItem(.{
-                    //         .pos = neighbor_world_pos,
-                    //         .light = neighbor_light,
-                    //     });
-                    // }
-
-                    // if (enqueue_addition) {
-                    //     try chunk.light_addition_queue.writeItem(.{
-                    //         .pos = neighbor_world_pos,
-                    //         .light = the_correct_chunk.getLight(neighbor_pos),
-                    //     });
-                    // }
-
                     const neighbor_light = the_correct_chunk.getLight(neighbor_pos);
                     var next_light = neighbor_light;
 
