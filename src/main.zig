@@ -549,22 +549,17 @@ pub fn main() !void {
 
     try world.addLight(
         .{ .x = 16, .y = 7, .z = 16 },
-        .{ .red = 11, .green = 0, .blue = 0, .sunlight = 0 },
+        .{ .red = 15, .green = 0, .blue = 0, .indirect = 0 },
     );
 
     try world.addLight(
-        .{ .x = 13, .y = 7, .z = 13 },
-        .{ .red = 0, .green = 11, .blue = 0, .sunlight = 0 },
+        .{ .x = 16, .y = 7, .z = 8 },
+        .{ .red = 0, .green = 15, .blue = 0, .indirect = 0 },
     );
 
     try world.addLight(
-        .{ .x = 19, .y = 7, .z = 19 },
-        .{ .red = 0, .green = 0, .blue = 11, .sunlight = 0 },
-    );
-
-    try world.removeLight(
-        .{ .x = 16, .y = 7, .z = 16 },
-        .{ .red = 11, .green = 0, .blue = 0, .sunlight = 0 },
+        .{ .x = 8, .y = 7, .z = 16 },
+        .{ .red = 0, .green = 0, .blue = 15, .indirect = 0 },
     );
 
     try world.propagateLights();

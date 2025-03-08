@@ -14,10 +14,12 @@ pub const Edge = Size - 1;
 pub const Area = Size * Size;
 pub const Volume = Size * Size * Size;
 
+const LightQueue = std.fifo.LinearFifo(LightNode, .Dynamic);
+
 blocks: *[Volume]Block,
 light: *[Volume]Light,
-light_addition_queue: std.fifo.LinearFifo(LightNode, .Dynamic),
-light_removal_queue: std.fifo.LinearFifo(LightNode, .Dynamic),
+light_addition_queue: LightQueue,
+light_removal_queue: LightQueue,
 pos: Pos,
 
 pub const LightNode = struct {
@@ -29,7 +31,7 @@ pub const Light = packed struct(u16) {
     red: u4,
     green: u4,
     blue: u4,
-    sunlight: u4,
+    indirect: u4,
 };
 
 pub const Pos = struct {
@@ -94,13 +96,13 @@ pub fn new(allocator: std.mem.Allocator, pos: Pos, default_block: Block) !Self {
     @memset(blocks, default_block);
 
     const light = try allocator.create([Volume]Light);
-    @memset(light, .{ .red = 0, .green = 0, .blue = 0, .sunlight = 0 });
+    @memset(light, .{ .red = 0, .green = 0, .blue = 0, .indirect = 1 });
 
     return .{
         .blocks = blocks,
         .light = light,
-        .light_addition_queue = std.fifo.LinearFifo(LightNode, .Dynamic).init(allocator),
-        .light_removal_queue = std.fifo.LinearFifo(LightNode, .Dynamic).init(allocator),
+        .light_addition_queue = LightQueue.init(allocator),
+        .light_removal_queue = LightQueue.init(allocator),
         .pos = pos,
     };
 }

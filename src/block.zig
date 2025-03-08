@@ -36,7 +36,7 @@ pub const Block = enum(u8) {
 
     const tmp = expr: {
         var model_to_vertex_indices: [Model.MODELS.len]VertexIndices = undefined;
-        var block_to_model_indices: [Block.BLOCKS.len]ModelIndices = undefined;
+        var block_to_model_indices: [BLOCKS.len]ModelIndices = undefined;
         var vertex_buffer: []const Vertex = &.{};
         var vertex_idx_and_texture_idx_buffer: []const VertexIdxAndTextureIdx = &.{};
 
@@ -53,7 +53,7 @@ pub const Block = enum(u8) {
             model_to_vertex_indices[@intFromEnum(model)] = vertex_indices;
         }
 
-        for (Block.BLOCKS_WITH_A_MODEL) |block| {
+        for (BLOCKS_WITH_A_MODEL) |block| {
             const model = block.getModel();
             const texture_schema = block.getTextureSchema();
 
@@ -82,6 +82,13 @@ pub const Block = enum(u8) {
     pub const VERTEX_BUFFER = tmp.vertex_buffer;
     pub const VERTEX_IDX_AND_TEXTURE_IDX_BUFFER = tmp.vertex_idx_and_texture_idx_buffer;
     pub const BLOCK_TO_MODEL_INDICES = tmp.block_to_model_indices;
+
+    pub fn isSolid(self: Self) bool {
+        return switch (self) {
+            .air, .water => false,
+            else => true,
+        };
+    }
 
     pub fn isNotSolid(self: Self) bool {
         return switch (self) {
