@@ -8,7 +8,7 @@ const Block = @import("block.zig").Block;
 
 const Self = @This();
 
-layers: [2]SingleChunkMeshFaces,
+layers: [Block.Layer.LAYERS.len]SingleChunkMeshFaces,
 
 const SingleChunkMeshFaces = struct {
     faces: [6]std.ArrayList(LocalPosAndModelIdx),
@@ -34,9 +34,9 @@ pub const LocalPosAndModelIdx = packed struct(u64) {
 };
 
 pub fn new(allocator: std.mem.Allocator) Self {
-    var layers: [2]SingleChunkMeshFaces = undefined;
+    var layers: [Block.Layer.LAYERS.len]SingleChunkMeshFaces = undefined;
 
-    for (0..2) |layer_idx| {
+    inline for (0..Block.Layer.LAYERS.len) |layer_idx| {
         layers[layer_idx] = SingleChunkMeshFaces.new(allocator);
     }
 
@@ -170,8 +170,8 @@ pub const NeighborChunks = struct {
     }
 };
 
-pub fn generate(single_chunk_mesh_layers: *Self, chunk: Chunk, neighbor_chunks: *const NeighborChunks) !void {
-    var single_chunk_mesh_faces = &single_chunk_mesh_layers.layers[0];
+pub fn generate(single_chunk_mesh_layers: *Self, chunk: *Chunk, neighbor_chunks: *const NeighborChunks) !void {
+    var single_chunk_mesh_faces: *SingleChunkMeshFaces = undefined;
 
     for (0..Chunk.Size) |x| {
         for (0..Chunk.Size) |y| {
@@ -183,13 +183,9 @@ pub fn generate(single_chunk_mesh_layers: *Self, chunk: Chunk, neighbor_chunks: 
                     continue;
                 }
 
-                if (block == .water) {
-                    single_chunk_mesh_faces = &single_chunk_mesh_layers.layers[1];
-                } else {
-                    single_chunk_mesh_faces = &single_chunk_mesh_layers.layers[0];
-                }
+                single_chunk_mesh_faces = &single_chunk_mesh_layers.layers[@intFromEnum(block.getLayer())];
 
-                const model_indices = Block.BLOCK_TO_MODEL_INDICES[@intFromEnum(block)];
+                const model_indices = block.getModelIndices();
 
                 inline for (0..6) |face_idx| {
                     if (NeighborChunks.inEdge[face_idx](pos)) {

@@ -142,12 +142,12 @@ pub fn generateChunk(allocator: std.mem.Allocator, rand: std.Random, chunk_x_: u
             const x: u5 = @intCast(x_);
             const z: u5 = @intCast(z_);
 
-            const height = rand.intRangeAtMost(u5, 1, 7) + additional_height;
+            const height = rand.intRangeAtMost(u5, 1, 3) + additional_height;
 
             for (0..height) |y_| {
                 const y: u5 = @intCast(y_);
 
-                const block: Block = if (y == height - 1) .grass else .stone;
+                const block: Block = if (y == height - 1) if (y < 5) .sand else .grass else .stone;
                 chunk.setBlock(.{ .x = x, .y = y, .z = z }, block);
             }
 
@@ -284,47 +284,56 @@ pub fn propagateLightAddition(self: *Self, chunk: *Chunk) !void {
                 const neighbor_local_pos = neighbor_world_pos.toLocalPos();
                 const neighbor_block = neighbor_chunk.getBlock(neighbor_local_pos);
 
-                if (neighbor_block.letsLightThrough()) {
-                    var neighbor_light = neighbor_chunk.getLight(neighbor_local_pos);
-                    var next_light = neighbor_light;
+                const neighbor_light_opacity = switch (neighbor_block.getLightOpacity()) {
+                    .translucent => |light_opacity| light_opacity,
+                    .@"opaque" => break :skip,
+                };
 
-                    var enqueue = false;
-                    if (@as(u5, @intCast(neighbor_light.red)) + 1 < light.red) {
-                        enqueue = true;
+                var neighbor_light = neighbor_chunk.getLight(neighbor_local_pos);
+                var next_light = neighbor_light;
 
-                        next_light.red = @max(neighbor_light.red, light.red) - 1;
+                var enqueue = false;
+                if (@as(u5, @intCast(neighbor_light.red)) + 1 < light.red) {
+                    enqueue = true;
 
-                        neighbor_chunk.setLight(neighbor_local_pos, next_light);
-                    }
+                    const light_to_subtract = neighbor_light_opacity.red + 1;
+                    const max_light = @max(neighbor_light.red, light.red);
+                    next_light.red = if (max_light <= light_to_subtract) 0 else max_light - light_to_subtract;
 
-                    if (@as(u5, @intCast(neighbor_light.green)) + 1 < light.green) {
-                        enqueue = true;
+                    neighbor_chunk.setLight(neighbor_local_pos, next_light);
+                }
 
-                        neighbor_light = neighbor_chunk.getLight(neighbor_local_pos);
+                if (@as(u5, @intCast(neighbor_light.green)) + 1 < light.green) {
+                    enqueue = true;
 
-                        next_light.green = @max(neighbor_light.green, light.green) - 1;
+                    neighbor_light = neighbor_chunk.getLight(neighbor_local_pos);
 
-                        neighbor_chunk.setLight(neighbor_local_pos, next_light);
-                    }
+                    const light_to_subtract = neighbor_light_opacity.green + 1;
+                    const max_light = @max(neighbor_light.green, light.green);
+                    next_light.green = if (max_light <= light_to_subtract) 0 else max_light - light_to_subtract;
 
-                    if (@as(u5, @intCast(neighbor_light.blue)) + 1 < light.blue) {
-                        enqueue = true;
+                    neighbor_chunk.setLight(neighbor_local_pos, next_light);
+                }
 
-                        neighbor_light = neighbor_chunk.getLight(neighbor_local_pos);
+                if (@as(u5, @intCast(neighbor_light.blue)) + 1 < light.blue) {
+                    enqueue = true;
 
-                        next_light.blue = @max(neighbor_light.blue, light.blue) - 1;
+                    neighbor_light = neighbor_chunk.getLight(neighbor_local_pos);
 
-                        neighbor_chunk.setLight(neighbor_local_pos, next_light);
-                    }
+                    const light_to_subtract = neighbor_light_opacity.blue + 1;
+                    const max_light = @max(neighbor_light.blue, light.blue);
+                    next_light.blue = if (max_light <= light_to_subtract) 0 else max_light - light_to_subtract;
 
-                    if (enqueue) {
-                        try neighbor_chunk.light_addition_queue.writeItem(.{
-                            .pos = neighbor_world_pos,
-                            .light = next_light,
-                        });
+                    neighbor_chunk.setLight(neighbor_local_pos, next_light);
+                }
 
-                        if (is_neighbor_chunk) try self.chunks_which_need_to_add_lights.enqueue(neighbor_chunk_pos);
-                    }
+                if (enqueue) {
+                    try neighbor_chunk.light_addition_queue.writeItem(.{
+                        .pos = neighbor_world_pos,
+                        .light = next_light,
+                    });
+
+                    if (is_neighbor_chunk) try self.chunks_which_need_to_add_lights.enqueue(neighbor_chunk_pos);
                 }
             }
         }
@@ -379,57 +388,69 @@ pub fn propagateLightRemoval(self: *Self, chunk: *Chunk) !void {
                 const neighbor_local_pos = neighbor_world_pos.toLocalPos();
                 const neighbor_block = neighbor_chunk.getBlock(neighbor_local_pos);
 
-                if (neighbor_block.letsLightThrough()) {
-                    const neighbor_light = neighbor_chunk.getLight(neighbor_local_pos);
-                    var removed_light = neighbor_light;
-                    var next_light = light;
+                const neighbor_light_opacity = switch (neighbor_block.getLightOpacity()) {
+                    .translucent => |light_opacity| light_opacity,
+                    .@"opaque" => break :skip,
+                };
 
-                    var enqueue_removal = false;
-                    var enqueue_addition = false;
+                const neighbor_light = neighbor_chunk.getLight(neighbor_local_pos);
+                var removed_light = neighbor_light;
+                var next_light = light;
 
-                    if (neighbor_light.red > 0 and neighbor_light.red <= light.red) {
-                        enqueue_removal = true;
-                        removed_light.red = 0;
-                        next_light.red -= 1;
-                    } else if (light.red > 0 and neighbor_light.red > light.red) {
-                        enqueue_addition = true;
-                    }
+                var enqueue_removal = false;
+                var enqueue_addition = false;
 
-                    if (neighbor_light.green > 0 and neighbor_light.green <= light.green) {
-                        enqueue_removal = true;
-                        removed_light.green = 0;
-                        next_light.green -= 1;
-                    } else if (light.green > 0 and neighbor_light.green > light.green) {
-                        enqueue_addition = true;
-                    }
+                if (neighbor_light.red > 0 and neighbor_light.red <= light.red) {
+                    enqueue_removal = true;
+                    removed_light.red = 0;
 
-                    if (neighbor_light.blue > 0 and neighbor_light.blue <= light.blue) {
-                        enqueue_removal = true;
-                        removed_light.blue = 0;
-                        next_light.blue -= 1;
-                    } else if (light.blue > 0 and neighbor_light.blue > light.blue) {
-                        enqueue_addition = true;
-                    }
+                    const light_to_subtract = neighbor_light_opacity.red + 1;
+                    const max_light = @max(neighbor_light.red, light.red);
+                    next_light.red = if (max_light <= light_to_subtract) 0 else max_light - light_to_subtract;
+                } else if (light.red > 0 and neighbor_light.red > light.red) {
+                    enqueue_addition = true;
+                }
 
-                    if (enqueue_removal) {
-                        try neighbor_chunk.light_removal_queue.writeItem(.{
-                            .pos = neighbor_world_pos,
-                            .light = next_light,
-                        });
+                if (neighbor_light.green > 0 and neighbor_light.green <= light.green) {
+                    enqueue_removal = true;
+                    removed_light.green = 0;
 
-                        neighbor_chunk.setLight(neighbor_local_pos, removed_light);
+                    const light_to_subtract = neighbor_light_opacity.green + 1;
+                    const max_light = @max(neighbor_light.green, light.green);
+                    next_light.green = if (max_light <= light_to_subtract) 0 else max_light - light_to_subtract;
+                } else if (light.green > 0 and neighbor_light.green > light.green) {
+                    enqueue_addition = true;
+                }
 
-                        if (is_neighbor_chunk) try self.chunks_which_need_to_remove_lights.enqueue(neighbor_chunk_pos);
-                    }
+                if (neighbor_light.blue > 0 and neighbor_light.blue <= light.blue) {
+                    enqueue_removal = true;
+                    removed_light.blue = 0;
 
-                    if (enqueue_addition) {
-                        try neighbor_chunk.light_addition_queue.writeItem(.{
-                            .pos = neighbor_world_pos,
-                            .light = neighbor_light,
-                        });
+                    const light_to_subtract = neighbor_light_opacity.blue + 1;
+                    const max_light = @max(neighbor_light.blue, light.blue);
+                    next_light.blue = if (max_light <= light_to_subtract) 0 else max_light - light_to_subtract;
+                } else if (light.blue > 0 and neighbor_light.blue > light.blue) {
+                    enqueue_addition = true;
+                }
 
-                        try self.chunks_which_need_to_add_lights.enqueue(neighbor_chunk_pos);
-                    }
+                if (enqueue_removal) {
+                    try neighbor_chunk.light_removal_queue.writeItem(.{
+                        .pos = neighbor_world_pos,
+                        .light = next_light,
+                    });
+
+                    neighbor_chunk.setLight(neighbor_local_pos, removed_light);
+
+                    if (is_neighbor_chunk) try self.chunks_which_need_to_remove_lights.enqueue(neighbor_chunk_pos);
+                }
+
+                if (enqueue_addition) {
+                    try neighbor_chunk.light_addition_queue.writeItem(.{
+                        .pos = neighbor_world_pos,
+                        .light = neighbor_light,
+                    });
+
+                    try self.chunks_which_need_to_add_lights.enqueue(neighbor_chunk_pos);
                 }
             }
         }

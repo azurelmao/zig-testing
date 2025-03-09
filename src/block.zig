@@ -1,5 +1,6 @@
 const std = @import("std");
 const Side = @import("side.zig").Side;
+const Light = @import("Chunk.zig").Light;
 
 pub const Block = enum(u8) {
     const Self = @This();
@@ -7,9 +8,11 @@ pub const Block = enum(u8) {
     air,
     stone,
     grass,
+    sand,
     bricks,
     water,
     ice,
+    glass_tinted,
     glass,
 
     pub const BLOCKS = std.enums.values(Block);
@@ -81,34 +84,82 @@ pub const Block = enum(u8) {
 
     pub const VERTEX_BUFFER = tmp.vertex_buffer;
     pub const VERTEX_IDX_AND_TEXTURE_IDX_BUFFER = tmp.vertex_idx_and_texture_idx_buffer;
-    pub const BLOCK_TO_MODEL_INDICES = tmp.block_to_model_indices;
+    const BLOCK_TO_MODEL_INDICES = tmp.block_to_model_indices;
 
-    pub fn isSolid(self: Self) bool {
-        return switch (self) {
-            .air, .water => false,
-            else => true,
-        };
+    pub fn getModelIndices(self: Self) ModelIndices {
+        return BLOCK_TO_MODEL_INDICES[@intFromEnum(self)];
     }
 
     pub fn isNotSolid(self: Self) bool {
         return switch (self) {
-            .air, .water => true,
+            .air, .water, .ice, .glass, .glass_tinted => true,
             else => false,
         };
     }
 
-    pub fn letsLightThrough(self: Self) bool {
+    pub const Layer = enum {
+        solid,
+        water,
+        ice,
+        glass_stained,
+        glass,
+
+        pub const LAYERS = std.enums.values(Layer);
+    };
+
+    pub fn getLayer(self: Self) Layer {
         return switch (self) {
-            .air, .water, .glass => true,
-            else => false,
+            .water => .water,
+            .ice => .ice,
+            .glass_tinted => .glass_stained,
+            .glass => .glass,
+            else => .solid,
+        };
+    }
+
+    pub const LightOpacityKind = enum {
+        @"opaque",
+        translucent,
+    };
+
+    pub const LightOpacity = union(LightOpacityKind) {
+        @"opaque",
+        translucent: Light,
+    };
+
+    pub fn getLightOpacity(self: Self) LightOpacity {
+        return switch (self) {
+            .air, .glass => .{ .translucent = .{
+                .red = 0,
+                .green = 0,
+                .blue = 0,
+                .indirect = 0,
+            } },
+
+            .water, .ice => .{ .translucent = .{
+                .red = 1,
+                .green = 1,
+                .blue = 0,
+                .indirect = 1,
+            } },
+
+            .glass_tinted => .{ .translucent = .{
+                .red = 2,
+                .green = 8,
+                .blue = 0,
+                .indirect = 0,
+            } },
+
+            else => .{ .@"opaque" = {} },
         };
     }
 
     pub const Texture = enum {
-        cobble,
+        stone,
         grass_top,
         grass_side,
         dirt,
+        sand,
         bricks,
         water,
         ice,
@@ -117,7 +168,7 @@ pub const Block = enum(u8) {
 
         pub const TEXTURES = std.enums.values(Texture);
 
-        pub const TEXTURE_TO_PATH = expr: {
+        const TEXTURE_TO_PATH = expr: {
             var texture_to_path: [TEXTURES.len][:0]const u8 = undefined;
 
             for (TEXTURES) |texture| {
@@ -126,6 +177,10 @@ pub const Block = enum(u8) {
 
             break :expr texture_to_path;
         };
+
+        pub fn getPath(self: Texture) [:0]const u8 {
+            return TEXTURE_TO_PATH[@intFromEnum(self)];
+        }
     };
 
     pub const TextureScheme = struct {
@@ -147,13 +202,15 @@ pub const Block = enum(u8) {
 
     pub fn getTextureSchema(comptime self: Self) TextureScheme {
         return switch (self) {
-            .air => std.debug.panic("Air doesn't have a texture", .{}),
-            .stone => TextureScheme.allSides(.cobble),
+            .stone => TextureScheme.allSides(.stone),
             .grass => TextureScheme.grass(.grass_top, .dirt, .grass_side),
+            .sand => TextureScheme.allSides(.sand),
             .bricks => TextureScheme.allSides(.bricks),
             .water => TextureScheme.allSides(.water),
             .ice => TextureScheme.allSides(.ice),
+            .glass_tinted => TextureScheme.allSides(.glass_tinted),
             .glass => TextureScheme.allSides(.glass),
+            else => std.debug.panic("Block {} doesn't have a texture", .{@tagName(self)}),
         };
     }
 
