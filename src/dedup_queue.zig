@@ -30,11 +30,11 @@ pub fn DedupQueue(T: type) type {
         }
 
         pub fn dequeue(self: *Self) ?T {
-            if (self.out.count() == 0) while (self.in.popOrNull()) |kv| {
+            if (self.out.count() == 0) while (self.in.pop()) |kv| {
                 self.out.putAssumeCapacity(kv.key, {});
             };
 
-            const kv = self.out.popOrNull() orelse return null;
+            const kv = self.out.pop() orelse return null;
             return kv.key;
         }
     };

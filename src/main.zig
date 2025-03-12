@@ -1,5 +1,5 @@
 const std = @import("std");
-const glfw = @import("mach-glfw");
+const glfw = @import("glfw");
 const gl = @import("gl");
 const zstbi = @import("zstbi");
 const print = std.debug.print;
@@ -7,6 +7,8 @@ const print = std.debug.print;
 const World = @import("World.zig");
 const Chunk = @import("Chunk.zig");
 const Block = @import("block.zig").Block;
+const Side = @import("side.zig").Side;
+const DedupQueue = @import("dedup_queue.zig").DedupQueue;
 
 const SingleChunkMeshLayers = @import("SingleChunkMeshLayers.zig");
 const ShaderProgram = @import("ShaderProgram.zig");
@@ -19,6 +21,8 @@ const TextureArray2D = @import("TextureArray2D.zig");
 pub const std_options: std.Options = .{
     .log_level = .info,
 };
+
+var procs: gl.ProcTable = undefined;
 
 var shader_program: ShaderProgram = undefined;
 
@@ -459,7 +463,107 @@ fn populateChunkMeshLayers(allocator: std.mem.Allocator, world: *World, chunk_me
     }
 }
 
-var procs: gl.ProcTable = undefined;
+pub const RaycastSide = enum {
+    west,
+    east,
+    bottom,
+    top,
+    north,
+    south,
+    inside,
+    out_of_bounds,
+};
+
+pub const RaycastResult = struct {
+    pos: World.Pos,
+    side: RaycastSide,
+    block: ?Block,
+};
+
+pub fn raycast(world: *World, origin: Vec3f, direction: Vec3f) RaycastResult {
+    var moving_position = origin.floor();
+
+    const step = Vec3f.new(std.math.sign(direction.x), std.math.sign(direction.y), std.math.sign(direction.z));
+    const delta_distance = Vec3f.fromScalar(direction.magnitude()).divide(direction).abs();
+    var side_distance = step.multiply(moving_position.subtract(origin)).add(step.multiplyScalar(0.5).addScalar(0.5)).multiply(delta_distance);
+
+    var mask = packed struct {
+        x: bool,
+        y: bool,
+        z: bool,
+    }{
+        .x = false,
+        .y = false,
+        .z = false,
+    };
+
+    for (0..120) |_| {
+        const block_world_pos = moving_position.toWorldPos();
+        const block_or_null = world.getBlockOrNull(block_world_pos);
+
+        if (block_or_null) |block| {
+            if (block.isInteractable()) {
+                const side: RaycastSide = expr: {
+                    if (mask.x) {
+                        if (step.x > 0) {
+                            break :expr .west;
+                        } else if (step.x < 0) {
+                            break :expr .east;
+                        }
+                    } else if (mask.y) {
+                        if (step.y > 0) {
+                            break :expr .bottom;
+                        } else if (step.y < 0) {
+                            break :expr .top;
+                        }
+                    } else if (mask.z) {
+                        if (step.z > 0) {
+                            break :expr .north;
+                        } else if (step.z < 0) {
+                            break :expr .south;
+                        }
+                    }
+
+                    break :expr .inside;
+                };
+
+                return .{
+                    .pos = block_world_pos,
+                    .side = side,
+                    .block = block,
+                };
+            }
+        }
+
+        if (side_distance.x < side_distance.y) {
+            if (side_distance.x < side_distance.z) {
+                side_distance.x += delta_distance.x;
+                moving_position.x += step.x;
+                mask = .{ .x = true, .y = false, .z = false };
+            } else {
+                side_distance.z += delta_distance.z;
+                moving_position.z += step.z;
+                mask = .{ .x = false, .y = false, .z = true };
+            }
+        } else {
+            if (side_distance.y < side_distance.z) {
+                side_distance.y += delta_distance.y;
+                moving_position.y += step.y;
+                mask = .{ .x = false, .y = true, .z = false };
+            } else {
+                side_distance.z += delta_distance.z;
+                moving_position.z += step.z;
+                mask = .{ .x = false, .y = false, .z = true };
+            }
+        }
+    }
+
+    return .{
+        .pos = moving_position.toWorldPos(),
+        .side = .out_of_bounds,
+        .block = null,
+    };
+}
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -467,7 +571,6 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     zstbi.init(allocator);
-    defer zstbi.deinit();
 
     glfw.setErrorCallback(errorCallback);
     if (!glfw.init(.{})) {
@@ -537,65 +640,83 @@ pub fn main() !void {
     });
     texture_array.bind(0);
 
+    var indirect_light_image = try zstbi.Image.loadFromFile("assets/textures/indirect_light.png", 0);
+    var indirect_light_data: [16]Vec3f = undefined;
+    for (0..(indirect_light_image.data.len / 4)) |idx| {
+        const vec3 = Vec3f{
+            .x = @as(gl.float, @floatFromInt(indirect_light_image.data[idx * 4])) / 255.0,
+            .y = @as(gl.float, @floatFromInt(indirect_light_image.data[idx * 4 + 1])) / 255.0,
+            .z = @as(gl.float, @floatFromInt(indirect_light_image.data[idx * 4 + 2])) / 255.0,
+        };
+
+        indirect_light_data[idx] = vec3;
+    }
+
+    var indirect_light_buffer_handle: gl.uint = undefined;
+    gl.CreateBuffers(1, @ptrCast(&indirect_light_buffer_handle));
+    gl.NamedBufferStorage(
+        indirect_light_buffer_handle,
+        @intCast((@sizeOf(Vec3f)) * 16),
+        @ptrCast(&indirect_light_data),
+        gl.DYNAMIC_STORAGE_BIT,
+    );
+    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, indirect_light_buffer_handle);
+
     var debug_timer = try std.time.Timer.start();
 
     debug_timer.reset();
     var world = try World.new(allocator);
+    try world.generateChunks();
 
     var debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Generating world done. {d} s", .{debug_time});
 
-    const pyramid_pos = World.Pos{ .x = 0, .y = 0, .z = 0 };
-    const pyramid_height = 16;
-    var pyramid_size: usize = 33;
-    var offset: i16 = 0;
-
-    for (0..pyramid_height) |y_| {
-        for (0..pyramid_size) |x_| {
-            for (0..pyramid_size) |z_| {
-                const x: i16 = @intCast(x_);
-                const y: i16 = @intCast(y_);
-                const z: i16 = @intCast(z_);
-
-                var block = Block.air;
-                if (x == pyramid_size - 1 or z == pyramid_size - 1 or
-                    x == 0 or z == 0 or y == 0)
-                {
-                    block = Block.bricks;
-                }
-
-                const pos = pyramid_pos.add(.{ .x = x + offset, .y = y, .z = z + offset });
-                try world.setBlock(pos, block);
-            }
-        }
-
-        pyramid_size -= 2;
-        offset += 1;
-    }
-
-    for (0..7) |y_| {
-        const y: i16 = @intCast(y_);
-        try world.setBlock(.{ .x = 0, .y = y, .z = 0 }, Block.ice);
-    }
-
-    try world.setBlock(.{ .x = 16, .y = 15, .z = 16 }, Block.glass_tinted);
-
     debug_timer.reset();
-
-    try world.addLight(
-        .{ .x = 0, .y = 5, .z = 0 },
-        .{ .red = 15, .green = 15, .blue = 15, .indirect = 0 },
-    );
-
-    try world.addLight(
-        .{ .x = 16, .y = 16, .z = 16 },
-        .{ .red = 15, .green = 15, .blue = 15, .indirect = 0 },
-    );
-
     try world.propagateLights();
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
-    std.log.info("Light propagation done. {d} s", .{debug_time});
+    std.log.info("Indirect light propagation done. {d} s", .{debug_time});
+
+    // const pyramid_pos = World.Pos{ .x = 0, .y = 0, .z = 0 };
+    // const pyramid_height = 16;
+    // var pyramid_size: usize = 33;
+    // var offset: i16 = 0;
+
+    // for (0..pyramid_height) |y_| {
+    //     for (0..pyramid_size) |x_| {
+    //         for (0..pyramid_size) |z_| {
+    //             const x: i16 = @intCast(x_);
+    //             const y: i16 = @intCast(y_);
+    //             const z: i16 = @intCast(z_);
+
+    //             var block = Block.air;
+    //             if (x == pyramid_size - 1 or z == pyramid_size - 1 or
+    //                 x == 0 or z == 0 or y == 0)
+    //             {
+    //                 block = Block.bricks;
+    //             }
+
+    //             const pos = pyramid_pos.add(.{ .x = x + offset, .y = y, .z = z + offset });
+    //             try world.setBlockAndAffectLight(pos, block);
+    //         }
+    //     }
+
+    //     pyramid_size -= 2;
+    //     offset += 1;
+    // }
+
+    // for (0..9) |y_| {
+    //     const y: i16 = @intCast(y_);
+    //     try world.setBlockAndAffectLight(.{ .x = 0, .y = y, .z = 0 }, Block.ice);
+    // }
+
+    // try world.setBlockAndAffectLight(.{ .x = 16, .y = 15, .z = 16 }, Block.glass_tinted);
+
+    // debug_timer.reset();
+    // try world.propagateLights();
+
+    // debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
+    // std.log.info("Light propagation done. {d} s", .{debug_time});
 
     var chunk_mesh_layers = ChunkMeshLayers.new(allocator);
 
@@ -682,7 +803,7 @@ pub fn main() !void {
     var timer = try std.time.Timer.start();
 
     while (!window.shouldClose()) {
-        gl.ClearColor(0.1, 0.1, 0.2, 1.0);
+        gl.ClearColor(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         var camera_moved = false;
@@ -710,6 +831,62 @@ pub fn main() !void {
         if (window.getKey(glfw.Key.d) == .press) {
             camera_position.addInPlace(camera_right.multiplyScalar(movement_speed * delta_time));
             camera_moved = true;
+        }
+
+        if (window.getKey(glfw.Key.g) == .press) {
+            const result = raycast(&world, camera_position, camera_direction);
+            const world_pos = result.pos;
+            const chunk_pos = world_pos.toChunkPos();
+            const local_pos = world_pos.toLocalPos();
+            const side = result.side;
+
+            switch (side) {
+                else => {
+                    const light = try world.getLight(world_pos.add(World.Pos.Offsets[@intFromEnum(side)]));
+
+                    std.log.info("at w[{} {} {}], c[{} {} {}], l[{} {} {}]:\n - block: {s}\n - light on {s} side: [{} {} {} {}]", .{
+                        world_pos.x,
+                        world_pos.y,
+                        world_pos.z,
+                        chunk_pos.x,
+                        chunk_pos.y,
+                        chunk_pos.z,
+                        local_pos.x,
+                        local_pos.y,
+                        local_pos.z,
+                        if (result.block) |block| @tagName(block) else "null",
+                        @tagName(side),
+                        light.red,
+                        light.green,
+                        light.blue,
+                        light.indirect,
+                    });
+                },
+
+                .inside => {
+                    const light = try world.getLight(world_pos);
+
+                    std.log.info("at [{} {} {}]:\n - block: {s}\n - light inside: [{} {} {} {}]", .{
+                        world_pos.x,
+                        world_pos.y,
+                        world_pos.z,
+                        if (result.block) |block| @tagName(block) else "null",
+                        light.red,
+                        light.green,
+                        light.blue,
+                        light.indirect,
+                    });
+                },
+
+                .out_of_bounds => {
+                    std.log.info("at [{} {} {}]:\n - block: {s}", .{
+                        world_pos.x,
+                        world_pos.y,
+                        world_pos.z,
+                        if (result.block) |block| @tagName(block) else "null",
+                    });
+                },
+            }
         }
 
         if (camera_angles_changed or camera_moved) {
@@ -746,4 +923,8 @@ pub fn main() !void {
         var image = image_;
         image.deinit();
     }
+
+    indirect_light_image.deinit();
+
+    zstbi.deinit();
 }

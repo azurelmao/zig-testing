@@ -6,7 +6,7 @@ pub const Side = enum(u8) {
     north, // -z
     south, // +z
 
-    pub inline fn int(self: Side) comptime_int {
+    pub inline fn int(self: Side) usize {
         return @intFromEnum(self);
     }
 };

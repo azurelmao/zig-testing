@@ -1,6 +1,7 @@
 const std = @import("std");
 const gl = @import("gl");
 const Chunk = @import("Chunk.zig");
+const World = @import("World.zig");
 
 pub const Vec3f = packed struct(u128) {
     x: gl.float,
@@ -10,8 +11,20 @@ pub const Vec3f = packed struct(u128) {
 
     const Self = @This();
 
-    pub fn print(self: Self) void {
-        std.debug.print("Vec3f[ x = {d},  y = {d},  z = {d} ]\n", .{ self.x, self.y, self.z });
+    pub fn new(x: gl.float, y: gl.float, z: gl.float) Self {
+        return .{
+            .x = x,
+            .y = y,
+            .z = z,
+        };
+    }
+
+    pub fn fromScalar(scalar: gl.float) Self {
+        return .{
+            .x = scalar,
+            .y = scalar,
+            .z = scalar,
+        };
     }
 
     pub fn toChunkPos(self: Self) Chunk.Pos {
@@ -26,11 +39,19 @@ pub const Vec3f = packed struct(u128) {
         };
     }
 
-    pub fn new(x: gl.float, y: gl.float, z: gl.float) Self {
+    pub fn toWorldPos(self: Self) World.Pos {
         return .{
-            .x = x,
-            .y = y,
-            .z = z,
+            .x = @intFromFloat(@floor(self.x)),
+            .y = @intFromFloat(@floor(self.y)),
+            .z = @intFromFloat(@floor(self.z)),
+        };
+    }
+
+    pub fn floor(self: Self) Self {
+        return .{
+            .x = @floor(self.x),
+            .y = @floor(self.y),
+            .z = @floor(self.z),
         };
     }
 
@@ -157,5 +178,13 @@ pub const Vec3f = packed struct(u128) {
 
     pub fn magnitude(self: Self) gl.float {
         return std.math.sqrt(self.x * self.x + self.y * self.y + self.z * self.z);
+    }
+
+    pub fn abs(self: Self) Self {
+        return .{
+            .x = @abs(self.x),
+            .y = @abs(self.y),
+            .z = @abs(self.z),
+        };
     }
 };

@@ -26,13 +26,16 @@ layout(binding = 3, std430) readonly buffer ssbo4 {
     LocalPosAndModelIdx sLocalPosAndModelIdx[];
 };
 
+layout(binding = 4, std430) readonly buffer ssbo5 {
+    vec3 sIndirectLight[];
+};
+
 uniform mat4 uViewProjection;
 
 out vec2 pTextureUV;
 flat out uint pTextureIdx;
 flat out float pNormalLight;
-flat out vec3 pBlockLight;
-flat out float pSunLight;
+flat out vec3 pLight;
 
 vec3 unpackLocalPosition(uint data) {
     float x = bitfieldExtract(data, 0, 5);
@@ -56,10 +59,10 @@ vec3 unpackBlockLight(uint data) {
     return vec3(red, green, blue) / 15.0;
 }
 
-float unpackSunLight(uint data) {
-    float sunLight = bitfieldExtract(data, 12, 4);
+uint unpackIndirectLightIdx(uint data) {
+    uint indirectLightIdx = bitfieldExtract(data, 12, 4);
 
-    return sunLight / 15.0;
+    return indirectLightIdx;
 }
 
 uint unpackTextureIdx(uint data) {
@@ -98,7 +101,7 @@ void main() {
     vec3 localPosition = unpackLocalPosition(perQuadData.data1);
     uint modelIdx = unpackModelIdx(perQuadData.data1);
     vec3 blockLight = unpackBlockLight(perQuadData.data2);
-    float sunLight = unpackSunLight(perQuadData.data2);
+    uint indirectLightIdx = unpackIndirectLightIdx(perQuadData.data2);
 
     VertexIdxAndTextureIdx perModelData = sVertexIdxAndTextureIdx[modelIdx];
     uint vertexIdx = perModelData.vertexIdx;
@@ -110,9 +113,16 @@ void main() {
     
     pTextureUV = textureUV;
     pTextureIdx = textureIdx;
+
     pNormalLight = normalLight[gl_DrawID % 6];
-    pBlockLight = blockLight;
-    pSunLight = sunLight;
+    vec3 indirectLight = sIndirectLight[indirectLightIdx];
+
+    pLight = vec3(
+        max(blockLight.r, indirectLight.r), 
+        max(blockLight.g, indirectLight.g), 
+        max(blockLight.b, indirectLight.b)
+    );
+
     gl_Position = uViewProjection * vec4(modelPosition + localPosition + sChunkPos[gl_DrawID / 6], 1.0);
 }
 

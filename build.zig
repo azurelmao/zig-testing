@@ -63,14 +63,16 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "testing",
         .root_module = exe_mod,
+        .strip = false,
+        .omit_frame_pointer = false,
     });
 
-    // Use mach-glfw
-    const glfw_dep = b.dependency("mach-glfw", .{
+    // Use zig-glfw
+    const glfw_dep = b.dependency("zig_glfw", .{
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("mach-glfw", glfw_dep.module("mach-glfw"));
+    exe.root_module.addImport("glfw", glfw_dep.module("zig-glfw"));
 
     // Use zigglgen to generate OpenGL bindings.
     const gl_bindings = @import("zigglgen").generateBindingsModule(b, .{
@@ -118,7 +120,7 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    // Creates a step for unit testing. This only builds the test executable
+    // Creates a step for unit testing. This only builds the test `cutable
     // but does not run it.
     // const lib_unit_tests = b.addTest(.{
     //     .root_module = lib_mod,

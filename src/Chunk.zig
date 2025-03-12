@@ -16,11 +16,14 @@ pub const Volume = Size * Size * Size;
 
 const LightQueue = std.fifo.LinearFifo(LightNode, .Dynamic);
 
+pos: Pos,
 blocks: *[Volume]Block,
 light: *[Volume]Light,
+
+air_bitset: *[Area]u32,
+
 light_addition_queue: LightQueue,
 light_removal_queue: LightQueue,
-pos: Pos,
 
 pub const LightNode = struct {
     pos: World.Pos,
@@ -98,12 +101,16 @@ pub fn new(allocator: std.mem.Allocator, pos: Pos, default_block: Block) !Self {
     const light = try allocator.create([Volume]Light);
     @memset(light, .{ .red = 0, .green = 0, .blue = 0, .indirect = 0 });
 
+    const air_bitset = try allocator.create([Area]u32);
+    @memset(air_bitset, 0);
+
     return .{
+        .pos = pos,
         .blocks = blocks,
         .light = light,
+        .air_bitset = air_bitset,
         .light_addition_queue = LightQueue.init(allocator),
         .light_removal_queue = LightQueue.init(allocator),
-        .pos = pos,
     };
 }
 
@@ -120,5 +127,15 @@ pub fn getBlock(self: Self, pos: LocalPos) Block {
 }
 
 pub fn setBlock(self: Self, pos: LocalPos, block: Block) void {
+    const x: usize = @intCast(pos.x);
+    const z: usize = @intCast(pos.z);
+    const idx = x * Size + z;
+
+    if (block == .air) {
+        self.air_bitset[idx] &= ~(@as(u32, 1) << pos.y); // sets bit at `pos.y` to 0
+    } else {
+        self.air_bitset[idx] |= (@as(u32, 1) << pos.y); // sets bit at `pos.y` to 1
+    }
+
     self.blocks[pos.index()] = block;
 }

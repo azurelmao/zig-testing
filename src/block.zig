@@ -90,6 +90,13 @@ pub const Block = enum(u8) {
         return BLOCK_TO_MODEL_INDICES[@intFromEnum(self)];
     }
 
+    pub fn isInteractable(self: Self) bool {
+        return switch (self) {
+            .air, .water => false,
+            else => true,
+        };
+    }
+
     pub fn isNotSolid(self: Self) bool {
         return switch (self) {
             .air, .water, .ice, .glass, .glass_tinted => true,
@@ -139,15 +146,15 @@ pub const Block = enum(u8) {
             .water, .ice => .{ .translucent = .{
                 .red = 1,
                 .green = 1,
-                .blue = 0,
+                .blue = 1,
                 .indirect = 1,
             } },
 
             .glass_tinted => .{ .translucent = .{
-                .red = 2,
-                .green = 8,
-                .blue = 0,
-                .indirect = 0,
+                .red = 3,
+                .green = 3,
+                .blue = 3,
+                .indirect = 3,
             } },
 
             else => .{ .@"opaque" = {} },
