@@ -12,7 +12,7 @@ const Chunks = std.AutoHashMap(Chunk.Pos, Chunk);
 const ChunkPosQueue = DedupQueue(Chunk.Pos);
 
 allocator: std.mem.Allocator,
-rand: std.Random,
+prng: std.Random.Xoshiro256,
 chunks: Chunks,
 chunks_which_need_to_add_lights: ChunkPosQueue,
 chunks_which_need_to_remove_lights: ChunkPosQueue,
@@ -81,12 +81,11 @@ pub const Pos = struct {
 };
 
 pub fn new(allocator: std.mem.Allocator) !Self {
-    var prng = std.Random.DefaultPrng.init(blk: {
+    const prng = std.Random.DefaultPrng.init(expr: {
         var seed: u64 = undefined;
         try std.posix.getrandom(std.mem.asBytes(&seed));
-        break :blk seed;
+        break :expr seed;
     });
-    const rand = prng.random();
 
     const chunks = Chunks.init(allocator);
     const chunks_which_need_to_add_lights = ChunkPosQueue.init(allocator);
@@ -94,7 +93,7 @@ pub fn new(allocator: std.mem.Allocator) !Self {
 
     return .{
         .allocator = allocator,
-        .rand = rand,
+        .prng = prng,
         .chunks = chunks,
         .chunks_which_need_to_add_lights = chunks_which_need_to_add_lights,
         .chunks_which_need_to_remove_lights = chunks_which_need_to_remove_lights,
@@ -148,8 +147,8 @@ pub fn setBlockAndAffectLight(self: *Self, pos: Pos, block: Block) !void {
 pub const CHUNK_DISTANCE = 4;
 
 pub fn generateChunks(self: *Self) !void {
-    // const indirect_light_bitset = try self.allocator.create([Chunk.Area]u32);
-    // const cave_bitset = try self.allocator.create([Chunk.Area]u32);
+    const indirect_light_bitset = try self.allocator.create([Chunk.Area]u32);
+    const cave_bitset = try self.allocator.create([Chunk.Area]u32);
 
     for (0..CHUNK_DISTANCE * 2) |chunk_x_| {
         for (0..CHUNK_DISTANCE * 2) |chunk_z_| {
@@ -157,22 +156,12 @@ pub fn generateChunks(self: *Self) !void {
             const chunk_z = @as(i11, @intCast(chunk_z_)) - CHUNK_DISTANCE;
             const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = 0, .z = chunk_z };
 
-            std.log.err("{}", .{chunk_pos});
+            var chunk = try self.generateChunk(chunk_pos);
 
-            const chunk = try self.generateChunk(chunk_pos);
+            try fillWithIndirectLight(&chunk, indirect_light_bitset, cave_bitset);
+            try self.chunks_which_need_to_add_lights.enqueue(chunk_pos);
 
-            if (chunk.pos.notEqual(chunk_pos)) {
-                std.debug.panic("expected: {}, got: {}", .{ chunk.pos, chunk_pos });
-            }
-
-            // // if (chunk.pos.notEqual(chunk_pos)) {
-            // //     std.log.err("expected: {}, got: {}", .{ chunk.pos, chunk_pos });
-            // // }
-
-            // // try fillWithIndirectLight(&chunk, indirect_light_bitset, cave_bitset);
-            // try self.chunks_which_need_to_add_lights.enqueue(chunk_pos);
-
-            // try self.chunks.put(chunk.pos, chunk);
+            try self.chunks.put(chunk.pos, chunk);
         }
     }
 }
@@ -187,7 +176,7 @@ pub fn generateChunk(self: *Self, chunk_pos: Chunk.Pos) !Chunk {
             const x: u5 = @intCast(x_);
             const z: u5 = @intCast(z_);
 
-            const height = self.rand.intRangeAtMost(u5, 1, 5) + additional_height;
+            const height = self.prng.random().intRangeAtMost(u5, 1, 5) + additional_height;
 
             for (0..Chunk.Edge) |y_| {
                 const y: u5 = @intCast(y_);
