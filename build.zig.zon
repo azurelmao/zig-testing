@@ -41,6 +41,10 @@
             .url = "git+https://github.com/zig-gamedev/zstbi#2517d3f77cc18ef735a9b4847666bc03d9afbce0",
             .hash = "1220236000369d5fc71cd48c1f431f1b228dc2c736bef938dfd01917b85e2f0e3a90",
         },
+        .znoise = .{
+            .url = "git+https://github.com/zig-gamedev/znoise#b6e7a24c9bfa4bae63521664e191a728b5b18805",
+            .hash = "znoise-0.3.0-dev-AAAAAMOjAQCOFsgDZuKi-L0_HGdrCb9HwVf00PDWRAVV",
+        },
     },
     .paths = .{
         "build.zig",

@@ -8,7 +8,7 @@ const Block = @import("block.zig").Block;
 
 const Self = @This();
 
-layers: [Block.Layer.LAYERS.len]SingleChunkMeshFaces,
+layers: [Block.Layer.len]SingleChunkMeshFaces,
 
 const SingleChunkMeshFaces = struct {
     faces: [6]std.ArrayList(LocalPosAndModelIdx),
@@ -34,9 +34,9 @@ pub const LocalPosAndModelIdx = packed struct(u64) {
 };
 
 pub fn new(allocator: std.mem.Allocator) Self {
-    var layers: [Block.Layer.LAYERS.len]SingleChunkMeshFaces = undefined;
+    var layers: [Block.Layer.len]SingleChunkMeshFaces = undefined;
 
-    inline for (0..Block.Layer.LAYERS.len) |layer_idx| {
+    inline for (0..Block.Layer.len) |layer_idx| {
         layers[layer_idx] = SingleChunkMeshFaces.new(allocator);
     }
 

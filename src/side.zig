@@ -6,7 +6,7 @@ pub const Side = enum(u8) {
     north, // -z
     south, // +z
 
-    pub inline fn int(self: Side) usize {
+    pub inline fn idx(self: Side) usize {
         return @intFromEnum(self);
     }
 };

@@ -48,7 +48,7 @@ pub fn new(allocator: std.mem.Allocator, vertex_shader_path: []const gl.char, fr
 }
 
 pub fn readAndCompileShader(allocator: std.mem.Allocator, shader_path: []const gl.char, @"type": gl.@"enum") !gl.uint {
-    const shader_source: []const gl.char = try std.fs.cwd().readFileAlloc(allocator, shader_path, 4000);
+    const shader_source: []const gl.char = try std.fs.cwd().readFileAlloc(allocator, shader_path, std.math.maxInt(u16));
 
     const handle = gl.CreateShader(@"type");
     gl.ShaderSource(handle, 1, @ptrCast(&shader_source.ptr), null);

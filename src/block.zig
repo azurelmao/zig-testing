@@ -111,7 +111,11 @@ pub const Block = enum(u8) {
         glass_stained,
         glass,
 
-        pub const LAYERS = std.enums.values(Layer);
+        pub const len = std.enums.values(Layer).len;
+
+        pub inline fn idx(self: Layer) usize {
+            return @intFromEnum(self);
+        }
     };
 
     pub fn getLayer(self: Self) Layer {
@@ -200,8 +204,8 @@ pub const Block = enum(u8) {
         pub fn grass(top: Texture, bottom: Texture, sides: Texture) TextureScheme {
             var faces: [6]Texture = @splat(sides);
 
-            faces[Side.top.int()] = top;
-            faces[Side.bottom.int()] = bottom;
+            faces[Side.top.idx()] = top;
+            faces[Side.bottom.idx()] = bottom;
 
             return .{ .faces = faces };
         }
@@ -269,7 +273,7 @@ pub const Block = enum(u8) {
     pub const SQUARE = expr: {
         var faces: [6][]const Vertex = undefined;
 
-        faces[Side.west.int()] = &.{
+        faces[Side.west.idx()] = &.{
             .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 0 },
             .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 0 },
             .{ .x = 0, .y = 0, .z = 0, .u = 0, .v = 1 },
@@ -278,7 +282,7 @@ pub const Block = enum(u8) {
             .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 0 },
         };
 
-        faces[Side.east.int()] = &.{
+        faces[Side.east.idx()] = &.{
             .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 1 },
             .{ .x = 1, .y = 1, .z = 0, .u = 1, .v = 0 },
             .{ .x = 1, .y = 1, .z = 1, .u = 0, .v = 0 },
@@ -287,7 +291,7 @@ pub const Block = enum(u8) {
             .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 1 },
         };
 
-        faces[Side.bottom.int()] = &.{
+        faces[Side.bottom.idx()] = &.{
             .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
             .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 0 },
             .{ .x = 1, .y = 0, .z = 1, .u = 0, .v = 0 },
@@ -296,7 +300,7 @@ pub const Block = enum(u8) {
             .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
         };
 
-        faces[Side.top.int()] = &.{
+        faces[Side.top.idx()] = &.{
             .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
             .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
             .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 1 },
@@ -305,7 +309,7 @@ pub const Block = enum(u8) {
             .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
         };
 
-        faces[Side.north.int()] = &.{
+        faces[Side.north.idx()] = &.{
             .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
             .{ .x = 0, .y = 1, .z = 0, .u = 1, .v = 0 },
             .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
@@ -314,7 +318,7 @@ pub const Block = enum(u8) {
             .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
         };
 
-        faces[Side.south.int()] = &.{
+        faces[Side.south.idx()] = &.{
             .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
             .{ .x = 0, .y = 1, .z = 1, .u = 0, .v = 0 },
             .{ .x = 0, .y = 0, .z = 1, .u = 0, .v = 1 },

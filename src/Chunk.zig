@@ -21,6 +21,8 @@ blocks: *[Volume]Block,
 light: *[Volume]Light,
 
 air_bitset: *[Area]u32,
+water_bitset: *[Area]u32,
+num_of_air: u16,
 
 light_addition_queue: LightQueue,
 light_removal_queue: LightQueue,
@@ -51,11 +53,19 @@ pub const Pos = struct {
         .{ .x = 0, .y = 0, .z = 1 },
     };
 
+    pub fn toWorldPos(self: Pos) World.Pos {
+        return .{
+            .x = @as(i16, @intCast(self.x)) << BitSize,
+            .y = @as(i16, @intCast(self.y)) << BitSize,
+            .z = @as(i16, @intCast(self.z)) << BitSize,
+        };
+    }
+
     pub fn toVec3f(self: Pos) Vec3f {
         return .{
-            .x = @floatFromInt(self.x << BitSize),
-            .y = @floatFromInt(self.y << BitSize),
-            .z = @floatFromInt(self.z << BitSize),
+            .x = @floatFromInt(@as(i16, @intCast(self.x)) << BitSize),
+            .y = @floatFromInt(@as(i16, @intCast(self.y)) << BitSize),
+            .z = @floatFromInt(@as(i16, @intCast(self.z)) << BitSize),
         };
     }
 
@@ -104,37 +114,58 @@ pub fn new(allocator: std.mem.Allocator, pos: Pos, default_block: Block) !Self {
     const air_bitset = try allocator.create([Area]u32);
     @memset(air_bitset, 0);
 
+    const water_bitset = try allocator.create([Area]u32);
+    @memset(water_bitset, 0);
+
+    const light_addition_queue = LightQueue.init(allocator);
+    const light_removal_queue = LightQueue.init(allocator);
+
     return .{
         .pos = pos,
         .blocks = blocks,
         .light = light,
         .air_bitset = air_bitset,
-        .light_addition_queue = LightQueue.init(allocator),
-        .light_removal_queue = LightQueue.init(allocator),
+        .water_bitset = water_bitset,
+        .num_of_air = Volume,
+        .light_addition_queue = light_addition_queue,
+        .light_removal_queue = light_removal_queue,
     };
 }
 
-pub fn getLight(self: Self, pos: LocalPos) Light {
+pub fn getLight(self: *Self, pos: LocalPos) Light {
     return self.light[pos.index()];
 }
 
-pub fn setLight(self: Self, pos: LocalPos, light: Light) void {
+pub fn setLight(self: *Self, pos: LocalPos, light: Light) void {
     self.light[pos.index()] = light;
 }
 
-pub fn getBlock(self: Self, pos: LocalPos) Block {
+pub fn getBlock(self: *Self, pos: LocalPos) Block {
     return self.blocks[pos.index()];
 }
 
-pub fn setBlock(self: Self, pos: LocalPos, block: Block) void {
+pub fn setBlock(self: *Self, pos: LocalPos, block: Block) void {
     const x: usize = @intCast(pos.x);
     const z: usize = @intCast(pos.z);
     const idx = x * Size + z;
 
     if (block == .air) {
+        if (self.blocks[pos.index()] != .air) {
+            self.num_of_air += 1;
+        }
+
         self.air_bitset[idx] &= ~(@as(u32, 1) << pos.y); // sets bit at `pos.y` to 0
-    } else {
+        self.water_bitset[idx] &= ~(@as(u32, 1) << pos.y); // sets bit at `pos.y` to 0
+    } else if (block == .water) {
         self.air_bitset[idx] |= (@as(u32, 1) << pos.y); // sets bit at `pos.y` to 1
+        self.water_bitset[idx] |= (@as(u32, 1) << pos.y); // sets bit at `pos.y` to 1
+    } else {
+        if (self.blocks[pos.index()] == .air) {
+            self.num_of_air -= 1;
+        }
+
+        self.air_bitset[idx] |= (@as(u32, 1) << pos.y); // sets bit at `pos.y` to 1
+        self.water_bitset[idx] &= ~(@as(u32, 1) << pos.y); // sets bit at `pos.y` to 0
     }
 
     self.blocks[pos.index()] = block;

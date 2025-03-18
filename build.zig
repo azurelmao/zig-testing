@@ -37,6 +37,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        // .strip = false,
+        // .omit_frame_pointer = false,
     });
 
     // Modules can depend on one another using the `std.Build.Module.addImport` function.
@@ -63,8 +65,6 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "testing",
         .root_module = exe_mod,
-        .strip = false,
-        .omit_frame_pointer = false,
     });
 
     // Use zig-glfw
@@ -86,6 +86,10 @@ pub fn build(b: *std.Build) void {
     const zstbi = b.dependency("zstbi", .{});
     exe.root_module.addImport("zstbi", zstbi.module("root"));
     exe.linkLibrary(zstbi.artifact("zstbi"));
+
+    const znoise = b.dependency("znoise", .{});
+    exe.root_module.addImport("znoise", znoise.module("root"));
+    exe.linkLibrary(znoise.artifact("FastNoiseLite"));
 
     // const vulkan = b.dependency("vulkan-zig", .{
     //     .registry = b.path("vk.xml"),
