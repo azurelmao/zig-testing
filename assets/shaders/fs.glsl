@@ -10,7 +10,7 @@ in vec3 pVertexPosition;
 
 layout (location = 0) out vec4 oColor;
 layout (binding = 0, location = 1) uniform sampler2DArray uTexture;
-// uniform vec3 uCameraPosition;
+uniform vec3 uCameraPosition;
 
 vec4 linearFog(vec4 inColor, float vertexDistance, float fogStart, float fogEnd, vec4 fogColor) {
     if (vertexDistance <= fogStart) {
@@ -27,8 +27,7 @@ void main() {
     vec4 texColor = texture(uTexture, vec3(pTextureUV, pTextureIdx));
     vec4 color = vec4(texColor.rgb * pNormalLight * pLight, texColor.a);
 
-    // oColor = linearFog(color, distance(uCameraPosition, pVertexPosition), 153.6, 691.2, fogColor);
-    oColor = color;
+    oColor = linearFog(color, distance(uCameraPosition, pVertexPosition), 153.6, 691.2, fogColor);
 }
 
 // oXXX for output

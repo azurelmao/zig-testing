@@ -995,7 +995,7 @@ pub fn main() !void {
             cacheViewMatrix();
             cacheViewProjectionMatrix();
             chunks_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
-            // chunks_shader_program.setUniform3f("uCameraPosition", camera_position.x, camera_position.y, camera_position.z);
+            chunks_shader_program.setUniform3f("uCameraPosition", camera_position.x, camera_position.y, camera_position.z);
 
             chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
         }
