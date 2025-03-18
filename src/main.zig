@@ -771,41 +771,43 @@ pub fn main() !void {
     std.log.info("Generating world done. {d} s", .{debug_time});
 
     debug_timer.reset();
-    // try world.propagateLights();
+    try world.propagateLights();
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Indirect light propagation done. {d} s", .{debug_time});
 
-    // const pyramid_pos = World.Pos{ .x = 0, .y = 0, .z = 0 };
-    // const pyramid_height = 16;
-    // var pyramid_size: usize = 33;
-    // var offset: i16 = 0;
+    const pyramid_pos = World.Pos{ .x = 0, .y = 22, .z = 0 };
+    const pyramid_height = 16;
+    var pyramid_size: usize = 33;
+    var offset: i16 = 0;
 
-    // for (0..pyramid_height) |y_| {
-    //     for (0..pyramid_size) |x_| {
-    //         for (0..pyramid_size) |z_| {
-    //             const x: i16 = @intCast(x_);
-    //             const y: i16 = @intCast(y_);
-    //             const z: i16 = @intCast(z_);
+    for (0..pyramid_height) |y_| {
+        for (0..pyramid_size) |x_| {
+            for (0..pyramid_size) |z_| {
+                const x: i16 = @intCast(x_);
+                const y: i16 = @intCast(y_);
+                const z: i16 = @intCast(z_);
 
-    //             var block = Block.air;
-    //             if (x == pyramid_size - 1 or z == pyramid_size - 1 or
-    //                 x == 0 or z == 0 or y == 0)
-    //             {
-    //                 block = Block.bricks;
-    //             }
+                var block = Block.air;
+                if (x == pyramid_size - 1 or z == pyramid_size - 1 or
+                    x == 0 or z == 0 or y == 0)
+                {
+                    block = Block.bricks;
+                }
 
-    //             const pos = pyramid_pos.add(.{ .x = x + offset, .y = y, .z = z + offset });
-    //             try world.setBlockAndAffectLight(pos, block);
-    //         }
-    //     }
+                const pos = pyramid_pos.add(.{ .x = x + offset, .y = y, .z = z + offset });
+                try world.setBlockAndAffectLight(pos, block);
+            }
+        }
 
-    //     pyramid_size -= 2;
-    //     offset += 1;
-    // }
+        pyramid_size -= 2;
+        offset += 1;
+    }
+
+    try world.setBlockAndAffectLight(.{ .x = 16, .y = 37, .z = 16 }, .glass_tinted);
 
     debug_timer.reset();
-    // try world.propagateLights();
+    try world.propagateLights();
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Light propagation done. {d} s", .{debug_time});

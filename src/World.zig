@@ -633,8 +633,6 @@ pub fn propagateLightAddition(self: *Self, chunk: *Chunk) !void {
                 const neighbor_world_pos = world_pos.add(Pos.Offsets[face_idx]);
                 const neighbor_chunk_pos = neighbor_world_pos.toChunkPos();
 
-                if (neighbor_world_pos.equal(.{ .x = -63, .y = 640, .z = -63 })) std.debug.print("{}\n", .{light});
-
                 var is_neighbor_chunk = false;
 
                 const neighbor_chunk = expr: {
@@ -697,7 +695,7 @@ pub fn propagateLightAddition(self: *Self, chunk: *Chunk) !void {
                     neighbor_chunk.setLight(neighbor_local_pos, next_light);
                 }
 
-                if (face_idx == Side.bottom.idx() and neighbor_block == .air) {
+                if (face_idx == Side.bottom.idx() and light.indirect == 15 and neighbor_block == .air) {
                     enqueue = true;
 
                     neighbor_light = neighbor_chunk.getLight(neighbor_local_pos);
