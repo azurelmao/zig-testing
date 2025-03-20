@@ -26,6 +26,7 @@ var procs: gl.ProcTable = undefined;
 
 var chunks_shader_program: ShaderProgram = undefined;
 var chunks_bb_shader_program: ShaderProgram = undefined;
+var chunks_bb_debug_shader_program: ShaderProgram = undefined;
 
 var view_matrix: Matrix4x4f = undefined;
 var projection_matrix: Matrix4x4f = undefined;
@@ -139,6 +140,7 @@ fn framebufferSizeCallback(window: glfw.Window, width: u32, height: u32) void {
     cacheViewProjectionMatrix();
     chunks_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
     chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
+    chunks_bb_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
 
     gl.Viewport(0, 0, window_width, window_height);
 }
@@ -691,7 +693,13 @@ pub fn main() !void {
 
     glfw.makeContextCurrent(window);
 
-    if (!procs.init(glfw.getProcAddress)) return error.InitFailed;
+    // My iGPU (Intel UHD Graphics 620) says it supports GL 4.6, but glfw fails to init these functions:
+    // - glGetnTexImage
+    // - glGetnUniformdv
+    // - glMultiDrawArraysIndirectCount
+    // - glMultiDrawElementsIndirectCount
+    const is_igpu = true;
+    if (!procs.init(glfw.getProcAddress) and !is_igpu) return error.InitFailed;
 
     gl.makeProcTableCurrent(&procs);
     defer gl.makeProcTableCurrent(null);
@@ -717,6 +725,9 @@ pub fn main() !void {
 
     chunks_bb_shader_program = try ShaderProgram.new(allocator, "assets/shaders/vs_bb.glsl", "assets/shaders/fs_bb.glsl");
     chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
+
+    chunks_bb_debug_shader_program = try ShaderProgram.new(allocator, "assets/shaders/vs_bb_debug.glsl", "assets/shaders/fs_bb_debug.glsl");
+    chunks_bb_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
 
     window.setInputModeCursor(.disabled);
     window.setCursorPos(prev_cursor_x, prev_cursor_y);
@@ -776,35 +787,35 @@ pub fn main() !void {
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Indirect light propagation done. {d} s", .{debug_time});
 
-    const pyramid_pos = World.Pos{ .x = 0, .y = 22, .z = 0 };
-    const pyramid_height = 16;
-    var pyramid_size: usize = 33;
-    var offset: i16 = 0;
+    // const pyramid_pos = World.Pos{ .x = 0, .y = 22, .z = 0 };
+    // const pyramid_height = 16;
+    // var pyramid_size: usize = 33;
+    // var offset: i16 = 0;
 
-    for (0..pyramid_height) |y_| {
-        for (0..pyramid_size) |x_| {
-            for (0..pyramid_size) |z_| {
-                const x: i16 = @intCast(x_);
-                const y: i16 = @intCast(y_);
-                const z: i16 = @intCast(z_);
+    // for (0..pyramid_height) |y_| {
+    //     for (0..pyramid_size) |x_| {
+    //         for (0..pyramid_size) |z_| {
+    //             const x: i16 = @intCast(x_);
+    //             const y: i16 = @intCast(y_);
+    //             const z: i16 = @intCast(z_);
 
-                var block = Block.air;
-                if (x == pyramid_size - 1 or z == pyramid_size - 1 or
-                    x == 0 or z == 0 or y == 0)
-                {
-                    block = Block.bricks;
-                }
+    //             var block = Block.air;
+    //             if (x == pyramid_size - 1 or z == pyramid_size - 1 or
+    //                 x == 0 or z == 0 or y == 0)
+    //             {
+    //                 block = Block.bricks;
+    //             }
 
-                const pos = pyramid_pos.add(.{ .x = x + offset, .y = y, .z = z + offset });
-                try world.setBlockAndAffectLight(pos, block);
-            }
-        }
+    //             const pos = pyramid_pos.add(.{ .x = x + offset, .y = y, .z = z + offset });
+    //             try world.setBlockAndAffectLight(pos, block);
+    //         }
+    //     }
 
-        pyramid_size -= 2;
-        offset += 1;
-    }
+    //     pyramid_size -= 2;
+    //     offset += 1;
+    // }
 
-    try world.setBlockAndAffectLight(.{ .x = 16, .y = 37, .z = 16 }, .glass_tinted);
+    // try world.setBlockAndAffectLight(.{ .x = 16, .y = 37, .z = 16 }, .glass_tinted);
 
     debug_timer.reset();
     try world.propagateLights();
@@ -1000,6 +1011,7 @@ pub fn main() !void {
             chunks_shader_program.setUniform3f("uCameraPosition", camera_position.x, camera_position.y, camera_position.z);
 
             chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
+            chunks_bb_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
         }
 
         cullChunkFacesAndFrustum(&chunk_mesh_layers);
@@ -1044,6 +1056,11 @@ pub fn main() !void {
         gl.DepthMask(gl.TRUE);
         gl.ColorMask(gl.TRUE, gl.TRUE, gl.TRUE, gl.TRUE);
         gl.Disable(gl.POLYGON_OFFSET_FILL);
+
+        gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE);
+        chunks_bb_debug_shader_program.bind();
+        gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(chunk_mesh_layers.pos.buffer.items.len));
+        gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL);
 
         delta_time = @floatCast(@as(f64, @floatFromInt(timer.lap())) / 1_000_000_000.0);
 

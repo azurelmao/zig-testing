@@ -48,7 +48,7 @@ pub fn new(allocator: std.mem.Allocator, vertex_shader_path: []const gl.char, fr
 }
 
 pub fn readAndCompileShader(allocator: std.mem.Allocator, shader_path: []const gl.char, @"type": gl.@"enum") !gl.uint {
-    const shader_source: []const gl.char = try std.fs.cwd().readFileAlloc(allocator, shader_path, std.math.maxInt(u16));
+    const shader_source: []const gl.char = try std.fs.cwd().readFileAllocOptions(allocator, shader_path, std.math.maxInt(u16), null, @alignOf(u8), 0);
 
     const handle = gl.CreateShader(@"type");
     gl.ShaderSource(handle, 1, @ptrCast(&shader_source.ptr), null);
@@ -58,6 +58,13 @@ pub fn readAndCompileShader(allocator: std.mem.Allocator, shader_path: []const g
     gl.GetShaderiv(handle, gl.COMPILE_STATUS, &compiled);
 
     if (compiled == 0) {
+        var log_len: gl.int = undefined;
+        gl.GetShaderiv(handle, gl.INFO_LOG_LENGTH, &log_len);
+
+        const log = try allocator.alloc(gl.char, @intCast(log_len));
+        gl.GetShaderInfoLog(handle, log_len, null, @ptrCast(log.ptr));
+        std.log.err("{s}", .{log});
+
         return error.ShaderCompilationFailed;
     }
 

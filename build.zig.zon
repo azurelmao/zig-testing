@@ -31,7 +31,7 @@
         },
         .zigglgen = .{
             .url = "git+https://github.com/castholm/zigglgen#1c901bef6d312ef1814b8fce3c5a9e9e8e61ac2d",
-            .hash = "12209d8a018832bee15d9da29a12fa753d89b56cd843cdf1f39501546c6467e38ba1",
+            .hash = "zigglgen-0.3.0-AAAAAOHwLQCdigGIMr7hXZ2imhL6dT2JtWzYQ83x85UB",
         },
         // .@"vulkan-zig" = .{
         //     .url = "https://github.com/Snektron/vulkan-zig/archive/bb470f16dabd8195155ba9e3714dc62d7ad69add.tar.gz",
@@ -39,7 +39,7 @@
         // },
         .zstbi = .{
             .url = "git+https://github.com/zig-gamedev/zstbi#2517d3f77cc18ef735a9b4847666bc03d9afbce0",
-            .hash = "1220236000369d5fc71cd48c1f431f1b228dc2c736bef938dfd01917b85e2f0e3a90",
+            .hash = "zstbi-0.10.0-AAAAAIeWBwAjYAA2nV_HHNSMH0MfGyKNwsc2vvk439AZ",
         },
         .znoise = .{
             .url = "git+https://github.com/zig-gamedev/znoise#b6e7a24c9bfa4bae63521664e191a728b5b18805",

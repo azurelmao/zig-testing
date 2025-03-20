@@ -148,10 +148,10 @@ pub fn setBlockAndAffectLight(self: *Self, pos: Pos, block: Block) !void {
 }
 
 pub const Width = 1;
-pub const Height = 3;
-pub const AboveHeight = 1;
+pub const Height = 8;
+pub const AboveHeight = 2;
 pub const BelowHeight = AboveHeight - Height;
-pub const BottomOfTheWorld = (BelowHeight + 1) * Chunk.Size;
+pub const BottomOfTheWorld = BelowHeight * Chunk.Size;
 pub const SeaLevel = 0;
 pub const SeaLevelDeep = SeaLevel - 16;
 
@@ -229,8 +229,8 @@ pub fn generateWorld(self: *Self) !void {
             const min_chunk_height: i11 = @intCast((min_height.? >> Chunk.BitSize) - 1);
             const max_chunk_height: i11 = @intCast(max_height.? >> Chunk.BitSize);
 
-            var chunk_y: i11 = AboveHeight;
-            while (chunk_y > BelowHeight) : (chunk_y -= 1) {
+            var chunk_y: i11 = AboveHeight - 1;
+            while (chunk_y >= BelowHeight) : (chunk_y -= 1) {
                 const chunk_x = @as(i11, @intCast(chunk_x_)) - Width;
                 const chunk_z = @as(i11, @intCast(chunk_z_)) - Width;
                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
@@ -256,7 +256,7 @@ pub fn generateWorld(self: *Self) !void {
             const chunk_x = @as(i11, @intCast(chunk_x_)) - Width;
             const chunk_z = @as(i11, @intCast(chunk_z_)) - Width;
 
-            var chunk_y: i11 = AboveHeight;
+            var chunk_y: i11 = AboveHeight - 1;
             {
                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
                 const chunk = try self.getChunk(chunk_pos);
@@ -267,7 +267,7 @@ pub fn generateWorld(self: *Self) !void {
             }
 
             chunk_y -= 1;
-            while (chunk_y > BelowHeight) : (chunk_y -= 1) {
+            while (chunk_y >= BelowHeight) : (chunk_y -= 1) {
                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
                 const chunk = try self.getChunk(chunk_pos);
 
