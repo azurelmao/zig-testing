@@ -698,8 +698,14 @@ pub fn main() !void {
     // - glGetnUniformdv
     // - glMultiDrawArraysIndirectCount
     // - glMultiDrawElementsIndirectCount
-    const is_igpu = true;
-    if (!procs.init(glfw.getProcAddress) and !is_igpu) return error.InitFailed;
+    const supports_gl46 = expr: {
+        const glGetString: @FieldType(gl.ProcTable, "GetString") = @ptrCast(glfw.getProcAddress("glGetString").?);
+        const version_str = glGetString(gl.VERSION).?;
+
+        break :expr version_str[0] == '4' and version_str[2] == '6';
+    };
+    
+    if (!procs.init(glfw.getProcAddress) and !supports_gl46) return error.InitFailed;
 
     gl.makeProcTableCurrent(&procs);
     defer gl.makeProcTableCurrent(null);
