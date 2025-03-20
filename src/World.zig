@@ -147,11 +147,11 @@ pub fn setBlockAndAffectLight(self: *Self, pos: Pos, block: Block) !void {
     chunk.setBlock(local_pos, block);
 }
 
-pub const Width = 2;
-pub const Height = 8;
-pub const AboveHeight = 4;
+pub const Width = 1;
+pub const Height = 3;
+pub const AboveHeight = 1;
 pub const BelowHeight = AboveHeight - Height;
-pub const BottomOfTheWorld = BelowHeight * Chunk.Size;
+pub const BottomOfTheWorld = (BelowHeight + 1) * Chunk.Size;
 pub const SeaLevel = 0;
 pub const SeaLevelDeep = SeaLevel - 16;
 
@@ -226,7 +226,7 @@ pub fn generateWorld(self: *Self) !void {
                 }
             }
 
-            const min_chunk_height: i11 = @intCast(min_height.? >> Chunk.BitSize);
+            const min_chunk_height: i11 = @intCast((min_height.? >> Chunk.BitSize) - 1);
             const max_chunk_height: i11 = @intCast(max_height.? >> Chunk.BitSize);
 
             var chunk_y: i11 = AboveHeight;
@@ -239,7 +239,7 @@ pub fn generateWorld(self: *Self) !void {
 
                 if (chunk_y >= min_chunk_height and chunk_y <= max_chunk_height) {
                     try generateNoise2D(&chunk, height_map);
-                } else if (chunk_y < min_chunk_height) {
+                } else if (chunk_y <= min_chunk_height) {
                     try generateNoise3D(&chunk, &cave_gen);
                 }
 
@@ -317,7 +317,7 @@ pub fn generateNoise2D(chunk: *Chunk, height_map: *[Chunk.Area]i16) !void {
             for (0..Chunk.Size) |y_| {
                 const y: u5 = @intCast(y_);
                 const local_pos = Chunk.LocalPos{ .x = x, .y = y, .z = z };
-                const world_pos = Pos.from(chunk.pos, .{ .x = x, .y = y, .z = z });
+                const world_pos = Pos.from(chunk.pos, local_pos);
 
                 if (world_pos.y < height) {
                     if (world_pos.y == height - 1) {
@@ -350,13 +350,27 @@ pub fn generateNoise3D(chunk: *Chunk, gen: *const znoise.FnlGenerator) !void {
             for (0..Chunk.Size) |y_| {
                 const y: u5 = @intCast(y_);
                 const local_pos = Chunk.LocalPos{ .x = x, .y = y, .z = z };
-                const world_pos = Pos.from(chunk.pos, .{ .x = x, .y = y, .z = z });
+                const world_pos = Pos.from(chunk.pos, local_pos);
                 const noise_pos = world_pos.toVec3f();
 
                 const density = gen.noise3(noise_pos.x, noise_pos.y, noise_pos.z);
 
                 if (density > 0.0) {
                     chunk.setBlock(local_pos, .stone);
+                } else {
+                    if (world_pos.y == BottomOfTheWorld) {
+                        chunk.setBlock(local_pos, .bedrock);
+                    } else if (world_pos.y == BottomOfTheWorld + 1) {
+                        chunk.setBlock(local_pos, .lava);
+
+                        var light_pos = world_pos;
+                        light_pos.y += 1;
+
+                        try chunk.light_addition_queue.writeItem(.{
+                            .light = .{ .red = 15, .green = 6, .blue = 1, .indirect = 0 },
+                            .pos = light_pos,
+                        });
+                    }
                 }
             }
         }

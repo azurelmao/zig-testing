@@ -8,9 +8,11 @@ pub const Block = enum(u8) {
     air,
     stone,
     grass,
+    bedrock,
     sand,
     bricks,
     water,
+    lava,
     ice,
     glass_tinted,
     glass,
@@ -92,7 +94,7 @@ pub const Block = enum(u8) {
 
     pub fn isInteractable(self: Self) bool {
         return switch (self) {
-            .air, .water => false,
+            .air, .water, .lava => false,
             else => true,
         };
     }
@@ -170,9 +172,11 @@ pub const Block = enum(u8) {
         grass_top,
         grass_side,
         dirt,
+        bedrock,
         sand,
         bricks,
         water,
+        lava,
         ice,
         glass,
         glass_tinted,
@@ -215,9 +219,11 @@ pub const Block = enum(u8) {
         return switch (self) {
             .stone => TextureScheme.allSides(.stone),
             .grass => TextureScheme.grass(.grass_top, .dirt, .grass_side),
+            .bedrock => TextureScheme.allSides(.bedrock),
             .sand => TextureScheme.allSides(.sand),
             .bricks => TextureScheme.allSides(.bricks),
             .water => TextureScheme.allSides(.water),
+            .lava => TextureScheme.allSides(.lava),
             .ice => TextureScheme.allSides(.ice),
             .glass_tinted => TextureScheme.allSides(.glass_tinted),
             .glass => TextureScheme.allSides(.glass),
