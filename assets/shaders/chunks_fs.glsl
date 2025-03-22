@@ -9,7 +9,7 @@ flat in vec3 pLight;
 in vec3 pVertexPosition;
 
 layout (location = 0) out vec4 oColor;
-layout (location = 1) uniform sampler2DArray uTexture;
+layout (binding = 0) uniform sampler2DArray uTexture;
 uniform vec3 uCameraPosition;
 
 vec4 linearFog(vec4 inColor, float vertexDistance, float fogStart, float fogEnd, vec4 fogColor) {

@@ -1,6 +1,6 @@
 #version 460 core
 
-layout(binding = 0, std430) readonly buffer ssbo0 {
+layout (binding = 0, std430) readonly buffer ssbo0 {
     uint sVertex[];
 };
 
@@ -9,11 +9,11 @@ struct VertexIdxAndTextureIdx {
     uint data;
 };
 
-layout(binding = 1, std430) readonly buffer ssbo1 {
+layout (binding = 1, std430) readonly buffer ssbo1 {
     VertexIdxAndTextureIdx sVertexIdxAndTextureIdx[];
 };
 
-layout(binding = 2, std430) readonly buffer ssbo2 {
+layout (binding = 2, std430) readonly buffer ssbo2 {
     vec3 sChunkPos[];
 };
 
@@ -22,11 +22,11 @@ struct LocalPosAndModelIdx {
     uint data2;
 };
 
-layout(binding = 3, std430) readonly buffer ssbo3 {
+layout (binding = 3, std430) readonly buffer ssbo3 {
     LocalPosAndModelIdx sLocalPosAndModelIdx[];
 };
 
-layout(binding = 4, std430) readonly buffer ssbo4 {
+layout (binding = 4, std430) readonly buffer ssbo4 {
     vec3 sIndirectLight[];
 };
 

@@ -17,6 +17,7 @@ const Vec3f = @import("vec3f.zig").Vec3f;
 
 const Texture2D = @import("Texture2D.zig");
 const TextureArray2D = @import("TextureArray2D.zig");
+const ui = @import("ui.zig");
 
 pub const std_options: std.Options = .{
     .log_level = .info,
@@ -26,7 +27,8 @@ var procs: gl.ProcTable = undefined;
 
 var chunks_shader_program: ShaderProgram = undefined;
 var chunks_bb_shader_program: ShaderProgram = undefined;
-var chunks_bb_debug_shader_program: ShaderProgram = undefined;
+var chunks_debug_shader_program: ShaderProgram = undefined;
+var text_shader_program: ShaderProgram = undefined;
 
 var view_matrix: Matrix4x4f = undefined;
 var projection_matrix: Matrix4x4f = undefined;
@@ -140,7 +142,7 @@ fn framebufferSizeCallback(window: glfw.Window, width: u32, height: u32) void {
     cacheViewProjectionMatrix();
     chunks_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
     chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
-    chunks_bb_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
+    chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
 
     gl.Viewport(0, 0, window_width, window_height);
 }
@@ -674,7 +676,7 @@ pub fn main() !void {
     glfw.setErrorCallback(errorCallback);
     if (!glfw.init(.{})) {
         std.log.err("failed to initialize GLFW: {?s}", .{glfw.getErrorString()});
-        std.process.exit(1);
+        return error.GLFWInitFailed;
     }
     defer glfw.terminate();
 
@@ -687,7 +689,7 @@ pub fn main() !void {
         .context_debug = debug_context,
     }) orelse {
         std.log.err("failed to create GLFW window: {?s}", .{glfw.getErrorString()});
-        std.process.exit(1);
+        return error.WindowCreationFailed;
     };
     defer window.destroy();
 
@@ -704,8 +706,8 @@ pub fn main() !void {
 
         break :expr version_str[0] == '4' and version_str[2] == '6';
     };
-    
-    if (!procs.init(glfw.getProcAddress) and !supports_gl46) return error.InitFailed;
+
+    if (!procs.init(glfw.getProcAddress) and !supports_gl46) return error.ProcInitFailed;
 
     gl.makeProcTableCurrent(&procs);
     defer gl.makeProcTableCurrent(null);
@@ -726,14 +728,16 @@ pub fn main() !void {
     projection_matrix = Matrix4x4f.perspective(fov_x, aspect_ratio, near, far);
     cacheViewProjectionMatrix();
 
-    chunks_shader_program = try ShaderProgram.new(allocator, "assets/shaders/vs.glsl", "assets/shaders/fs.glsl");
+    chunks_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_vs.glsl", "assets/shaders/chunks_fs.glsl");
     chunks_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
 
-    chunks_bb_shader_program = try ShaderProgram.new(allocator, "assets/shaders/vs_bb.glsl", "assets/shaders/fs_bb.glsl");
+    chunks_bb_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_bb_vs.glsl", "assets/shaders/chunks_bb_fs.glsl");
     chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
 
-    chunks_bb_debug_shader_program = try ShaderProgram.new(allocator, "assets/shaders/vs_bb_debug.glsl", "assets/shaders/fs_bb_debug.glsl");
-    chunks_bb_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
+    chunks_debug_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_debug_vs.glsl", "assets/shaders/chunks_debug_fs.glsl");
+    chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
+
+    text_shader_program = try ShaderProgram.new(allocator, "assets/shaders/text_vs.glsl", "assets/shaders/text_fs.glsl");
 
     window.setInputModeCursor(.disabled);
     window.setCursorPos(prev_cursor_x, prev_cursor_y);
@@ -741,20 +745,48 @@ pub fn main() !void {
     window.setFramebufferSizeCallback(framebufferSizeCallback);
     window.setKeyCallback(keyCallback);
 
-    var images = std.ArrayList(zstbi.Image).init(allocator);
+    gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1);
+
+    var block_images = std.ArrayList(zstbi.Image).init(allocator);
 
     for (Block.Texture.TEXTURES) |texture| {
         const image = try zstbi.Image.loadFromFile(texture.getPath(), 0);
-        try images.append(image);
+        try block_images.append(image);
     }
 
-    const texture_array = try TextureArray2D.new(images.items, 16, 16, .{
-        .wrap_s = .clamp_to_edge,
-        .wrap_t = .clamp_to_edge,
-        .min_filter = .nearest,
-        .mag_filter = .nearest,
+    const block_textures = try TextureArray2D.initFromImages(block_images.items, 16, 16, .{
+        .texture_format = .rgba8,
+        .data_format = .rgba,
     });
-    texture_array.bind(0);
+    block_textures.bind(0);
+
+    var font_image = try zstbi.Image.loadFromFile("assets/textures/font.png", 0);
+    var glyph_images = try allocator.alloc(zstbi.Image, ui.Glyph.len);
+
+    for (0..ui.Glyph.len) |glyph_idx| {
+        const base_x = glyph_idx * 6;
+
+        var glyph_image = try zstbi.Image.createEmpty(6, 6, 1, .{});
+
+        var data_idx: usize = 0;
+        for (0..6) |y| {
+            for (0..6) |x_| {
+                const x = base_x + x_;
+                const image_idx = y * font_image.width + x;
+
+                glyph_image.data[data_idx] = font_image.data[image_idx];
+                data_idx += 1;
+            }
+        }
+
+        glyph_images[glyph_idx] = glyph_image;
+    }
+
+    const font_texture = try TextureArray2D.initFromImages(glyph_images, 6, 6, .{
+        .texture_format = .r8,
+        .data_format = .r,
+    });
+    font_texture.bind(1);
 
     var indirect_light_image = try zstbi.Image.loadFromFile("assets/textures/indirect_light.png", 0);
     var indirect_light_data: [16]Vec3f = undefined;
@@ -905,6 +937,77 @@ pub fn main() !void {
     );
     gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 5, bounding_box_buffer_handle);
 
+    var text_list = std.ArrayList(ui.Text).init(allocator);
+
+    try text_list.append(.{
+        .pixel_x = 0,
+        .pixel_y = 0,
+        .text = "The quick brown fox jumps over the lazy dog",
+    });
+
+    try text_list.append(.{
+        .pixel_x = 0,
+        .pixel_y = 6,
+        .text = "Lorem ipsum dolor sit amet",
+    });
+
+    var text_vertices = std.ArrayList(ui.Text.Vertex).init(allocator);
+    const quarter_window_width = @divTrunc(window_width, 4);
+    const quarter_window_height = @divTrunc(window_height, 4);
+    const half_window_width_f = @as(gl.float, @floatFromInt(window_width)) / 2.0;
+    const half_window_height_f = @as(gl.float, @floatFromInt(window_height)) / 2.0;
+    const ui_scale = 2;
+    const pixel_height = 6;
+    const max_pixel_width = 6;
+    const max_width: gl.float = @floatFromInt(max_pixel_width);
+
+    for (text_list.items) |text| {
+        var pixel_x = text.pixel_x - quarter_window_width;
+        const pixel_y = quarter_window_height - text.pixel_y - pixel_height;
+
+        const pixel_min_y = pixel_y;
+        const pixel_max_y = pixel_y + pixel_height;
+
+        const min_y = @as(gl.float, @floatFromInt(pixel_min_y * ui_scale)) / half_window_height_f;
+        const max_y = @as(gl.float, @floatFromInt(pixel_max_y * ui_scale)) / half_window_height_f;
+
+        for (text.text) |char| {
+            const glyph = ui.Glyph.fromChar(char);
+            const pixel_width: i32 = @intCast(glyph.getWidth());
+            const idx: gl.uint = @intCast(glyph.idx());
+
+            const pixel_min_x = pixel_x;
+            const pixel_max_x = pixel_x + pixel_width;
+
+            const min_x = @as(gl.float, @floatFromInt(pixel_min_x * ui_scale)) / half_window_width_f;
+            const max_x = @as(gl.float, @floatFromInt(pixel_max_x * ui_scale)) / half_window_width_f;
+
+            const width: gl.float = @floatFromInt(pixel_width);
+            const max_u = width / max_width;
+
+            try text_vertices.appendSlice(&.{
+                .{ .x = max_x, .y = max_y, .u = max_u, .v = 0, .idx = idx },
+                .{ .x = min_x, .y = max_y, .u = 0, .v = 0, .idx = idx },
+                .{ .x = min_x, .y = min_y, .u = 0, .v = 1, .idx = idx },
+                .{ .x = min_x, .y = min_y, .u = 0, .v = 1, .idx = idx },
+                .{ .x = max_x, .y = min_y, .u = max_u, .v = 1, .idx = idx },
+                .{ .x = max_x, .y = max_y, .u = max_u, .v = 0, .idx = idx },
+            });
+
+            pixel_x += pixel_width + 1;
+        }
+    }
+
+    var text_buffer_handle: gl.uint = undefined;
+    gl.CreateBuffers(1, @ptrCast(&text_buffer_handle));
+    gl.NamedBufferStorage(
+        text_buffer_handle,
+        @intCast(@sizeOf(ui.Text.Vertex) * text_vertices.items.len),
+        @ptrCast(text_vertices.items.ptr),
+        gl.DYNAMIC_STORAGE_BIT,
+    );
+    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 11, text_buffer_handle);
+
     var vao_handle: gl.uint = undefined;
     gl.GenVertexArrays(1, @ptrCast(&vao_handle));
     gl.BindVertexArray(vao_handle);
@@ -1017,7 +1120,7 @@ pub fn main() !void {
             chunks_shader_program.setUniform3f("uCameraPosition", camera_position.x, camera_position.y, camera_position.z);
 
             chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
-            chunks_bb_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
+            chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
         }
 
         cullChunkFacesAndFrustum(&chunk_mesh_layers);
@@ -1050,10 +1153,10 @@ pub fn main() !void {
         }
         uploadCommandBuffers(&chunk_mesh_layers);
 
+        chunks_bb_shader_program.bind();
         gl.Enable(gl.POLYGON_OFFSET_FILL);
         gl.DepthMask(gl.FALSE);
         gl.ColorMask(gl.FALSE, gl.FALSE, gl.FALSE, gl.FALSE);
-        chunks_bb_shader_program.bind();
 
         gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
         gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(chunk_mesh_layers.pos.buffer.items.len));
@@ -1063,10 +1166,13 @@ pub fn main() !void {
         gl.ColorMask(gl.TRUE, gl.TRUE, gl.TRUE, gl.TRUE);
         gl.Disable(gl.POLYGON_OFFSET_FILL);
 
+        chunks_debug_shader_program.bind();
         gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE);
-        chunks_bb_debug_shader_program.bind();
         gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(chunk_mesh_layers.pos.buffer.items.len));
         gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL);
+
+        text_shader_program.bind();
+        gl.DrawArrays(gl.TRIANGLES, 0, @intCast(text_vertices.items.len));
 
         delta_time = @floatCast(@as(f64, @floatFromInt(timer.lap())) / 1_000_000_000.0);
 
@@ -1074,12 +1180,18 @@ pub fn main() !void {
         glfw.pollEvents();
     }
 
-    for (images.items) |image_| {
+    for (block_images.items) |image_| {
+        var image = image_;
+        image.deinit();
+    }
+
+    for (glyph_images) |image_| {
         var image = image_;
         image.deinit();
     }
 
     indirect_light_image.deinit();
+    font_image.deinit();
 
     zstbi.deinit();
 }

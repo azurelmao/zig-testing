@@ -9,23 +9,23 @@ struct DrawArraysIndirectCommand {
     uint base_instance;
 };
 
-layout(binding = 6, std430) buffer ssbo6 {
+layout (binding = 6, std430) buffer ssbo6 {
     DrawArraysIndirectCommand sSolidDrawCommands[];
 };
 
-layout(binding = 7, std430) buffer ssbo7 {
+layout (binding = 7, std430) buffer ssbo7 {
     DrawArraysIndirectCommand sWaterDrawCommands[];
 };
 
-layout(binding = 8, std430) buffer ssbo8 {
+layout (binding = 8, std430) buffer ssbo8 {
     DrawArraysIndirectCommand sIceDrawCommands[];
 };
 
-layout(binding = 9, std430) buffer ssbo9 {
+layout (binding = 9, std430) buffer ssbo9 {
     DrawArraysIndirectCommand sGlassStainedDrawCommands[];
 };
 
-layout(binding = 10, std430) buffer ssbo10 {
+layout (binding = 10, std430) buffer ssbo10 {
     DrawArraysIndirectCommand sGlassDrawCommands[];
 };
 

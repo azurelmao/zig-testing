@@ -26,17 +26,31 @@ const MagFilter = enum(gl.int) {
     linear = gl.LINEAR,
 };
 
+const TextureFormat = enum(gl.uint) {
+    rgba8 = gl.RGBA8,
+    rgb8 = gl.RGB8,
+    r8 = gl.R8,
+};
+
+const DataFormat = enum(gl.uint) {
+    rgba = gl.RGBA,
+    rgb = gl.RGB,
+    r = gl.RED,
+};
+
 const Options = struct {
     wrap_s: Wrapping = Wrapping.repeat,
     wrap_t: Wrapping = Wrapping.repeat,
     wrap_r: Wrapping = Wrapping.repeat,
     min_filter: MinFilter = MinFilter.nearest,
     mag_filter: MagFilter = MagFilter.nearest,
+    texture_format: TextureFormat,
+    data_format: DataFormat,
 };
 
 handle: gl.uint,
 
-pub fn new(images: []const zstbi.Image, width: gl.sizei, height: gl.sizei, options: Options) !Self {
+pub fn initFromImages(images: []const zstbi.Image, width: gl.sizei, height: gl.sizei, options: Options) !Self {
     for (images) |image| {
         if (image.width != width or image.height != height) {
             return error.IncorrectImageSize;
@@ -45,10 +59,10 @@ pub fn new(images: []const zstbi.Image, width: gl.sizei, height: gl.sizei, optio
 
     var handle: gl.uint = undefined;
     gl.CreateTextures(gl.TEXTURE_2D_ARRAY, 1, @ptrCast(&handle));
-    gl.TextureStorage3D(handle, 1, gl.RGBA8, width, height, @intCast(images.len));
+    gl.TextureStorage3D(handle, 1, @intFromEnum(options.texture_format), width, height, @intCast(images.len));
 
     for (images, 0..) |image, offset_z| {
-        gl.TextureSubImage3D(handle, 0, 0, 0, @intCast(offset_z), width, height, 1, gl.RGBA, gl.UNSIGNED_BYTE, @ptrCast(image.data.ptr));
+        gl.TextureSubImage3D(handle, 0, 0, 0, @intCast(offset_z), width, height, 1, @intFromEnum(options.data_format), gl.UNSIGNED_BYTE, @ptrCast(image.data.ptr));
     }
 
     gl.TextureParameteri(handle, gl.TEXTURE_WRAP_S, @intFromEnum(options.wrap_s));
