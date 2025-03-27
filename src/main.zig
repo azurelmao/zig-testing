@@ -1119,13 +1119,46 @@ pub fn main() !void {
         try text_manager.add(.{
             .pixel_x = 0,
             .pixel_y = 0,
-            .text = "Buildsmith",
+            .text = "Natura ex Deus",
         });
 
         try text_manager.add(.{
             .pixel_x = 0,
             .pixel_y = 6,
             .text = try std.fmt.allocPrint(allocator, "visible: {}/{}", .{ visible_num, chunk_mesh_layers.pos.buffer.items.len * 6 }),
+        });
+
+        const camera_chunk_pos = camera_position.toChunkPos();
+        try text_manager.add(.{
+            .pixel_x = 0,
+            .pixel_y = 12,
+            .text = try std.fmt.allocPrint(allocator, "chunk x: {} y: {} z: {}", .{ camera_chunk_pos.x, camera_chunk_pos.y, camera_chunk_pos.z }),
+        });
+
+        const camera_world_pos = camera_position.toWorldPos();
+        const camera_local_pos = camera_world_pos.toLocalPos();
+        try text_manager.add(.{
+            .pixel_x = 0,
+            .pixel_y = 18,
+            .text = try std.fmt.allocPrint(allocator, "local x: {} y: {} z: {}", .{ camera_local_pos.x, camera_local_pos.y, camera_local_pos.z }),
+        });
+
+        try text_manager.add(.{
+            .pixel_x = 0,
+            .pixel_y = 24,
+            .text = try std.fmt.allocPrint(allocator, "world x: {} y: {} z: {}", .{ camera_world_pos.x, camera_world_pos.y, camera_world_pos.z }),
+        });
+
+        try text_manager.add(.{
+            .pixel_x = 0,
+            .pixel_y = 30,
+            .text = try std.fmt.allocPrint(allocator, "x: {d:.6} y: {d:.6} z: {d:.6}", .{ camera_position.x, camera_position.y, camera_position.z }),
+        });
+
+        try text_manager.add(.{
+            .pixel_x = 0,
+            .pixel_y = 36,
+            .text = try std.fmt.allocPrint(allocator, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(camera_yaw, 360.0) - 180.0, camera_pitch }),
         });
 
         try text_manager.buildVertices(window_width, window_height, ui_scale);
