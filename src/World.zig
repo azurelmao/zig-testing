@@ -14,6 +14,7 @@ const ChunkPosQueue = DedupQueue(Chunk.Pos);
 
 allocator: std.mem.Allocator,
 prng: std.Random.Xoshiro256,
+seed: i32,
 chunks: Chunks,
 chunks_which_need_to_add_lights: ChunkPosQueue,
 chunks_which_need_to_remove_lights: ChunkPosQueue,
@@ -89,11 +90,11 @@ pub const Pos = struct {
     }
 };
 
-pub fn new(allocator: std.mem.Allocator) !Self {
+pub fn new(allocator: std.mem.Allocator, seed: i32) !Self {
     const prng = std.Random.DefaultPrng.init(expr: {
-        var seed: u64 = undefined;
-        try std.posix.getrandom(std.mem.asBytes(&seed));
-        break :expr seed;
+        var prng_seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&prng_seed));
+        break :expr prng_seed;
     });
 
     const chunks = Chunks.init(allocator);
@@ -103,6 +104,7 @@ pub fn new(allocator: std.mem.Allocator) !Self {
     return .{
         .allocator = allocator,
         .prng = prng,
+        .seed = seed,
         .chunks = chunks,
         .chunks_which_need_to_add_lights = chunks_which_need_to_add_lights,
         .chunks_which_need_to_remove_lights = chunks_which_need_to_remove_lights,
@@ -158,7 +160,7 @@ pub const SeaLevelDeep = SeaLevel - 16;
 pub fn generateWorld(self: *Self) !void {
     const gen1 = znoise.FnlGenerator{
         .noise_type = .opensimplex2,
-        .seed = 0,
+        .seed = self.seed,
         .frequency = 1.0 / 16.0 / 16.0 / 16.0,
         // .lacunarity = 4,
         // .gain = 16,
@@ -167,7 +169,7 @@ pub fn generateWorld(self: *Self) !void {
 
     const gen2 = znoise.FnlGenerator{
         .noise_type = .opensimplex2,
-        .seed = 0,
+        .seed = self.seed,
         .frequency = 1.0 / 16.0 / 16.0,
         // .lacunarity = 8,
         // .gain = 1,
@@ -176,7 +178,7 @@ pub fn generateWorld(self: *Self) !void {
 
     const gen3 = znoise.FnlGenerator{
         .noise_type = .opensimplex2,
-        .seed = 0,
+        .seed = self.seed,
         .frequency = 1.0 / 16.0,
         // .lacunarity = 16,
         // .gain = 1.0 / 16.0,
@@ -185,7 +187,7 @@ pub fn generateWorld(self: *Self) !void {
 
     const sea_gen = znoise.FnlGenerator{
         .noise_type = .opensimplex2,
-        .seed = 0,
+        .seed = self.seed,
         .frequency = 0.05,
         .fractal_type = .ridged,
         .octaves = 6,
@@ -196,7 +198,7 @@ pub fn generateWorld(self: *Self) !void {
 
     const cave_gen = znoise.FnlGenerator{
         .noise_type = .opensimplex2,
-        .seed = 0,
+        .seed = self.seed,
         .frequency = 0.01,
         .fractal_type = .fbm,
         .octaves = 5,

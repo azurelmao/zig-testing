@@ -12,6 +12,7 @@ const DedupQueue = @import("dedup_queue.zig").DedupQueue;
 
 const SingleChunkMeshLayers = @import("SingleChunkMeshLayers.zig");
 const ShaderProgram = @import("ShaderProgram.zig");
+const ShaderStorageBuffer = @import("shader_storage_buffer.zig").ShaderStorageBuffer;
 const Matrix4x4f = @import("Matrix4x4f.zig");
 const Vec3f = @import("vec3f.zig").Vec3f;
 
@@ -70,8 +71,8 @@ fn cacheViewMatrix() void {
     view_matrix.lookTowardInPlace(camera_position, camera_direction, camera_up);
 }
 
-const INITIAL_WINDOW_WIDTH = 640;
-const INITIAL_WINDOW_HEIGHT = 480;
+const INITIAL_WINDOW_WIDTH = 640 * 2;
+const INITIAL_WINDOW_HEIGHT = 480 * 2;
 
 var prev_cursor_x: gl.float = INITIAL_WINDOW_WIDTH / 2;
 var prev_cursor_y: gl.float = INITIAL_WINDOW_HEIGHT / 2;
@@ -81,6 +82,7 @@ var delta_time: gl.float = 1.0 / 60.0;
 
 var window_width: gl.sizei = INITIAL_WINDOW_WIDTH;
 var window_height: gl.sizei = INITIAL_WINDOW_HEIGHT;
+var ui_scale: gl.sizei = 3;
 
 var fov_x: gl.float = 90.0;
 var aspect_ratio: gl.float = @as(gl.float, INITIAL_WINDOW_WIDTH) / @as(gl.float, INITIAL_WINDOW_HEIGHT);
@@ -195,7 +197,7 @@ fn extractPlanesFromViewProjection(matrix: Matrix4x4f, left: *[4]gl.float, right
     }
 }
 
-fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
+fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) u32 {
     var left: [4]gl.float = @splat(0);
     var right: [4]gl.float = @splat(0);
     var bottom: [4]gl.float = @splat(0);
@@ -217,6 +219,7 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
 
     const camera_chunk_pos = camera_position.toChunkPos();
 
+    var visible_num: u32 = 0;
     for (chunk_mesh_layers.pos.buffer.items, 0..) |chunk_mesh_pos, chunk_mesh_idx_| {
         const chunk_pos = chunk_mesh_pos.toChunkPos();
         const chunk_mesh_idx = chunk_mesh_idx_ * 6;
@@ -229,6 +232,7 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
                     if (chunk_mesh_layer.len.items[chunk_mesh_idx + face_idx] > 0) {
                         chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = 1;
                         chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].base_instance = 1;
+                        visible_num += 6;
                     }
                 }
             }
@@ -265,6 +269,7 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx] > 0) {
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].instance_count = 1;
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                    visible_num += 1;
                 }
 
                 chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].instance_count = 0;
@@ -280,6 +285,7 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 1] > 0) {
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].instance_count = 1;
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].base_instance = 1;
+                    visible_num += 1;
                 }
             }
         } else {
@@ -289,11 +295,13 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx] > 0) {
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].instance_count = 1;
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                    visible_num += 1;
                 }
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 1] > 0) {
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].instance_count = 1;
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].base_instance = 1;
+                    visible_num += 1;
                 }
             }
         }
@@ -305,6 +313,7 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 2] > 0) {
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].instance_count = 1;
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].base_instance = 1;
+                    visible_num += 1;
                 }
 
                 chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].instance_count = 0;
@@ -320,6 +329,7 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 3] > 0) {
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].instance_count = 1;
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].base_instance = 1;
+                    visible_num += 1;
                 }
             }
         } else {
@@ -329,11 +339,13 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 2] > 0) {
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].instance_count = 1;
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].base_instance = 1;
+                    visible_num += 1;
                 }
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 3] > 0) {
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].instance_count = 1;
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].base_instance = 1;
+                    visible_num += 1;
                 }
             }
         }
@@ -345,6 +357,7 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 4] > 0) {
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].instance_count = 1;
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].base_instance = 1;
+                    visible_num += 1;
                 }
 
                 chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].instance_count = 0;
@@ -360,6 +373,7 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 5] > 0) {
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].instance_count = 1;
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].base_instance = 1;
+                    visible_num += 1;
                 }
             }
         } else {
@@ -369,15 +383,19 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) void {
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 4] > 0) {
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].instance_count = 1;
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].base_instance = 1;
+                    visible_num += 1;
                 }
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 5] > 0) {
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].instance_count = 1;
                     chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].base_instance = 1;
+                    visible_num += 1;
                 }
             }
         }
     }
+
+    return visible_num;
 }
 
 fn uploadCommandBuffers(chunk_mesh_layers: *const ChunkMeshLayers) void {
@@ -391,20 +409,6 @@ fn uploadCommandBuffers(chunk_mesh_layers: *const ChunkMeshLayers) void {
             @ptrCast(chunk_mesh_layer.command.buffer.items.ptr),
         );
     }
-}
-
-fn ShaderStorageBuffer(comptime T: type) type {
-    return struct {
-        buffer: std.ArrayList(T),
-        handle: gl.uint,
-
-        pub fn new(allocator: std.mem.Allocator) @This() {
-            return .{
-                .buffer = std.ArrayList(T).init(allocator),
-                .handle = 0,
-            };
-        }
-    };
 }
 
 pub const ChunkMeshBuffers = struct {
@@ -813,7 +817,7 @@ pub fn main() !void {
     var debug_timer = try std.time.Timer.start();
 
     debug_timer.reset();
-    var world = try World.new(allocator);
+    var world = try World.new(allocator, 30);
     try world.generateWorld();
 
     var debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
@@ -870,7 +874,7 @@ pub fn main() !void {
     std.log.info("Chunk mesh buffers done. {d} s", .{debug_time});
 
     debug_timer.reset();
-    cullChunkFacesAndFrustum(&chunk_mesh_layers);
+    _ = cullChunkFacesAndFrustum(&chunk_mesh_layers);
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Culling done. {d} s", .{debug_time});
@@ -937,76 +941,9 @@ pub fn main() !void {
     );
     gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 5, bounding_box_buffer_handle);
 
-    var text_list = std.ArrayList(ui.Text).init(allocator);
+    var text_manager = ui.TextManager.new(allocator);
 
-    try text_list.append(.{
-        .pixel_x = 0,
-        .pixel_y = 0,
-        .text = "The quick brown fox jumps over the lazy dog",
-    });
-
-    try text_list.append(.{
-        .pixel_x = 0,
-        .pixel_y = 6,
-        .text = "Lorem ipsum dolor sit amet",
-    });
-
-    var text_vertices = std.ArrayList(ui.Text.Vertex).init(allocator);
-    const quarter_window_width = @divTrunc(window_width, 4);
-    const quarter_window_height = @divTrunc(window_height, 4);
-    const half_window_width_f = @as(gl.float, @floatFromInt(window_width)) / 2.0;
-    const half_window_height_f = @as(gl.float, @floatFromInt(window_height)) / 2.0;
-    const ui_scale = 2;
-    const pixel_height = 6;
-    const max_pixel_width = 6;
-    const max_width: gl.float = @floatFromInt(max_pixel_width);
-
-    for (text_list.items) |text| {
-        var pixel_x = text.pixel_x - quarter_window_width;
-        const pixel_y = quarter_window_height - text.pixel_y - pixel_height;
-
-        const pixel_min_y = pixel_y;
-        const pixel_max_y = pixel_y + pixel_height;
-
-        const min_y = @as(gl.float, @floatFromInt(pixel_min_y * ui_scale)) / half_window_height_f;
-        const max_y = @as(gl.float, @floatFromInt(pixel_max_y * ui_scale)) / half_window_height_f;
-
-        for (text.text) |char| {
-            const glyph = ui.Glyph.fromChar(char);
-            const pixel_width: i32 = @intCast(glyph.getWidth());
-            const idx: gl.uint = @intCast(glyph.idx());
-
-            const pixel_min_x = pixel_x;
-            const pixel_max_x = pixel_x + pixel_width;
-
-            const min_x = @as(gl.float, @floatFromInt(pixel_min_x * ui_scale)) / half_window_width_f;
-            const max_x = @as(gl.float, @floatFromInt(pixel_max_x * ui_scale)) / half_window_width_f;
-
-            const width: gl.float = @floatFromInt(pixel_width);
-            const max_u = width / max_width;
-
-            try text_vertices.appendSlice(&.{
-                .{ .x = max_x, .y = max_y, .u = max_u, .v = 0, .idx = idx },
-                .{ .x = min_x, .y = max_y, .u = 0, .v = 0, .idx = idx },
-                .{ .x = min_x, .y = min_y, .u = 0, .v = 1, .idx = idx },
-                .{ .x = min_x, .y = min_y, .u = 0, .v = 1, .idx = idx },
-                .{ .x = max_x, .y = min_y, .u = max_u, .v = 1, .idx = idx },
-                .{ .x = max_x, .y = max_y, .u = max_u, .v = 0, .idx = idx },
-            });
-
-            pixel_x += pixel_width + 1;
-        }
-    }
-
-    var text_buffer_handle: gl.uint = undefined;
-    gl.CreateBuffers(1, @ptrCast(&text_buffer_handle));
-    gl.NamedBufferStorage(
-        text_buffer_handle,
-        @intCast(@sizeOf(ui.Text.Vertex) * text_vertices.items.len),
-        @ptrCast(text_vertices.items.ptr),
-        gl.DYNAMIC_STORAGE_BIT,
-    );
-    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 11, text_buffer_handle);
+    gl.CreateBuffers(1, @ptrCast(&text_manager.text.handle));
 
     var vao_handle: gl.uint = undefined;
     gl.GenVertexArrays(1, @ptrCast(&vao_handle));
@@ -1031,22 +968,27 @@ pub fn main() !void {
             camera_position.subtractInPlace(camera_horizontal_direction.multiplyScalar(movement_speed * delta_time));
             camera_moved = true;
         }
+
         if (window.getKey(glfw.Key.w) == .press) {
             camera_position.addInPlace(camera_horizontal_direction.multiplyScalar(movement_speed * delta_time));
             camera_moved = true;
         }
+
         if (window.getKey(glfw.Key.left_shift) == .press) {
             camera_position.subtractInPlace(camera_up.multiplyScalar(movement_speed * delta_time));
             camera_moved = true;
         }
+
         if (window.getKey(glfw.Key.space) == .press) {
             camera_position.addInPlace(camera_up.multiplyScalar(movement_speed * delta_time));
             camera_moved = true;
         }
+
         if (window.getKey(glfw.Key.a) == .press) {
             camera_position.subtractInPlace(camera_right.multiplyScalar(movement_speed * delta_time));
             camera_moved = true;
         }
+
         if (window.getKey(glfw.Key.d) == .press) {
             camera_position.addInPlace(camera_right.multiplyScalar(movement_speed * delta_time));
             camera_moved = true;
@@ -1123,7 +1065,7 @@ pub fn main() !void {
             chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
         }
 
-        cullChunkFacesAndFrustum(&chunk_mesh_layers);
+        const visible_num = cullChunkFacesAndFrustum(&chunk_mesh_layers);
         uploadCommandBuffers(&chunk_mesh_layers);
 
         chunks_shader_program.bind();
@@ -1171,8 +1113,35 @@ pub fn main() !void {
         gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(chunk_mesh_layers.pos.buffer.items.len));
         gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL);
 
+        text_manager.text.buffer.clearRetainingCapacity();
+        text_manager.text_list.clearRetainingCapacity();
+
+        try text_manager.add(.{
+            .pixel_x = 0,
+            .pixel_y = 0,
+            .text = "Buildsmith",
+        });
+
+        try text_manager.add(.{
+            .pixel_x = 0,
+            .pixel_y = 6,
+            .text = try std.fmt.allocPrint(allocator, "visible: {}/{}", .{ visible_num, chunk_mesh_layers.pos.buffer.items.len * 6 }),
+        });
+
+        try text_manager.buildVertices(window_width, window_height, ui_scale);
+
+        gl.DeleteBuffers(1, @ptrCast(&text_manager.text.handle));
+        gl.CreateBuffers(1, @ptrCast(&text_manager.text.handle));
+        gl.NamedBufferStorage(
+            text_manager.text.handle,
+            @intCast(@sizeOf(ui.Text.Vertex) * text_manager.text.buffer.items.len),
+            @ptrCast(text_manager.text.buffer.items.ptr),
+            gl.DYNAMIC_STORAGE_BIT,
+        );
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 11, text_manager.text.handle);
+
         text_shader_program.bind();
-        gl.DrawArrays(gl.TRIANGLES, 0, @intCast(text_vertices.items.len));
+        gl.DrawArrays(gl.TRIANGLES, 0, @intCast(text_manager.text.buffer.items.len));
 
         delta_time = @floatCast(@as(f64, @floatFromInt(timer.lap())) / 1_000_000_000.0);
 
