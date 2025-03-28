@@ -2,17 +2,15 @@ const std = @import("std");
 
 pub fn DedupQueue(T: type) type {
     return struct {
-        in: std.AutoArrayHashMap(T, void),
-        out: std.AutoArrayHashMap(T, void),
+        in: std.AutoArrayHashMapUnmanaged(T, void),
+        out: std.AutoArrayHashMapUnmanaged(T, void),
 
         const Self = @This();
 
-        pub fn init(allocator: std.mem.Allocator) Self {
-            return .{
-                .in = std.AutoArrayHashMap(T, void).init(allocator),
-                .out = std.AutoArrayHashMap(T, void).init(allocator),
-            };
-        }
+        pub const empty: Self = .{
+            .in = .empty,
+            .out = .empty,
+        };
 
         pub fn deinit(self: *Self) void {
             self.in.deinit();
@@ -23,10 +21,10 @@ pub fn DedupQueue(T: type) type {
             self.out.count();
         }
 
-        pub fn enqueue(self: *Self, val: T) !void {
+        pub fn enqueue(self: *Self, allocator: std.mem.Allocator, val: T) !void {
             if (self.in.contains(val) or self.out.contains(val)) return;
-            try self.out.ensureUnusedCapacity(self.in.count() + 1);
-            try self.in.put(val, {});
+            try self.out.ensureUnusedCapacity(allocator, self.in.count() + 1);
+            try self.in.put(allocator, val, {});
         }
 
         pub fn dequeue(self: *Self) ?T {

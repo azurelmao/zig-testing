@@ -9,10 +9,9 @@ const Vec3f = @import("vec3f.zig").Vec3f;
 
 const Self = @This();
 
-const Chunks = std.AutoHashMap(Chunk.Pos, Chunk);
+const Chunks = std.AutoHashMapUnmanaged(Chunk.Pos, Chunk);
 const ChunkPosQueue = DedupQueue(Chunk.Pos);
 
-allocator: std.mem.Allocator,
 prng: std.Random.Xoshiro256,
 seed: i32,
 chunks: Chunks,
@@ -90,24 +89,19 @@ pub const Pos = struct {
     }
 };
 
-pub fn new(allocator: std.mem.Allocator, seed: i32) !Self {
+pub fn init(seed: i32) !Self {
     const prng = std.Random.DefaultPrng.init(expr: {
         var prng_seed: u64 = undefined;
         try std.posix.getrandom(std.mem.asBytes(&prng_seed));
         break :expr prng_seed;
     });
 
-    const chunks = Chunks.init(allocator);
-    const chunks_which_need_to_add_lights = ChunkPosQueue.init(allocator);
-    const chunks_which_need_to_remove_lights = ChunkPosQueue.init(allocator);
-
     return .{
-        .allocator = allocator,
         .prng = prng,
         .seed = seed,
-        .chunks = chunks,
-        .chunks_which_need_to_add_lights = chunks_which_need_to_add_lights,
-        .chunks_which_need_to_remove_lights = chunks_which_need_to_remove_lights,
+        .chunks = .empty,
+        .chunks_which_need_to_add_lights = .empty,
+        .chunks_which_need_to_remove_lights = .empty,
     };
 }
 
@@ -157,7 +151,7 @@ pub const BottomOfTheWorld = BelowHeight * Chunk.Size;
 pub const SeaLevel = 0;
 pub const SeaLevelDeep = SeaLevel - 16;
 
-pub fn generateWorld(self: *Self) !void {
+pub fn generate(self: *Self, allocator: std.mem.Allocator) !void {
     const gen1 = znoise.FnlGenerator{
         .noise_type = .opensimplex2,
         .seed = self.seed,
@@ -207,7 +201,7 @@ pub fn generateWorld(self: *Self) !void {
         .weighted_strength = -1,
     };
 
-    var height_map = try self.allocator.create([Chunk.Area]i16);
+    var height_map = try allocator.create([Chunk.Area]i16);
 
     for (0..Width * 2) |chunk_x_| {
         for (0..Width * 2) |chunk_z_| {
@@ -237,7 +231,7 @@ pub fn generateWorld(self: *Self) !void {
                 const chunk_z = @as(i11, @intCast(chunk_z_)) - Width;
                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
 
-                var chunk = try Chunk.new(self.allocator, chunk_pos, .air);
+                var chunk = try Chunk.new(allocator, chunk_pos, .air);
 
                 if (chunk_y >= min_chunk_height and chunk_y <= max_chunk_height) {
                     try generateNoise2D(&chunk, height_map);
@@ -245,13 +239,13 @@ pub fn generateWorld(self: *Self) !void {
                     try generateNoise3D(&chunk, &cave_gen);
                 }
 
-                try self.chunks.put(chunk.pos, chunk);
+                try self.chunks.put(allocator, chunk.pos, chunk);
             }
         }
     }
 
-    const indirect_light_bitset = try self.allocator.create([Chunk.Area]u32);
-    const cave_bitset = try self.allocator.create([Chunk.Area]u32);
+    const indirect_light_bitset = try allocator.create([Chunk.Area]u32);
+    const cave_bitset = try allocator.create([Chunk.Area]u32);
 
     for (0..Width * 2) |chunk_x_| {
         for (0..Width * 2) |chunk_z_| {
@@ -265,7 +259,7 @@ pub fn generateWorld(self: *Self) !void {
 
                 try generateIndirectLight(chunk, indirect_light_bitset);
                 try fillChunkWithIndirectLight(chunk, indirect_light_bitset, cave_bitset);
-                try self.chunks_which_need_to_add_lights.enqueue(chunk.pos);
+                try self.chunks_which_need_to_add_lights.enqueue(allocator, chunk.pos);
             }
 
             chunk_y -= 1;
@@ -275,7 +269,7 @@ pub fn generateWorld(self: *Self) !void {
 
                 try continueIndirectLight(chunk, indirect_light_bitset);
                 try fillChunkWithIndirectLight(chunk, indirect_light_bitset, cave_bitset);
-                try self.chunks_which_need_to_add_lights.enqueue(chunk.pos);
+                try self.chunks_which_need_to_add_lights.enqueue(allocator, chunk.pos);
             }
         }
     }
@@ -593,14 +587,14 @@ pub fn getNeighborChunks(self: *Self, chunk_pos: Chunk.Pos) NeighborChunks {
     return .{ .chunks = chunks };
 }
 
-pub fn propagateLights(self: *Self) !void {
+pub fn propagateLights(self: *Self, allocator: std.mem.Allocator) !void {
     while (self.chunks_which_need_to_add_lights.dequeue()) |chunk_pos| {
         const chunk = self.getChunk(chunk_pos) catch {
             std.log.err("{}", .{chunk_pos});
             return error.PropAdd1;
         };
 
-        try self.propagateLightAddition(chunk);
+        try self.propagateLightAddition(allocator, chunk);
     }
 
     while (self.chunks_which_need_to_remove_lights.dequeue()) |chunk_pos| {
@@ -608,7 +602,7 @@ pub fn propagateLights(self: *Self) !void {
             return error.PropRem;
         };
 
-        try self.propagateLightRemoval(chunk);
+        try self.propagateLightRemoval(allocator, chunk);
     }
 
     while (self.chunks_which_need_to_add_lights.dequeue()) |chunk_pos| {
@@ -616,11 +610,11 @@ pub fn propagateLights(self: *Self) !void {
             return error.PropAdd2;
         };
 
-        try self.propagateLightAddition(chunk);
+        try self.propagateLightAddition(allocator, chunk);
     }
 }
 
-pub fn propagateLightAddition(self: *Self, chunk: *Chunk) !void {
+pub fn propagateLightAddition(self: *Self, allocator: std.mem.Allocator, chunk: *Chunk) !void {
     for (0..chunk.light_addition_queue.readableLength()) |node_idx| {
         const node = chunk.light_addition_queue.peekItem(node_idx);
         const local_pos = node.pos.toLocalPos();
@@ -737,14 +731,14 @@ pub fn propagateLightAddition(self: *Self, chunk: *Chunk) !void {
                         .light = next_light,
                     });
 
-                    if (is_neighbor_chunk) try self.chunks_which_need_to_add_lights.enqueue(neighbor_chunk_pos);
+                    if (is_neighbor_chunk) try self.chunks_which_need_to_add_lights.enqueue(allocator, neighbor_chunk_pos);
                 }
             }
         }
     }
 }
 
-pub fn propagateLightRemoval(self: *Self, chunk: *Chunk) !void {
+pub fn propagateLightRemoval(self: *Self, allocator: std.mem.Allocator, chunk: *Chunk) !void {
     for (0..chunk.light_removal_queue.readableLength()) |i| {
         const node = chunk.light_removal_queue.peekItem(i);
         const local_pos = node.pos.toLocalPos();
@@ -856,7 +850,7 @@ pub fn propagateLightRemoval(self: *Self, chunk: *Chunk) !void {
 
                     neighbor_chunk.setLight(neighbor_local_pos, removed_light);
 
-                    if (is_neighbor_chunk) try self.chunks_which_need_to_remove_lights.enqueue(neighbor_chunk_pos);
+                    if (is_neighbor_chunk) try self.chunks_which_need_to_remove_lights.enqueue(allocator, neighbor_chunk_pos);
                 }
 
                 if (enqueue_addition) {
@@ -865,7 +859,7 @@ pub fn propagateLightRemoval(self: *Self, chunk: *Chunk) !void {
                         .light = neighbor_light,
                     });
 
-                    try self.chunks_which_need_to_add_lights.enqueue(neighbor_chunk_pos);
+                    try self.chunks_which_need_to_add_lights.enqueue(allocator, neighbor_chunk_pos);
                 }
             }
         }

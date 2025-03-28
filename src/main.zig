@@ -13,6 +13,7 @@ const DedupQueue = @import("dedup_queue.zig").DedupQueue;
 const SingleChunkMeshLayers = @import("SingleChunkMeshLayers.zig");
 const ShaderProgram = @import("ShaderProgram.zig");
 const ShaderStorageBuffer = @import("shader_storage_buffer.zig").ShaderStorageBuffer;
+const ShaderStorageBufferUnmanaged = @import("shader_storage_buffer.zig").ShaderStorageBufferUnmanaged;
 const Matrix4x4f = @import("Matrix4x4f.zig");
 const Vec3f = @import("vec3f.zig").Vec3f;
 
@@ -398,31 +399,18 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) u32 {
     return visible_num;
 }
 
-fn uploadCommandBuffers(chunk_mesh_layers: *const ChunkMeshLayers) void {
-    inline for (0..Block.Layer.len) |layer_idx| {
-        const chunk_mesh_layer = chunk_mesh_layers.layers[layer_idx];
-
-        gl.NamedBufferSubData(
-            chunk_mesh_layer.command.handle,
-            0,
-            @intCast(@sizeOf(DrawArraysIndirectCommand) * chunk_mesh_layer.command.buffer.items.len),
-            @ptrCast(chunk_mesh_layer.command.buffer.items.ptr),
-        );
-    }
-}
-
 pub const ChunkMeshBuffers = struct {
     const Self = @This();
 
-    len: std.ArrayList(usize),
+    len: std.ArrayListUnmanaged(usize),
     mesh: ShaderStorageBuffer(SingleChunkMeshLayers.LocalPosAndModelIdx),
     command: ShaderStorageBuffer(DrawArraysIndirectCommand),
 
-    pub fn new(allocator: std.mem.Allocator) Self {
+    pub fn init() Self {
         return .{
-            .len = std.ArrayList(usize).init(allocator),
-            .mesh = ShaderStorageBuffer(SingleChunkMeshLayers.LocalPosAndModelIdx).new(allocator),
-            .command = ShaderStorageBuffer(DrawArraysIndirectCommand).new(allocator),
+            .len = .empty,
+            .mesh = .init(gl.DYNAMIC_STORAGE_BIT),
+            .command = .init(gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT),
         };
     }
 };
@@ -431,142 +419,164 @@ pub const ChunkMeshLayers = struct {
     layers: [Block.Layer.len]ChunkMeshBuffers,
     pos: ShaderStorageBuffer(Vec3f),
 
-    pub fn new(allocator: std.mem.Allocator) @This() {
+    pub fn init() ChunkMeshLayers {
         var layers: [Block.Layer.len]ChunkMeshBuffers = undefined;
 
         inline for (0..Block.Layer.len) |i| {
-            layers[i] = ChunkMeshBuffers.new(allocator);
+            layers[i] = .init();
         }
 
         return .{
             .layers = layers,
-            .pos = ShaderStorageBuffer(Vec3f).new(allocator),
+            .pos = .init(gl.DYNAMIC_STORAGE_BIT),
         };
     }
-};
 
-pub const ChunkBoundingBox = struct {
-    const vertices = west ++ east ++ bottom ++ top ++ north ++ south;
+    pub fn uploadCommandBuffers(self: *ChunkMeshLayers) void {
+        inline for (0..Block.Layer.len) |layer_idx| {
+            const chunk_mesh_layer = &self.layers[layer_idx];
+            chunk_mesh_layer.command.uploadBuffer();
+        }
+    }
 
-    const west = [6]Vec3f{
-        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = 0, .y = Chunk.Size, .z = 0 },
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = 0, .y = 0, .z = Chunk.Size },
-        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
-    };
+    pub fn draw(self: *ChunkMeshLayers) void {
+        inline for (0..Block.Layer.len) |layer_idx| {
+            const chunk_mesh_layer = &self.layers[layer_idx];
 
-    const east = [6]Vec3f{
-        .{ .x = Chunk.Size, .y = 0, .z = 0 },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = 0, .z = 0 },
-    };
+            if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
+                chunk_mesh_layer.mesh.bindBuffer(3);
+                gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, chunk_mesh_layer.command.unmanaged.handle);
 
-    const bottom = [6]Vec3f{
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = Chunk.Size, .y = 0, .z = 0 },
-        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
-        .{ .x = 0, .y = 0, .z = Chunk.Size },
-        .{ .x = 0, .y = 0, .z = 0 },
-    };
-
-    const top = [6]Vec3f{
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
-        .{ .x = 0, .y = Chunk.Size, .z = 0 },
-        .{ .x = 0, .y = Chunk.Size, .z = 0 },
-        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-    };
-
-    const north = [6]Vec3f{
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = 0, .y = Chunk.Size, .z = 0 },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
-        .{ .x = Chunk.Size, .y = 0, .z = 0 },
-        .{ .x = 0, .y = 0, .z = 0 },
-    };
-
-    const south = [6]Vec3f{
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = 0, .y = 0, .z = Chunk.Size },
-        .{ .x = 0, .y = 0, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-    };
-};
-
-fn populateChunkMeshLayers(allocator: std.mem.Allocator, world: *World, chunk_mesh_layers: *ChunkMeshLayers) !void {
-    var single_chunk_mesh_layers = SingleChunkMeshLayers.new(allocator);
-
-    var chunk_iter = world.chunks.valueIterator();
-    while (chunk_iter.next()) |chunk| {
-        const chunk_pos = chunk.pos;
-
-        const neighbor_chunks: SingleChunkMeshLayers.NeighborChunks = expr: {
-            var chunks: [6]?*Chunk = undefined;
-
-            for (0..6) |face_idx| {
-                chunks[face_idx] = world.getChunkOrNull(chunk_pos.add(Chunk.Pos.Offsets[face_idx]));
+                gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
+                gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.buffer.items.len), 0);
+                gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
             }
+        }
+    }
 
-            break :expr .{ .chunks = chunks };
-        };
+    fn generate(self: *ChunkMeshLayers, allocator: std.mem.Allocator, world: *World) !void {
+        var single_chunk_mesh_layers = SingleChunkMeshLayers.new(allocator);
 
-        try chunk_mesh_layers.pos.buffer.append(chunk_pos.toVec3f());
+        var chunk_iter = world.chunks.valueIterator();
+        while (chunk_iter.next()) |chunk| {
+            const chunk_pos = chunk.pos;
 
-        if (chunk.num_of_air != 0 and chunk.num_of_air != Chunk.Volume) {
-            try single_chunk_mesh_layers.generate(chunk, &neighbor_chunks);
+            const neighbor_chunks: SingleChunkMeshLayers.NeighborChunks = expr: {
+                var chunks: [6]?*Chunk = undefined;
 
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-                const single_chunk_mesh_layer = &single_chunk_mesh_layers.layers[layer_idx];
-
-                inline for (0..6) |face_idx| {
-                    const single_chunk_mesh_face = &single_chunk_mesh_layer.faces[face_idx];
-                    const len: gl.uint = @intCast(single_chunk_mesh_face.items.len);
-
-                    try chunk_mesh_layer.len.append(len);
-
-                    const command = DrawArraysIndirectCommand{
-                        .first_vertex = @intCast(chunk_mesh_layer.mesh.buffer.items.len * 6),
-                        .count = @intCast(len * 6),
-                        .instance_count = if (len > 0) 1 else 0,
-                        .base_instance = 0,
-                    };
-
-                    try chunk_mesh_layer.command.buffer.append(command);
-                    try chunk_mesh_layer.mesh.buffer.appendSlice(single_chunk_mesh_face.items);
-                    single_chunk_mesh_face.clearRetainingCapacity();
+                for (0..6) |face_idx| {
+                    chunks[face_idx] = world.getChunkOrNull(chunk_pos.add(Chunk.Pos.Offsets[face_idx]));
                 }
-            }
-        } else {
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-                try chunk_mesh_layer.len.appendNTimes(0, 6);
+                break :expr .{ .chunks = chunks };
+            };
 
-                inline for (0..6) |_| {
-                    const command = DrawArraysIndirectCommand{
-                        .first_vertex = @intCast(chunk_mesh_layer.mesh.buffer.items.len * 6),
-                        .count = 0,
-                        .instance_count = 0,
-                        .base_instance = 0,
-                    };
+            try self.pos.buffer.append(allocator, chunk_pos.toVec3f());
 
-                    try chunk_mesh_layer.command.buffer.append(command);
+            if (chunk.num_of_air != 0 and chunk.num_of_air != Chunk.Volume) {
+                try single_chunk_mesh_layers.generate(chunk, &neighbor_chunks);
+
+                inline for (0..Block.Layer.len) |layer_idx| {
+                    const chunk_mesh_layer = &self.layers[layer_idx];
+                    const single_chunk_mesh_layer = &single_chunk_mesh_layers.layers[layer_idx];
+
+                    inline for (0..6) |face_idx| {
+                        const single_chunk_mesh_face = &single_chunk_mesh_layer.faces[face_idx];
+                        const len: gl.uint = @intCast(single_chunk_mesh_face.items.len);
+
+                        try chunk_mesh_layer.len.append(allocator, len);
+
+                        const command = DrawArraysIndirectCommand{
+                            .first_vertex = @intCast(chunk_mesh_layer.mesh.buffer.items.len * 6),
+                            .count = @intCast(len * 6),
+                            .instance_count = if (len > 0) 1 else 0,
+                            .base_instance = 0,
+                        };
+
+                        try chunk_mesh_layer.command.buffer.append(allocator, command);
+                        try chunk_mesh_layer.mesh.buffer.appendSlice(allocator, single_chunk_mesh_face.items);
+                        single_chunk_mesh_face.clearRetainingCapacity();
+                    }
+                }
+            } else {
+                inline for (0..Block.Layer.len) |layer_idx| {
+                    const chunk_mesh_layer = &self.layers[layer_idx];
+
+                    try chunk_mesh_layer.len.appendNTimes(allocator, 0, 6);
+
+                    inline for (0..6) |_| {
+                        const command = DrawArraysIndirectCommand{
+                            .first_vertex = @intCast(chunk_mesh_layer.mesh.buffer.items.len * 6),
+                            .count = 0,
+                            .instance_count = 0,
+                            .base_instance = 0,
+                        };
+
+                        try chunk_mesh_layer.command.buffer.append(allocator, command);
+                    }
                 }
             }
         }
     }
-}
+};
+
+pub const ChunkBoundingBox = struct {
+    const vertices: []const Vec3f = west ++ east ++ bottom ++ top ++ north ++ south;
+
+    const west: []const Vec3f = &.{
+        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
+        .{ .x = 0, .y = Chunk.Size, .z = 0 },
+        .{ .x = 0, .y = 0, .z = 0 },
+        .{ .x = 0, .y = 0, .z = 0 },
+        .{ .x = 0, .y = 0, .z = Chunk.Size },
+        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
+    };
+
+    const east: []const Vec3f = &.{
+        .{ .x = Chunk.Size, .y = 0, .z = 0 },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
+        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
+        .{ .x = Chunk.Size, .y = 0, .z = 0 },
+    };
+
+    const bottom: []const Vec3f = &.{
+        .{ .x = 0, .y = 0, .z = 0 },
+        .{ .x = Chunk.Size, .y = 0, .z = 0 },
+        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
+        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
+        .{ .x = 0, .y = 0, .z = Chunk.Size },
+        .{ .x = 0, .y = 0, .z = 0 },
+    };
+
+    const top: []const Vec3f = &.{
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
+        .{ .x = 0, .y = Chunk.Size, .z = 0 },
+        .{ .x = 0, .y = Chunk.Size, .z = 0 },
+        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
+    };
+
+    const north: []const Vec3f = &.{
+        .{ .x = 0, .y = 0, .z = 0 },
+        .{ .x = 0, .y = Chunk.Size, .z = 0 },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
+        .{ .x = Chunk.Size, .y = 0, .z = 0 },
+        .{ .x = 0, .y = 0, .z = 0 },
+    };
+
+    const south: []const Vec3f = &.{
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
+        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
+        .{ .x = 0, .y = 0, .z = Chunk.Size },
+        .{ .x = 0, .y = 0, .z = Chunk.Size },
+        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
+    };
+};
 
 pub const RaycastSide = enum {
     west,
@@ -804,27 +814,20 @@ pub fn main() !void {
         indirect_light_data[idx] = vec3;
     }
 
-    var indirect_light_buffer_handle: gl.uint = undefined;
-    gl.CreateBuffers(1, @ptrCast(&indirect_light_buffer_handle));
-    gl.NamedBufferStorage(
-        indirect_light_buffer_handle,
-        @intCast((@sizeOf(Vec3f)) * 16),
-        @ptrCast(&indirect_light_data),
-        gl.DYNAMIC_STORAGE_BIT,
-    );
-    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, indirect_light_buffer_handle);
+    var indirect_light_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
+    indirect_light_buffer.initBufferAndBind(&indirect_light_data, 4);
 
     var debug_timer = try std.time.Timer.start();
 
     debug_timer.reset();
-    var world = try World.new(allocator, 30);
-    try world.generateWorld();
+    var world = try World.init(30);
+    try world.generate(allocator);
 
     var debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Generating world done. {d} s", .{debug_time});
 
     debug_timer.reset();
-    try world.propagateLights();
+    try world.propagateLights(allocator);
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Indirect light propagation done. {d} s", .{debug_time});
@@ -860,15 +863,15 @@ pub fn main() !void {
     // try world.setBlockAndAffectLight(.{ .x = 16, .y = 37, .z = 16 }, .glass_tinted);
 
     debug_timer.reset();
-    try world.propagateLights();
+    try world.propagateLights(allocator);
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Light propagation done. {d} s", .{debug_time});
 
-    var chunk_mesh_layers = ChunkMeshLayers.new(allocator);
+    var chunk_mesh_layers = ChunkMeshLayers.init();
 
     debug_timer.reset();
-    try populateChunkMeshLayers(allocator, &world, &chunk_mesh_layers);
+    try chunk_mesh_layers.generate(allocator, &world);
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Chunk mesh buffers done. {d} s", .{debug_time});
@@ -879,71 +882,28 @@ pub fn main() !void {
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Culling done. {d} s", .{debug_time});
 
-    var vertex_buffer_handle: gl.uint = undefined;
-    gl.CreateBuffers(1, @ptrCast(&vertex_buffer_handle));
-    gl.NamedBufferStorage(
-        vertex_buffer_handle,
-        @intCast((@sizeOf(Block.Vertex)) * Block.VERTEX_BUFFER.len),
-        @ptrCast(Block.VERTEX_BUFFER.ptr),
-        gl.DYNAMIC_STORAGE_BIT,
-    );
-    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, vertex_buffer_handle);
+    var block_vertex_buffer = ShaderStorageBufferUnmanaged(Block.Vertex).init(gl.DYNAMIC_STORAGE_BIT);
+    block_vertex_buffer.initBufferAndBind(Block.VERTEX_BUFFER, 0);
 
-    var vertex_idx_and_texture_idx_buffer_handle: gl.uint = undefined;
-    gl.CreateBuffers(1, @ptrCast(&vertex_idx_and_texture_idx_buffer_handle));
-    gl.NamedBufferStorage(
-        vertex_idx_and_texture_idx_buffer_handle,
-        @intCast((@sizeOf(Block.VertexIdxAndTextureIdx)) * Block.VERTEX_IDX_AND_TEXTURE_IDX_BUFFER.len),
-        @ptrCast(Block.VERTEX_IDX_AND_TEXTURE_IDX_BUFFER.ptr),
-        gl.DYNAMIC_STORAGE_BIT,
-    );
-    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 1, vertex_idx_and_texture_idx_buffer_handle);
+    var block_face_buffer = ShaderStorageBufferUnmanaged(Block.VertexIdxAndTextureIdx).init(gl.DYNAMIC_STORAGE_BIT);
+    block_face_buffer.initBufferAndBind(Block.VERTEX_IDX_AND_TEXTURE_IDX_BUFFER, 1);
 
-    gl.CreateBuffers(1, @ptrCast(&chunk_mesh_layers.pos.handle));
-    gl.NamedBufferStorage(
-        chunk_mesh_layers.pos.handle,
-        @intCast(@sizeOf(Vec3f) * chunk_mesh_layers.pos.buffer.items.len),
-        @ptrCast(chunk_mesh_layers.pos.buffer.items.ptr),
-        gl.DYNAMIC_STORAGE_BIT,
-    );
-    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 2, chunk_mesh_layers.pos.handle);
+    chunk_mesh_layers.pos.initBufferAndBind(2);
 
     inline for (0..Block.Layer.len) |layer_idx| {
         const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
         if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
-            gl.CreateBuffers(1, @ptrCast(&chunk_mesh_layer.mesh.handle));
-            gl.NamedBufferStorage(
-                chunk_mesh_layer.mesh.handle,
-                @intCast((@sizeOf(SingleChunkMeshLayers.LocalPosAndModelIdx)) * chunk_mesh_layer.mesh.buffer.items.len),
-                @ptrCast(chunk_mesh_layer.mesh.buffer.items.ptr),
-                gl.DYNAMIC_STORAGE_BIT,
-            );
+            chunk_mesh_layer.mesh.initBuffer();
         }
 
-        gl.CreateBuffers(1, @ptrCast(&chunk_mesh_layer.command.handle));
-        gl.NamedBufferStorage(
-            chunk_mesh_layer.command.handle,
-            @intCast(@sizeOf(DrawArraysIndirectCommand) * chunk_mesh_layer.command.buffer.items.len),
-            @ptrCast(chunk_mesh_layer.command.buffer.items.ptr),
-            gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT,
-        );
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 6 + layer_idx, chunk_mesh_layer.command.handle);
+        chunk_mesh_layer.command.initBufferAndBind(6 + layer_idx);
     }
 
-    var bounding_box_buffer_handle: gl.uint = undefined;
-    gl.CreateBuffers(1, @ptrCast(&bounding_box_buffer_handle));
-    gl.NamedBufferStorage(
-        bounding_box_buffer_handle,
-        @intCast(@sizeOf(Vec3f) * ChunkBoundingBox.vertices.len),
-        @ptrCast(&ChunkBoundingBox.vertices),
-        gl.DYNAMIC_STORAGE_BIT,
-    );
-    gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 5, bounding_box_buffer_handle);
+    var bounding_box_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
+    bounding_box_buffer.initBufferAndBind(ChunkBoundingBox.vertices, 5);
 
-    var text_manager = ui.TextManager.new(allocator);
-
-    gl.CreateBuffers(1, @ptrCast(&text_manager.text.handle));
+    var text_manager = ui.TextManager.init();
 
     var vao_handle: gl.uint = undefined;
     gl.GenVertexArrays(1, @ptrCast(&vao_handle));
@@ -1066,21 +1026,10 @@ pub fn main() !void {
         }
 
         const visible_num = cullChunkFacesAndFrustum(&chunk_mesh_layers);
-        uploadCommandBuffers(&chunk_mesh_layers);
+        chunk_mesh_layers.uploadCommandBuffers();
 
         chunks_shader_program.bind();
-        inline for (0..Block.Layer.len) |layer_idx| {
-            const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-            if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
-                gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 3, chunk_mesh_layer.mesh.handle);
-                gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, chunk_mesh_layer.command.handle);
-
-                gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
-                gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.buffer.items.len), 0);
-                gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
-            }
-        }
+        chunk_mesh_layers.draw();
 
         for (0..chunk_mesh_layers.pos.buffer.items.len) |chunk_mesh_idx_| {
             const chunk_mesh_idx = chunk_mesh_idx_ * 6;
@@ -1093,7 +1042,7 @@ pub fn main() !void {
                 }
             }
         }
-        uploadCommandBuffers(&chunk_mesh_layers);
+        chunk_mesh_layers.uploadCommandBuffers();
 
         chunks_bb_shader_program.bind();
         gl.Enable(gl.POLYGON_OFFSET_FILL);
@@ -1113,23 +1062,22 @@ pub fn main() !void {
         gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(chunk_mesh_layers.pos.buffer.items.len));
         gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL);
 
-        text_manager.text.buffer.clearRetainingCapacity();
-        text_manager.text_list.clearRetainingCapacity();
+        text_manager.clear();
 
-        try text_manager.add(.{
+        try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 0,
             .text = "Natura ex Deus",
         });
 
-        try text_manager.add(.{
+        try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 6,
             .text = try std.fmt.allocPrint(allocator, "visible: {}/{}", .{ visible_num, chunk_mesh_layers.pos.buffer.items.len * 6 }),
         });
 
         const camera_chunk_pos = camera_position.toChunkPos();
-        try text_manager.add(.{
+        try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 12,
             .text = try std.fmt.allocPrint(allocator, "chunk x: {} y: {} z: {}", .{ camera_chunk_pos.x, camera_chunk_pos.y, camera_chunk_pos.z }),
@@ -1137,44 +1085,35 @@ pub fn main() !void {
 
         const camera_world_pos = camera_position.toWorldPos();
         const camera_local_pos = camera_world_pos.toLocalPos();
-        try text_manager.add(.{
+        try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 18,
             .text = try std.fmt.allocPrint(allocator, "local x: {} y: {} z: {}", .{ camera_local_pos.x, camera_local_pos.y, camera_local_pos.z }),
         });
 
-        try text_manager.add(.{
+        try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 24,
             .text = try std.fmt.allocPrint(allocator, "world x: {} y: {} z: {}", .{ camera_world_pos.x, camera_world_pos.y, camera_world_pos.z }),
         });
 
-        try text_manager.add(.{
+        try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 30,
             .text = try std.fmt.allocPrint(allocator, "x: {d:.6} y: {d:.6} z: {d:.6}", .{ camera_position.x, camera_position.y, camera_position.z }),
         });
 
-        try text_manager.add(.{
+        try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 36,
             .text = try std.fmt.allocPrint(allocator, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(camera_yaw, 360.0) - 180.0, camera_pitch }),
         });
 
-        try text_manager.buildVertices(window_width, window_height, ui_scale);
-
-        gl.DeleteBuffers(1, @ptrCast(&text_manager.text.handle));
-        gl.CreateBuffers(1, @ptrCast(&text_manager.text.handle));
-        gl.NamedBufferStorage(
-            text_manager.text.handle,
-            @intCast(@sizeOf(ui.Text.Vertex) * text_manager.text.buffer.items.len),
-            @ptrCast(text_manager.text.buffer.items.ptr),
-            gl.DYNAMIC_STORAGE_BIT,
-        );
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 11, text_manager.text.handle);
+        try text_manager.buildVertices(allocator, window_width, window_height, ui_scale);
+        text_manager.text_vertices.resizeBufferAndBind(11);
 
         text_shader_program.bind();
-        gl.DrawArrays(gl.TRIANGLES, 0, @intCast(text_manager.text.buffer.items.len));
+        gl.DrawArrays(gl.TRIANGLES, 0, @intCast(text_manager.text_vertices.buffer.items.len));
 
         delta_time = @floatCast(@as(f64, @floatFromInt(timer.lap())) / 1_000_000_000.0);
 

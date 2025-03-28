@@ -25,21 +25,26 @@ pub const Text = struct {
 };
 
 pub const TextManager = struct {
-    text_list: std.ArrayList(Text),
-    text: ShaderStorageBuffer(Text.Vertex),
+    text_list: std.ArrayListUnmanaged(Text),
+    text_vertices: ShaderStorageBuffer(Text.Vertex),
 
-    pub fn new(allocator: std.mem.Allocator) TextManager {
+    pub fn init() TextManager {
         return .{
-            .text_list = std.ArrayList(Text).init(allocator),
-            .text = ShaderStorageBuffer(Text.Vertex).new(allocator),
+            .text_list = .empty,
+            .text_vertices = .init(gl.DYNAMIC_STORAGE_BIT),
         };
     }
 
-    pub fn add(self: *TextManager, text: Text) !void {
-        try self.text_list.append(text);
+    pub fn append(self: *TextManager, allocator: std.mem.Allocator, text: Text) !void {
+        try self.text_list.append(allocator, text);
     }
 
-    pub fn buildVertices(self: *TextManager, window_width: gl.sizei, window_height: gl.sizei, ui_scale: gl.sizei) !void {
+    pub fn clear(self: *TextManager) void {
+        self.text_vertices.buffer.clearRetainingCapacity();
+        self.text_list.clearRetainingCapacity();
+    }
+
+    pub fn buildVertices(self: *TextManager, allocator: std.mem.Allocator, window_width: gl.sizei, window_height: gl.sizei, ui_scale: gl.sizei) !void {
         const half_window_width = @divTrunc(window_width, 2 * ui_scale);
         const half_window_height = @divTrunc(window_height, 2 * ui_scale);
         const half_window_width_f = @as(gl.float, @floatFromInt(window_width)) / 2.0;
@@ -72,7 +77,7 @@ pub const TextManager = struct {
                 const width: gl.float = @floatFromInt(pixel_width);
                 const max_u = width / max_width;
 
-                try self.text.buffer.appendSlice(&.{
+                try self.text_vertices.buffer.appendSlice(allocator, &.{
                     .{ .x = max_x, .y = max_y, .u = max_u, .v = 0, .idx = idx },
                     .{ .x = min_x, .y = max_y, .u = 0, .v = 0, .idx = idx },
                     .{ .x = min_x, .y = min_y, .u = 0, .v = 1, .idx = idx },
