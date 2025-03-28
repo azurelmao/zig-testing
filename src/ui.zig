@@ -1,6 +1,6 @@
 const std = @import("std");
 const gl = @import("gl");
-const ShaderStorageBuffer = @import("shader_storage_buffer.zig").ShaderStorageBuffer;
+const ShaderStorageBuffer = @import("buffer.zig").ShaderStorageBuffer;
 
 pub const Text = struct {
     text: []const u8,

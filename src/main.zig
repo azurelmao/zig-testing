@@ -12,8 +12,8 @@ const DedupQueue = @import("dedup_queue.zig").DedupQueue;
 
 const SingleChunkMeshLayers = @import("SingleChunkMeshLayers.zig");
 const ShaderProgram = @import("ShaderProgram.zig");
-const ShaderStorageBuffer = @import("shader_storage_buffer.zig").ShaderStorageBuffer;
-const ShaderStorageBufferUnmanaged = @import("shader_storage_buffer.zig").ShaderStorageBufferUnmanaged;
+const ShaderStorageBuffer = @import("buffer.zig").ShaderStorageBuffer;
+const ShaderStorageBufferUnmanaged = @import("buffer.zig").ShaderStorageBufferUnmanaged;
 const Matrix4x4f = @import("Matrix4x4f.zig");
 const Vec3f = @import("vec3f.zig").Vec3f;
 
@@ -1121,13 +1121,11 @@ pub fn main() !void {
         glfw.pollEvents();
     }
 
-    for (block_images.items) |image_| {
-        var image = image_;
+    for (block_images.items) |*image| {
         image.deinit();
     }
 
-    for (glyph_images) |image_| {
-        var image = image_;
+    for (glyph_images) |*image| {
         image.deinit();
     }
 
