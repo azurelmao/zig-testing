@@ -1,6 +1,5 @@
 const std = @import("std");
 const gl = @import("gl");
-const print = std.debug.print;
 const Chunk = @import("Chunk.zig");
 const LocalPos = Chunk.LocalPos;
 const Light = Chunk.Light;

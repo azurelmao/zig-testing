@@ -3,8 +3,6 @@ const Side = @import("side.zig").Side;
 const Light = @import("Chunk.zig").Light;
 
 pub const Block = enum(u8) {
-    const Self = @This();
-
     air,
     stone,
     grass,
@@ -43,7 +41,7 @@ pub const Block = enum(u8) {
         var model_to_vertex_indices: [Model.MODELS.len]VertexIndices = undefined;
         var block_to_model_indices: [BLOCKS.len]ModelIndices = undefined;
         var vertex_buffer: []const Vertex = &.{};
-        var vertex_idx_and_texture_idx_buffer: []const VertexIdxAndTextureIdx = &.{};
+        var vertex_idx_and_texture_idx_buffer: []const FaceVertex = &.{};
 
         for (Model.MODELS) |model| {
             const model_data = model.getData();
@@ -65,13 +63,13 @@ pub const Block = enum(u8) {
             var model_indices: ModelIndices = undefined;
 
             for (0..6) |face_idx| {
-                const vertex_idx_and_texture_idx = VertexIdxAndTextureIdx{
+                const vertex_idx_and_texture_idx = FaceVertex{
                     .vertex_idx = model_to_vertex_indices[@intFromEnum(model)].faces[face_idx],
                     .texture_idx = @intFromEnum(texture_schema.faces[face_idx]),
                 };
 
                 model_indices.faces[face_idx] = @intCast(vertex_idx_and_texture_idx_buffer.len);
-                vertex_idx_and_texture_idx_buffer = vertex_idx_and_texture_idx_buffer ++ &[1]VertexIdxAndTextureIdx{vertex_idx_and_texture_idx};
+                vertex_idx_and_texture_idx_buffer = vertex_idx_and_texture_idx_buffer ++ &[1]FaceVertex{vertex_idx_and_texture_idx};
             }
 
             block_to_model_indices[@intFromEnum(block)] = model_indices;
@@ -88,18 +86,18 @@ pub const Block = enum(u8) {
     pub const VERTEX_IDX_AND_TEXTURE_IDX_BUFFER = tmp.vertex_idx_and_texture_idx_buffer;
     const BLOCK_TO_MODEL_INDICES = tmp.block_to_model_indices;
 
-    pub fn getModelIndices(self: Self) ModelIndices {
+    pub fn getModelIndices(self: Block) ModelIndices {
         return BLOCK_TO_MODEL_INDICES[@intFromEnum(self)];
     }
 
-    pub fn isInteractable(self: Self) bool {
+    pub fn isInteractable(self: Block) bool {
         return switch (self) {
             .air, .water, .lava => false,
             else => true,
         };
     }
 
-    pub fn isNotSolid(self: Self) bool {
+    pub fn isNotSolid(self: Block) bool {
         return switch (self) {
             .air, .water, .ice, .glass, .glass_tinted => true,
             else => false,
@@ -120,7 +118,7 @@ pub const Block = enum(u8) {
         }
     };
 
-    pub fn getLayer(self: Self) Layer {
+    pub fn getLayer(self: Block) Layer {
         return switch (self) {
             .water => .water,
             .ice => .ice,
@@ -140,7 +138,7 @@ pub const Block = enum(u8) {
         translucent: Light,
     };
 
-    pub fn getLightOpacity(self: Self) LightOpacity {
+    pub fn getLightOpacity(self: Block) LightOpacity {
         return switch (self) {
             .air, .glass => .{ .translucent = .{
                 .red = 0,
@@ -215,7 +213,7 @@ pub const Block = enum(u8) {
         }
     };
 
-    pub fn getTextureSchema(comptime self: Self) TextureScheme {
+    pub fn getTextureSchema(comptime self: Block) TextureScheme {
         return switch (self) {
             .stone => TextureScheme.allSides(.stone),
             .grass => TextureScheme.grass(.grass_top, .dirt, .grass_side),
@@ -231,14 +229,14 @@ pub const Block = enum(u8) {
         };
     }
 
-    pub fn hasModel(comptime self: Self) bool {
+    pub fn hasModel(comptime self: Block) bool {
         return switch (self) {
             .air => false,
             else => true,
         };
     }
 
-    pub fn getModel(comptime self: Self) Model {
+    pub fn getModel(comptime self: Block) Model {
         return switch (self) {
             .air => std.debug.panic("Air doesn't have a model", .{}),
             else => Model.square,
@@ -266,7 +264,7 @@ pub const Block = enum(u8) {
         _: u7 = 0,
     };
 
-    pub const VertexIdxAndTextureIdx = packed struct(u64) {
+    pub const FaceVertex = packed struct(u64) {
         vertex_idx: u32,
         texture_idx: u11,
         _: u21 = 0,

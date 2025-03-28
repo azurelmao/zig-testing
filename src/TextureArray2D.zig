@@ -50,7 +50,7 @@ const Options = struct {
 
 handle: gl.uint,
 
-pub fn initFromImages(images: []const zstbi.Image, width: gl.sizei, height: gl.sizei, options: Options) !Self {
+pub fn init(images: []const zstbi.Image, width: gl.sizei, height: gl.sizei, options: Options) !Self {
     for (images) |image| {
         if (image.width != width or image.height != height) {
             return error.IncorrectImageSize;

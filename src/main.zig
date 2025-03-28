@@ -2,24 +2,22 @@ const std = @import("std");
 const glfw = @import("glfw");
 const gl = @import("gl");
 const zstbi = @import("zstbi");
-const print = std.debug.print;
 
 const World = @import("World.zig");
 const Chunk = @import("Chunk.zig");
 const Block = @import("block.zig").Block;
 const Side = @import("side.zig").Side;
-const DedupQueue = @import("dedup_queue.zig").DedupQueue;
 
-const SingleChunkMeshLayers = @import("SingleChunkMeshLayers.zig");
 const ShaderProgram = @import("ShaderProgram.zig");
 const ShaderStorageBuffer = @import("buffer.zig").ShaderStorageBuffer;
 const ShaderStorageBufferUnmanaged = @import("buffer.zig").ShaderStorageBufferUnmanaged;
 const Matrix4x4f = @import("Matrix4x4f.zig");
 const Vec3f = @import("vec3f.zig").Vec3f;
-
-const Texture2D = @import("Texture2D.zig");
 const TextureArray2D = @import("TextureArray2D.zig");
+const Texture2D = @import("Texture2D.zig");
+
 const ui = @import("ui.zig");
+const ChunkMeshLayers = @import("ChunkMeshLayers.zig");
 
 pub const std_options: std.Options = .{
     .log_level = .info,
@@ -146,6 +144,7 @@ fn framebufferSizeCallback(window: glfw.Window, width: u32, height: u32) void {
     chunks_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
     chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
     chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
+    chunks_debug_shader_program.setUniform2ui("uWindowSize", @intCast(window_width), @intCast(window_height));
 
     gl.Viewport(0, 0, window_width, window_height);
 }
@@ -181,13 +180,6 @@ fn debugCallback(source: gl.@"enum", @"type": gl.@"enum", id: gl.uint, severity:
         else => std.log.info("OpenGL Debug Message [id: {}]  Source: {s}  Type: {s}\n{s}", .{ id, source_str, type_str, message }),
     }
 }
-
-const DrawArraysIndirectCommand = packed struct {
-    count: gl.uint,
-    instance_count: gl.uint,
-    first_vertex: gl.uint,
-    base_instance: gl.uint,
-};
 
 fn extractPlanesFromViewProjection(matrix: Matrix4x4f, left: *[4]gl.float, right: *[4]gl.float, bottom: *[4]gl.float, top: *[4]gl.float) void {
     for (0..4) |i| {
@@ -398,127 +390,6 @@ fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) u32 {
 
     return visible_num;
 }
-
-pub const ChunkMeshBuffers = struct {
-    const Self = @This();
-
-    len: std.ArrayListUnmanaged(usize),
-    mesh: ShaderStorageBuffer(SingleChunkMeshLayers.LocalPosAndModelIdx),
-    command: ShaderStorageBuffer(DrawArraysIndirectCommand),
-
-    pub fn init() Self {
-        return .{
-            .len = .empty,
-            .mesh = .init(gl.DYNAMIC_STORAGE_BIT),
-            .command = .init(gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT),
-        };
-    }
-};
-
-pub const ChunkMeshLayers = struct {
-    layers: [Block.Layer.len]ChunkMeshBuffers,
-    pos: ShaderStorageBuffer(Vec3f),
-
-    pub fn init() ChunkMeshLayers {
-        var layers: [Block.Layer.len]ChunkMeshBuffers = undefined;
-
-        inline for (0..Block.Layer.len) |i| {
-            layers[i] = .init();
-        }
-
-        return .{
-            .layers = layers,
-            .pos = .init(gl.DYNAMIC_STORAGE_BIT),
-        };
-    }
-
-    pub fn uploadCommandBuffers(self: *ChunkMeshLayers) void {
-        inline for (0..Block.Layer.len) |layer_idx| {
-            const chunk_mesh_layer = &self.layers[layer_idx];
-            chunk_mesh_layer.command.uploadBuffer();
-        }
-    }
-
-    pub fn draw(self: *ChunkMeshLayers) void {
-        inline for (0..Block.Layer.len) |layer_idx| {
-            const chunk_mesh_layer = &self.layers[layer_idx];
-
-            if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
-                chunk_mesh_layer.mesh.bindBuffer(3);
-                gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, chunk_mesh_layer.command.unmanaged.handle);
-
-                gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
-                gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.buffer.items.len), 0);
-                gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
-            }
-        }
-    }
-
-    fn generate(self: *ChunkMeshLayers, allocator: std.mem.Allocator, world: *World) !void {
-        var single_chunk_mesh_layers = SingleChunkMeshLayers.new(allocator);
-
-        var chunk_iter = world.chunks.valueIterator();
-        while (chunk_iter.next()) |chunk| {
-            const chunk_pos = chunk.pos;
-
-            const neighbor_chunks: SingleChunkMeshLayers.NeighborChunks = expr: {
-                var chunks: [6]?*Chunk = undefined;
-
-                for (0..6) |face_idx| {
-                    chunks[face_idx] = world.getChunkOrNull(chunk_pos.add(Chunk.Pos.Offsets[face_idx]));
-                }
-
-                break :expr .{ .chunks = chunks };
-            };
-
-            try self.pos.buffer.append(allocator, chunk_pos.toVec3f());
-
-            if (chunk.num_of_air != 0 and chunk.num_of_air != Chunk.Volume) {
-                try single_chunk_mesh_layers.generate(chunk, &neighbor_chunks);
-
-                inline for (0..Block.Layer.len) |layer_idx| {
-                    const chunk_mesh_layer = &self.layers[layer_idx];
-                    const single_chunk_mesh_layer = &single_chunk_mesh_layers.layers[layer_idx];
-
-                    inline for (0..6) |face_idx| {
-                        const single_chunk_mesh_face = &single_chunk_mesh_layer.faces[face_idx];
-                        const len: gl.uint = @intCast(single_chunk_mesh_face.items.len);
-
-                        try chunk_mesh_layer.len.append(allocator, len);
-
-                        const command = DrawArraysIndirectCommand{
-                            .first_vertex = @intCast(chunk_mesh_layer.mesh.buffer.items.len * 6),
-                            .count = @intCast(len * 6),
-                            .instance_count = if (len > 0) 1 else 0,
-                            .base_instance = 0,
-                        };
-
-                        try chunk_mesh_layer.command.buffer.append(allocator, command);
-                        try chunk_mesh_layer.mesh.buffer.appendSlice(allocator, single_chunk_mesh_face.items);
-                        single_chunk_mesh_face.clearRetainingCapacity();
-                    }
-                }
-            } else {
-                inline for (0..Block.Layer.len) |layer_idx| {
-                    const chunk_mesh_layer = &self.layers[layer_idx];
-
-                    try chunk_mesh_layer.len.appendNTimes(allocator, 0, 6);
-
-                    inline for (0..6) |_| {
-                        const command = DrawArraysIndirectCommand{
-                            .first_vertex = @intCast(chunk_mesh_layer.mesh.buffer.items.len * 6),
-                            .count = 0,
-                            .instance_count = 0,
-                            .base_instance = 0,
-                        };
-
-                        try chunk_mesh_layer.command.buffer.append(allocator, command);
-                    }
-                }
-            }
-        }
-    }
-};
 
 pub const ChunkBoundingBox = struct {
     const vertices: []const Vec3f = west ++ east ++ bottom ++ top ++ north ++ south;
@@ -778,6 +649,7 @@ pub fn main() !void {
 
     chunks_debug_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_debug_vs.glsl", "assets/shaders/chunks_debug_fs.glsl");
     chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
+    chunks_debug_shader_program.setUniform2ui("uWindowSize", @intCast(window_width), @intCast(window_height));
 
     text_shader_program = try ShaderProgram.new(allocator, "assets/shaders/text_vs.glsl", "assets/shaders/text_fs.glsl");
 
@@ -796,7 +668,7 @@ pub fn main() !void {
         try block_images.append(image);
     }
 
-    const block_textures = try TextureArray2D.initFromImages(block_images.items, 16, 16, .{
+    const block_textures = try TextureArray2D.init(block_images.items, 16, 16, .{
         .texture_format = .rgba8,
         .data_format = .rgba,
     });
@@ -824,7 +696,7 @@ pub fn main() !void {
         glyph_images[glyph_idx] = glyph_image;
     }
 
-    const font_texture = try TextureArray2D.initFromImages(glyph_images, 6, 6, .{
+    const font_texture = try TextureArray2D.init(glyph_images, 6, 6, .{
         .texture_format = .r8,
         .data_format = .r,
     });
@@ -913,7 +785,7 @@ pub fn main() !void {
     var block_vertex_buffer = ShaderStorageBufferUnmanaged(Block.Vertex).init(gl.DYNAMIC_STORAGE_BIT);
     block_vertex_buffer.initBufferAndBind(Block.VERTEX_BUFFER, 0);
 
-    var block_face_buffer = ShaderStorageBufferUnmanaged(Block.VertexIdxAndTextureIdx).init(gl.DYNAMIC_STORAGE_BIT);
+    var block_face_buffer = ShaderStorageBufferUnmanaged(Block.FaceVertex).init(gl.DYNAMIC_STORAGE_BIT);
     block_face_buffer.initBufferAndBind(Block.VERTEX_IDX_AND_TEXTURE_IDX_BUFFER, 1);
 
     chunk_mesh_layers.pos.initBufferAndBind(2);
@@ -939,6 +811,15 @@ pub fn main() !void {
     var vao_handle: gl.uint = undefined;
     gl.GenVertexArrays(1, @ptrCast(&vao_handle));
     gl.BindVertexArray(vao_handle);
+
+    var offscreen_texture_handle: gl.uint = undefined;
+    gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&offscreen_texture_handle));
+    gl.TextureStorage2D(offscreen_texture_handle, 1, gl.RGBA8, window_width, window_height);
+    gl.BindTextureUnit(2, offscreen_texture_handle);
+
+    var offscreen_framebuffer_handle: gl.uint = undefined;
+    gl.CreateFramebuffers(1, @ptrCast(&offscreen_framebuffer_handle));
+    gl.NamedFramebufferTexture(offscreen_framebuffer_handle, gl.COLOR_ATTACHMENT0, offscreen_texture_handle, 0);
 
     gl.Enable(gl.DEPTH_TEST);
     gl.Enable(gl.CULL_FACE);
@@ -1036,6 +917,8 @@ pub fn main() !void {
             gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(chunk_mesh_layers.pos.buffer.items.len));
             gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
         }
+
+        gl.BlitNamedFramebuffer(0, offscreen_framebuffer_handle, 0, 0, window_width, window_height, 0, 0, window_width, window_height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
 
         chunks_debug_shader_program.bind();
         {

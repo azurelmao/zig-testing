@@ -35,7 +35,7 @@ const Options = struct {
 
 handle: gl.uint,
 
-pub fn new(image: zstbi.Image, options: Options) Self {
+pub fn init(image: zstbi.Image, options: Options) Self {
     var handle: gl.uint = undefined;
     gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&handle));
     gl.TextureStorage2D(handle, 1, gl.RGBA8, image.width, image.height);
