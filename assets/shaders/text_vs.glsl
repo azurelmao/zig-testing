@@ -8,7 +8,7 @@ struct Vertex {
     uint idx;
 };
 
-layout (binding = 11, std430) readonly buffer ssbo11 {
+layout (binding = 12, std430) readonly buffer ssbo11 {
     Vertex sTextVertices[];
 };
 

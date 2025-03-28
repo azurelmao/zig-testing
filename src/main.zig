@@ -522,6 +522,40 @@ pub const ChunkMeshLayers = struct {
 
 pub const ChunkBoundingBox = struct {
     const vertices: []const Vec3f = west ++ east ++ bottom ++ top ++ north ++ south;
+    const lines: []const Vec3f = &.{
+        .{ .x = 0, .y = 0, .z = 0 },
+        .{ .x = 0, .y = 0, .z = Chunk.Size },
+        .{ .x = Chunk.Size, .y = 0, .z = 0 },
+        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
+
+        .{ .x = 0, .y = 0, .z = 0 },
+        .{ .x = Chunk.Size, .y = 0, .z = 0 },
+        .{ .x = 0, .y = 0, .z = Chunk.Size },
+        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
+
+        .{ .x = 0, .y = Chunk.Size, .z = 0 },
+        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
+
+        .{ .x = 0, .y = Chunk.Size, .z = 0 },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
+        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
+
+        // vertical
+        .{ .x = 0, .y = 0, .z = 0 },
+        .{ .x = 0, .y = Chunk.Size, .z = 0 },
+
+        .{ .x = 0, .y = 0, .z = Chunk.Size },
+        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
+
+        .{ .x = Chunk.Size, .y = 0, .z = 0 },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
+
+        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
+        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
+    };
 
     const west: []const Vec3f = &.{
         .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
@@ -578,106 +612,100 @@ pub const ChunkBoundingBox = struct {
     };
 };
 
-pub const RaycastSide = enum {
-    west,
-    east,
-    bottom,
-    top,
-    north,
-    south,
-    inside,
-    out_of_bounds,
-};
+fn onRaycast(allocator: std.mem.Allocator, world: *World, text_manager: *ui.TextManager, result: World.RaycastResult) !void {
+    const world_pos = result.pos;
+    // const chunk_pos = world_pos.toChunkPos();
+    // const local_pos = world_pos.toLocalPos();
+    const side = result.side;
 
-pub const RaycastResult = struct {
-    pos: World.Pos,
-    side: RaycastSide,
-    block: ?Block,
-};
+    switch (side) {
+        else => {
+            try text_manager.append(allocator, .{
+                .pixel_x = 0,
+                .pixel_y = 48,
+                .text = try std.fmt.allocPrint(allocator, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
+                    world_pos.x,
+                    world_pos.y,
+                    world_pos.z,
+                    @tagName(side),
+                }),
+            });
 
-pub fn raycast(world: *World, origin: Vec3f, direction: Vec3f) RaycastResult {
-    var moving_position = origin.floor();
+            try text_manager.append(allocator, .{
+                .pixel_x = 0,
+                .pixel_y = 54,
+                .text = try std.fmt.allocPrint(allocator, "block: {s}", .{
+                    if (result.block) |block| @tagName(block) else "null",
+                }),
+            });
 
-    const step = Vec3f.new(std.math.sign(direction.x), std.math.sign(direction.y), std.math.sign(direction.z));
-    const delta_distance = Vec3f.fromScalar(direction.magnitude()).divide(direction).abs();
-    var side_distance = step.multiply(moving_position.subtract(origin)).add(step.multiplyScalar(0.5).addScalar(0.5)).multiply(delta_distance);
-
-    var mask = packed struct {
-        x: bool,
-        y: bool,
-        z: bool,
-    }{
-        .x = false,
-        .y = false,
-        .z = false,
-    };
-
-    for (0..120) |_| {
-        const block_world_pos = moving_position.toWorldPos();
-        const block_or_null = world.getBlockOrNull(block_world_pos);
-
-        if (block_or_null) |block| {
-            if (block.isInteractable()) {
-                const side: RaycastSide = expr: {
-                    if (mask.x) {
-                        if (step.x > 0) {
-                            break :expr .west;
-                        } else if (step.x < 0) {
-                            break :expr .east;
-                        }
-                    } else if (mask.y) {
-                        if (step.y > 0) {
-                            break :expr .bottom;
-                        } else if (step.y < 0) {
-                            break :expr .top;
-                        }
-                    } else if (mask.z) {
-                        if (step.z > 0) {
-                            break :expr .north;
-                        } else if (step.z < 0) {
-                            break :expr .south;
-                        }
-                    }
-
-                    break :expr .inside;
-                };
-
-                return .{
-                    .pos = block_world_pos,
-                    .side = side,
-                    .block = block,
-                };
+            if (world.getLight(world_pos.add(World.Pos.Offsets[@intFromEnum(side)]))) |light| {
+                try text_manager.append(allocator, .{
+                    .pixel_x = 0,
+                    .pixel_y = 60,
+                    .text = try std.fmt.allocPrint(allocator, "light: [r: {} g: {} b: {} i: {}]", .{
+                        light.red,
+                        light.green,
+                        light.blue,
+                        light.indirect,
+                    }),
+                });
+            } else |_| {
+                try text_manager.append(allocator, .{
+                    .pixel_x = 0,
+                    .pixel_y = 60,
+                    .text = try std.fmt.allocPrint(allocator, "light: out_of_bounds", .{}),
+                });
             }
-        }
+        },
 
-        if (side_distance.x < side_distance.y) {
-            if (side_distance.x < side_distance.z) {
-                side_distance.x += delta_distance.x;
-                moving_position.x += step.x;
-                mask = .{ .x = true, .y = false, .z = false };
-            } else {
-                side_distance.z += delta_distance.z;
-                moving_position.z += step.z;
-                mask = .{ .x = false, .y = false, .z = true };
-            }
-        } else {
-            if (side_distance.y < side_distance.z) {
-                side_distance.y += delta_distance.y;
-                moving_position.y += step.y;
-                mask = .{ .x = false, .y = true, .z = false };
-            } else {
-                side_distance.z += delta_distance.z;
-                moving_position.z += step.z;
-                mask = .{ .x = false, .y = false, .z = true };
-            }
-        }
+        .inside => {
+            const light = try world.getLight(world_pos);
+
+            try text_manager.append(allocator, .{
+                .pixel_x = 0,
+                .pixel_y = 48,
+                .text = try std.fmt.allocPrint(allocator, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
+                    world_pos.x,
+                    world_pos.y,
+                    world_pos.z,
+                    @tagName(side),
+                }),
+            });
+
+            try text_manager.append(allocator, .{
+                .pixel_x = 0,
+                .pixel_y = 54,
+                .text = try std.fmt.allocPrint(allocator, "block: {s}", .{
+                    if (result.block) |block| @tagName(block) else "null",
+                }),
+            });
+
+            try text_manager.append(allocator, .{
+                .pixel_x = 0,
+                .pixel_y = 60,
+                .text = try std.fmt.allocPrint(allocator, "light: [r: {} g: {} b: {} i: {}]", .{
+                    light.red,
+                    light.green,
+                    light.blue,
+                    light.indirect,
+                }),
+            });
+        },
+
+        .out_of_bounds => {
+            try text_manager.append(allocator, .{
+                .pixel_x = 0,
+                .pixel_y = 48,
+                .text = try std.fmt.allocPrint(allocator, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
+                    world_pos.x,
+                    world_pos.y,
+                    world_pos.z,
+                    @tagName(side),
+                }),
+            });
+        },
     }
-
-    return .{
-        .pos = moving_position.toWorldPos(),
-        .side = .out_of_bounds,
-        .block = null,
-    };
 }
 
 pub fn main() !void {
@@ -696,7 +724,7 @@ pub fn main() !void {
 
     const debug_context = true;
 
-    const window = glfw.Window.create(@intCast(window_width), @intCast(window_height), "Hello, mach-glfw!", null, null, .{
+    const window = glfw.Window.create(@intCast(window_width), @intCast(window_height), "Natura ex Deus", null, null, .{
         .opengl_profile = .opengl_core_profile,
         .context_version_major = 4,
         .context_version_minor = 6,
@@ -903,6 +931,9 @@ pub fn main() !void {
     var bounding_box_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
     bounding_box_buffer.initBufferAndBind(ChunkBoundingBox.vertices, 5);
 
+    var bounding_box_lines_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
+    bounding_box_lines_buffer.initBufferAndBind(ChunkBoundingBox.lines, 11);
+
     var text_manager = ui.TextManager.init();
 
     var vao_handle: gl.uint = undefined;
@@ -912,7 +943,6 @@ pub fn main() !void {
     gl.Enable(gl.DEPTH_TEST);
     gl.Enable(gl.CULL_FACE);
     gl.Enable(gl.BLEND);
-    gl.PolygonOffset(1.0, 1.0);
     gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     const movement_speed: gl.float = 16.0;
@@ -954,62 +984,6 @@ pub fn main() !void {
             camera_moved = true;
         }
 
-        if (window.getKey(glfw.Key.h) == .press) {
-            const result = raycast(&world, camera_position, camera_direction);
-            const world_pos = result.pos;
-            const chunk_pos = world_pos.toChunkPos();
-            const local_pos = world_pos.toLocalPos();
-            const side = result.side;
-
-            switch (side) {
-                else => {
-                    const light = try world.getLight(world_pos.add(World.Pos.Offsets[@intFromEnum(side)]));
-
-                    std.log.info("at w[{} {} {}], c[{} {} {}], l[{} {} {}]:\n - block: {s}\n - light on {s} side: [{} {} {} {}]", .{
-                        world_pos.x,
-                        world_pos.y,
-                        world_pos.z,
-                        chunk_pos.x,
-                        chunk_pos.y,
-                        chunk_pos.z,
-                        local_pos.x,
-                        local_pos.y,
-                        local_pos.z,
-                        if (result.block) |block| @tagName(block) else "null",
-                        @tagName(side),
-                        light.red,
-                        light.green,
-                        light.blue,
-                        light.indirect,
-                    });
-                },
-
-                .inside => {
-                    const light = try world.getLight(world_pos);
-
-                    std.log.info("at [{} {} {}]:\n - block: {s}\n - light inside: [{} {} {} {}]", .{
-                        world_pos.x,
-                        world_pos.y,
-                        world_pos.z,
-                        if (result.block) |block| @tagName(block) else "null",
-                        light.red,
-                        light.green,
-                        light.blue,
-                        light.indirect,
-                    });
-                },
-
-                .out_of_bounds => {
-                    std.log.info("at [{} {} {}]:\n - block: {s}", .{
-                        world_pos.x,
-                        world_pos.y,
-                        world_pos.z,
-                        if (result.block) |block| @tagName(block) else "null",
-                    });
-                },
-            }
-        }
-
         if (camera_angles_changed or camera_moved) {
             if (camera_angles_changed) {
                 camera_angles_changed = false;
@@ -1045,22 +1019,37 @@ pub fn main() !void {
         chunk_mesh_layers.uploadCommandBuffers();
 
         chunks_bb_shader_program.bind();
-        gl.Enable(gl.POLYGON_OFFSET_FILL);
-        gl.DepthMask(gl.FALSE);
-        gl.ColorMask(gl.FALSE, gl.FALSE, gl.FALSE, gl.FALSE);
+        {
+            gl.Enable(gl.POLYGON_OFFSET_FILL);
+            defer gl.Disable(gl.POLYGON_OFFSET_FILL);
 
-        gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
-        gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(chunk_mesh_layers.pos.buffer.items.len));
-        gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
+            gl.PolygonOffset(1.0, 1.0);
+            defer gl.PolygonOffset(0.0, 0.0);
 
-        gl.DepthMask(gl.TRUE);
-        gl.ColorMask(gl.TRUE, gl.TRUE, gl.TRUE, gl.TRUE);
-        gl.Disable(gl.POLYGON_OFFSET_FILL);
+            gl.DepthMask(gl.FALSE);
+            defer gl.DepthMask(gl.TRUE);
+
+            gl.ColorMask(gl.FALSE, gl.FALSE, gl.FALSE, gl.FALSE);
+            defer gl.ColorMask(gl.TRUE, gl.TRUE, gl.TRUE, gl.TRUE);
+
+            gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
+            gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(chunk_mesh_layers.pos.buffer.items.len));
+            gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
+        }
 
         chunks_debug_shader_program.bind();
-        gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE);
-        gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(chunk_mesh_layers.pos.buffer.items.len));
-        gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL);
+        {
+            gl.Enable(gl.POLYGON_OFFSET_LINE);
+            defer gl.Disable(gl.POLYGON_OFFSET_LINE);
+
+            gl.PolygonOffset(-1.0, 1.0);
+            defer gl.PolygonOffset(0.0, 0.0);
+
+            gl.Enable(gl.LINE_SMOOTH);
+            defer gl.Disable(gl.LINE_SMOOTH);
+
+            gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(chunk_mesh_layers.pos.buffer.items.len));
+        }
 
         text_manager.clear();
 
@@ -1080,7 +1069,7 @@ pub fn main() !void {
         try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 12,
-            .text = try std.fmt.allocPrint(allocator, "chunk x: {} y: {} z: {}", .{ camera_chunk_pos.x, camera_chunk_pos.y, camera_chunk_pos.z }),
+            .text = try std.fmt.allocPrint(allocator, "chunk: [x: {} y: {} z: {}]", .{ camera_chunk_pos.x, camera_chunk_pos.y, camera_chunk_pos.z }),
         });
 
         const camera_world_pos = camera_position.toWorldPos();
@@ -1088,19 +1077,19 @@ pub fn main() !void {
         try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 18,
-            .text = try std.fmt.allocPrint(allocator, "local x: {} y: {} z: {}", .{ camera_local_pos.x, camera_local_pos.y, camera_local_pos.z }),
+            .text = try std.fmt.allocPrint(allocator, "local: [x: {} y: {} z: {}]", .{ camera_local_pos.x, camera_local_pos.y, camera_local_pos.z }),
         });
 
         try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 24,
-            .text = try std.fmt.allocPrint(allocator, "world x: {} y: {} z: {}", .{ camera_world_pos.x, camera_world_pos.y, camera_world_pos.z }),
+            .text = try std.fmt.allocPrint(allocator, "world: [x: {} y: {} z: {}]", .{ camera_world_pos.x, camera_world_pos.y, camera_world_pos.z }),
         });
 
         try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 30,
-            .text = try std.fmt.allocPrint(allocator, "x: {d:.6} y: {d:.6} z: {d:.6}", .{ camera_position.x, camera_position.y, camera_position.z }),
+            .text = try std.fmt.allocPrint(allocator, "camera: [x: {d:.6} y: {d:.6} z: {d:.6}]", .{ camera_position.x, camera_position.y, camera_position.z }),
         });
 
         try text_manager.append(allocator, .{
@@ -1109,8 +1098,11 @@ pub fn main() !void {
             .text = try std.fmt.allocPrint(allocator, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(camera_yaw, 360.0) - 180.0, camera_pitch }),
         });
 
+        const result = world.raycast(camera_position, camera_direction);
+        try onRaycast(allocator, &world, &text_manager, result);
+
         try text_manager.buildVertices(allocator, window_width, window_height, ui_scale);
-        text_manager.text_vertices.resizeBufferAndBind(11);
+        text_manager.text_vertices.resizeBufferAndBind(12);
 
         text_shader_program.bind();
         gl.DrawArrays(gl.TRIANGLES, 0, @intCast(text_manager.text_vertices.buffer.items.len));

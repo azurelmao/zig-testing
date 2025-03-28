@@ -143,6 +143,108 @@ pub fn setBlockAndAffectLight(self: *Self, pos: Pos, block: Block) !void {
     chunk.setBlock(local_pos, block);
 }
 
+pub const RaycastSide = enum {
+    west,
+    east,
+    bottom,
+    top,
+    north,
+    south,
+    inside,
+    out_of_bounds,
+};
+
+pub const RaycastResult = struct {
+    pos: Pos,
+    side: RaycastSide,
+    block: ?Block,
+};
+
+pub fn raycast(self: *Self, origin: Vec3f, direction: Vec3f) RaycastResult {
+    var moving_position = origin.floor();
+
+    const step = Vec3f.new(std.math.sign(direction.x), std.math.sign(direction.y), std.math.sign(direction.z));
+    const delta_distance = Vec3f.fromScalar(direction.magnitude()).divide(direction).abs();
+    var side_distance = step.multiply(moving_position.subtract(origin)).add(step.multiplyScalar(0.5).addScalar(0.5)).multiply(delta_distance);
+
+    var mask = packed struct {
+        x: bool,
+        y: bool,
+        z: bool,
+    }{
+        .x = false,
+        .y = false,
+        .z = false,
+    };
+
+    for (0..120) |_| {
+        const block_world_pos = moving_position.toWorldPos();
+        const block_or_null = self.getBlockOrNull(block_world_pos);
+
+        if (block_or_null) |block| {
+            if (block.isInteractable()) {
+                const side: RaycastSide = expr: {
+                    if (mask.x) {
+                        if (step.x > 0) {
+                            break :expr .west;
+                        } else if (step.x < 0) {
+                            break :expr .east;
+                        }
+                    } else if (mask.y) {
+                        if (step.y > 0) {
+                            break :expr .bottom;
+                        } else if (step.y < 0) {
+                            break :expr .top;
+                        }
+                    } else if (mask.z) {
+                        if (step.z > 0) {
+                            break :expr .north;
+                        } else if (step.z < 0) {
+                            break :expr .south;
+                        }
+                    }
+
+                    break :expr .inside;
+                };
+
+                return .{
+                    .pos = block_world_pos,
+                    .side = side,
+                    .block = block,
+                };
+            }
+        }
+
+        if (side_distance.x < side_distance.y) {
+            if (side_distance.x < side_distance.z) {
+                side_distance.x += delta_distance.x;
+                moving_position.x += step.x;
+                mask = .{ .x = true, .y = false, .z = false };
+            } else {
+                side_distance.z += delta_distance.z;
+                moving_position.z += step.z;
+                mask = .{ .x = false, .y = false, .z = true };
+            }
+        } else {
+            if (side_distance.y < side_distance.z) {
+                side_distance.y += delta_distance.y;
+                moving_position.y += step.y;
+                mask = .{ .x = false, .y = true, .z = false };
+            } else {
+                side_distance.z += delta_distance.z;
+                moving_position.z += step.z;
+                mask = .{ .x = false, .y = false, .z = true };
+            }
+        }
+    }
+
+    return .{
+        .pos = moving_position.toWorldPos(),
+        .side = .out_of_bounds,
+        .block = null,
+    };
+}
+
 pub const Width = 1;
 pub const Height = 8;
 pub const AboveHeight = 2;

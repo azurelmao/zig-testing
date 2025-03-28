@@ -1,10 +1,10 @@
 #version 460 core
 
-layout(binding = 2, std430) readonly buffer ssbo2 {
+layout (binding = 2, std430) readonly buffer ssbo2 {
     vec3 sChunkPos[];
 };
 
-layout(binding = 5, std430) readonly buffer ssbo5 {
+layout (binding = 5, std430) readonly buffer ssbo5 {
     vec3 sBoundingBox[];
 };
 
