@@ -1,7 +1,7 @@
 const std = @import("std");
 const glfw = @import("glfw");
 const gl = @import("gl");
-const zstbi = @import("zstbi");
+const stbi = @import("zstbi");
 
 const World = @import("World.zig");
 const Chunk = @import("Chunk.zig");
@@ -11,94 +11,21 @@ const Side = @import("side.zig").Side;
 const ShaderProgram = @import("ShaderProgram.zig");
 const ShaderStorageBuffer = @import("buffer.zig").ShaderStorageBuffer;
 const ShaderStorageBufferUnmanaged = @import("buffer.zig").ShaderStorageBufferUnmanaged;
-const Matrix4x4f = @import("Matrix4x4f.zig");
 const Vec3f = @import("vec3f.zig").Vec3f;
+const Matrix4x4f = @import("Matrix4x4f.zig");
+const Camera = @import("Camera.zig");
+const Screen = @import("Screen.zig");
 const TextureArray2D = @import("TextureArray2D.zig");
 const Texture2D = @import("Texture2D.zig");
-
-const ui = @import("ui.zig");
 const ChunkMeshLayers = @import("ChunkMeshLayers.zig");
+const ui = @import("ui.zig");
+const chunk_bounding_box = @import("chunk_bounding_box.zig");
 
 pub const std_options: std.Options = .{
     .log_level = .info,
 };
 
 var procs: gl.ProcTable = undefined;
-
-var chunks_shader_program: ShaderProgram = undefined;
-var chunks_bb_shader_program: ShaderProgram = undefined;
-var chunks_debug_shader_program: ShaderProgram = undefined;
-var text_shader_program: ShaderProgram = undefined;
-
-var view_matrix: Matrix4x4f = undefined;
-var projection_matrix: Matrix4x4f = undefined;
-var view_projection_matrix: Matrix4x4f = undefined;
-
-var camera_pitch: gl.float = 0.0; // up and down
-var camera_yaw: gl.float = 0.0; // left and right
-
-var camera_position = Vec3f.new(0.0, 6.0, 0.0);
-var camera_direction: Vec3f = undefined;
-var camera_horizontal_direction: Vec3f = undefined;
-var camera_right: Vec3f = undefined;
-const camera_up = Vec3f.new(0.0, 1.0, 0.0);
-
-var camera_angles_changed = false;
-
-const DEG_TO_RAD: gl.float = std.math.pi / 180.0;
-
-fn cacheCameraDirectionAndRight() void {
-    const yaw_rads = camera_yaw * DEG_TO_RAD;
-    const pitch_rads = camera_pitch * DEG_TO_RAD;
-
-    const xz_len = std.math.cos(pitch_rads);
-    const x = xz_len * std.math.cos(yaw_rads);
-    const y = std.math.sin(pitch_rads);
-    const z = xz_len * std.math.sin(yaw_rads);
-
-    camera_direction = Vec3f.new(x, y, z);
-    camera_direction.normalizeInPlace();
-
-    camera_horizontal_direction = Vec3f.new(x, 0, z);
-    camera_horizontal_direction.normalizeInPlace();
-
-    camera_right = camera_horizontal_direction.cross(camera_up);
-    camera_right.normalizeInPlace();
-}
-
-fn cacheViewMatrix() void {
-    view_matrix.lookTowardInPlace(camera_position, camera_direction, camera_up);
-}
-
-const INITIAL_WINDOW_WIDTH = 640 * 2;
-const INITIAL_WINDOW_HEIGHT = 480 * 2;
-
-var prev_cursor_x: gl.float = INITIAL_WINDOW_WIDTH / 2;
-var prev_cursor_y: gl.float = INITIAL_WINDOW_HEIGHT / 2;
-var mouse_speed: gl.float = 10.0;
-
-var delta_time: gl.float = 1.0 / 60.0;
-
-var window_width: gl.sizei = INITIAL_WINDOW_WIDTH;
-var window_height: gl.sizei = INITIAL_WINDOW_HEIGHT;
-var ui_scale: gl.sizei = 3;
-
-var fov_x: gl.float = 90.0;
-var aspect_ratio: gl.float = @as(gl.float, INITIAL_WINDOW_WIDTH) / @as(gl.float, INITIAL_WINDOW_HEIGHT);
-var near: gl.float = 0.1;
-var far: gl.float = 32 * Chunk.Size * std.math.sqrt(3.0);
-
-fn cacheAspectRatio() void {
-    aspect_ratio = @as(gl.float, @floatFromInt(window_width)) / @as(gl.float, @floatFromInt(window_height));
-}
-
-fn cacheProjectionMatrix() void {
-    projection_matrix.perspectiveInPlace(fov_x, aspect_ratio, near, far);
-}
-
-fn cacheViewProjectionMatrix() void {
-    view_projection_matrix = view_matrix.multiply(projection_matrix);
-}
 
 fn errorCallback(error_code: glfw.ErrorCode, description: [:0]const u8) void {
     std.log.err("glfw: {}: {s}\n", .{ error_code, description });
@@ -117,36 +44,17 @@ fn keyCallback(window: glfw.Window, key: glfw.Key, scancode: i32, action: glfw.A
 }
 
 fn cursorCallback(window: glfw.Window, cursor_x: f64, cursor_y: f64) void {
-    _ = window;
-
-    const sensitivity = mouse_speed * delta_time;
-
-    const offset_x = (@as(gl.float, @floatCast(cursor_x)) - prev_cursor_x) * sensitivity;
-    const offset_y = (prev_cursor_y - @as(gl.float, @floatCast(cursor_y))) * sensitivity;
-
-    prev_cursor_x = @floatCast(cursor_x);
-    prev_cursor_y = @floatCast(cursor_y);
-
-    camera_yaw += offset_x;
-    camera_pitch = std.math.clamp(camera_pitch + offset_y, -89.0, 89.0);
-
-    camera_angles_changed = true;
+    window.getUserPointer(WindowUserData).?.*.new_cursor_pos = .{
+        .cursor_x = @floatCast(cursor_x),
+        .cursor_y = @floatCast(cursor_y),
+    };
 }
 
-fn framebufferSizeCallback(window: glfw.Window, width: u32, height: u32) void {
-    _ = window;
-
-    window_width = @intCast(width);
-    window_height = @intCast(height);
-    cacheAspectRatio();
-    cacheProjectionMatrix();
-    cacheViewProjectionMatrix();
-    chunks_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
-    chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
-    chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
-    chunks_debug_shader_program.setUniform2ui("uWindowSize", @intCast(window_width), @intCast(window_height));
-
-    gl.Viewport(0, 0, window_width, window_height);
+fn framebufferSizeCallback(window: glfw.Window, window_width: u32, window_height: u32) void {
+    window.getUserPointer(WindowUserData).?.*.new_window_size = .{
+        .window_width = @intCast(window_width),
+        .window_height = @intCast(window_height),
+    };
 }
 
 fn debugCallback(source: gl.@"enum", @"type": gl.@"enum", id: gl.uint, severity: gl.@"enum", length: gl.sizei, message: [*:0]const u8, user_params: ?*const anyopaque) callconv(gl.APIENTRY) void {
@@ -181,312 +89,8 @@ fn debugCallback(source: gl.@"enum", @"type": gl.@"enum", id: gl.uint, severity:
     }
 }
 
-fn extractPlanesFromViewProjection(matrix: Matrix4x4f, left: *[4]gl.float, right: *[4]gl.float, bottom: *[4]gl.float, top: *[4]gl.float) void {
-    for (0..4) |i| {
-        left[i] = matrix.data[i * 4 + 3] + matrix.data[i * 4 + 0];
-        right[i] = matrix.data[i * 4 + 3] - matrix.data[i * 4 + 0];
-        bottom[i] = matrix.data[i * 4 + 3] + matrix.data[i * 4 + 1];
-        top[i] = matrix.data[i * 4 + 3] - matrix.data[i * 4 + 1];
-    }
-}
-
-fn cullChunkFacesAndFrustum(chunk_mesh_layers: *ChunkMeshLayers) u32 {
-    var left: [4]gl.float = @splat(0);
-    var right: [4]gl.float = @splat(0);
-    var bottom: [4]gl.float = @splat(0);
-    var top: [4]gl.float = @splat(0);
-
-    extractPlanesFromViewProjection(view_projection_matrix, &left, &right, &bottom, &top);
-
-    var left_nrm = Vec3f.new(left[0], left[1], left[2]);
-    left_nrm.normalizeInPlace();
-
-    var right_nrm = Vec3f.new(right[0], right[1], right[2]);
-    right_nrm.normalizeInPlace();
-
-    var bottom_nrm = Vec3f.new(bottom[0], bottom[1], bottom[2]);
-    bottom_nrm.normalizeInPlace();
-
-    var top_nrm = Vec3f.new(top[0], top[1], top[2]);
-    top_nrm.normalizeInPlace();
-
-    const camera_chunk_pos = camera_position.toChunkPos();
-
-    var visible_num: u32 = 0;
-    for (chunk_mesh_layers.pos.buffer.items, 0..) |chunk_mesh_pos, chunk_mesh_idx_| {
-        const chunk_pos = chunk_mesh_pos.toChunkPos();
-        const chunk_mesh_idx = chunk_mesh_idx_ * 6;
-
-        if (chunk_pos.equal(camera_chunk_pos)) {
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-                inline for (0..6) |face_idx| {
-                    if (chunk_mesh_layer.len.items[chunk_mesh_idx + face_idx] > 0) {
-                        chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = 1;
-                        chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].base_instance = 1;
-                        visible_num += 6;
-                    }
-                }
-            }
-
-            continue;
-        }
-
-        const point = chunk_mesh_pos.addScalar(Chunk.Center).subtract(camera_position);
-        if ((point.dot(camera_direction) < -Chunk.Radius) or
-            (point.dot(left_nrm) < -Chunk.Radius) or
-            (point.dot(right_nrm) < -Chunk.Radius) or
-            (point.dot(bottom_nrm) < -Chunk.Radius) or
-            (point.dot(top_nrm) < -Chunk.Radius) or
-            (point.dot(camera_direction.negate()) < -(far + Chunk.Radius)))
-        {
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-                inline for (0..6) |face_idx| {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = 0;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].base_instance = 0;
-                }
-            }
-
-            continue;
-        }
-
-        const diff = camera_chunk_pos.subtract(chunk_pos);
-
-        if (diff.x < 0) {
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-                if (chunk_mesh_layer.len.items[chunk_mesh_idx] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].base_instance = 1;
-                    visible_num += 1;
-                }
-
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].instance_count = 0;
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].base_instance = 0;
-            }
-        } else if (diff.x != 0) {
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].instance_count = 0;
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].base_instance = 0;
-
-                if (chunk_mesh_layer.len.items[chunk_mesh_idx + 1] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].base_instance = 1;
-                    visible_num += 1;
-                }
-            }
-        } else {
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-                if (chunk_mesh_layer.len.items[chunk_mesh_idx] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].base_instance = 1;
-                    visible_num += 1;
-                }
-
-                if (chunk_mesh_layer.len.items[chunk_mesh_idx + 1] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].base_instance = 1;
-                    visible_num += 1;
-                }
-            }
-        }
-
-        if (diff.y < 0) {
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-                if (chunk_mesh_layer.len.items[chunk_mesh_idx + 2] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].base_instance = 1;
-                    visible_num += 1;
-                }
-
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].instance_count = 0;
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].base_instance = 0;
-            }
-        } else if (diff.y != 0) {
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].instance_count = 0;
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].base_instance = 0;
-
-                if (chunk_mesh_layer.len.items[chunk_mesh_idx + 3] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].base_instance = 1;
-                    visible_num += 1;
-                }
-            }
-        } else {
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-                if (chunk_mesh_layer.len.items[chunk_mesh_idx + 2] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].base_instance = 1;
-                    visible_num += 1;
-                }
-
-                if (chunk_mesh_layer.len.items[chunk_mesh_idx + 3] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].base_instance = 1;
-                    visible_num += 1;
-                }
-            }
-        }
-
-        if (diff.z < 0) {
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-                if (chunk_mesh_layer.len.items[chunk_mesh_idx + 4] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].base_instance = 1;
-                    visible_num += 1;
-                }
-
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].instance_count = 0;
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].base_instance = 0;
-            }
-        } else if (diff.z > 0) {
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].instance_count = 0;
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].base_instance = 0;
-
-                if (chunk_mesh_layer.len.items[chunk_mesh_idx + 5] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].base_instance = 1;
-                    visible_num += 1;
-                }
-            }
-        } else {
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-                if (chunk_mesh_layer.len.items[chunk_mesh_idx + 4] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].base_instance = 1;
-                    visible_num += 1;
-                }
-
-                if (chunk_mesh_layer.len.items[chunk_mesh_idx + 5] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].base_instance = 1;
-                    visible_num += 1;
-                }
-            }
-        }
-    }
-
-    return visible_num;
-}
-
-pub const ChunkBoundingBox = struct {
-    const vertices: []const Vec3f = west ++ east ++ bottom ++ top ++ north ++ south;
-    const lines: []const Vec3f = &.{
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = 0, .y = 0, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = 0, .z = 0 },
-        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
-
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = Chunk.Size, .y = 0, .z = 0 },
-        .{ .x = 0, .y = 0, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
-
-        .{ .x = 0, .y = Chunk.Size, .z = 0 },
-        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-
-        .{ .x = 0, .y = Chunk.Size, .z = 0 },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
-        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-
-        // vertical
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = 0, .y = Chunk.Size, .z = 0 },
-
-        .{ .x = 0, .y = 0, .z = Chunk.Size },
-        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
-
-        .{ .x = Chunk.Size, .y = 0, .z = 0 },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
-
-        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-    };
-
-    const west: []const Vec3f = &.{
-        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = 0, .y = Chunk.Size, .z = 0 },
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = 0, .y = 0, .z = Chunk.Size },
-        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
-    };
-
-    const east: []const Vec3f = &.{
-        .{ .x = Chunk.Size, .y = 0, .z = 0 },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = 0, .z = 0 },
-    };
-
-    const bottom: []const Vec3f = &.{
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = Chunk.Size, .y = 0, .z = 0 },
-        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
-        .{ .x = 0, .y = 0, .z = Chunk.Size },
-        .{ .x = 0, .y = 0, .z = 0 },
-    };
-
-    const top: []const Vec3f = &.{
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
-        .{ .x = 0, .y = Chunk.Size, .z = 0 },
-        .{ .x = 0, .y = Chunk.Size, .z = 0 },
-        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-    };
-
-    const north: []const Vec3f = &.{
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = 0, .y = Chunk.Size, .z = 0 },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = 0 },
-        .{ .x = Chunk.Size, .y = 0, .z = 0 },
-        .{ .x = 0, .y = 0, .z = 0 },
-    };
-
-    const south: []const Vec3f = &.{
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },
-        .{ .x = 0, .y = 0, .z = Chunk.Size },
-        .{ .x = 0, .y = 0, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = 0, .z = Chunk.Size },
-        .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
-    };
-};
-
 fn onRaycast(allocator: std.mem.Allocator, world: *World, text_manager: *ui.TextManager, result: World.RaycastResult) !void {
     const world_pos = result.pos;
-    // const chunk_pos = world_pos.toChunkPos();
-    // const local_pos = world_pos.toLocalPos();
     const side = result.side;
 
     switch (side) {
@@ -579,12 +183,33 @@ fn onRaycast(allocator: std.mem.Allocator, world: *World, text_manager: *ui.Text
     }
 }
 
+const Settings = struct {
+    ui_scale: gl.sizei = 3,
+    mouse_speed: gl.float = 10.0,
+    movement_speed: gl.float = 16.0,
+};
+
+const NewWindowSize = struct {
+    window_width: gl.sizei,
+    window_height: gl.sizei,
+};
+
+const NewCursorPos = struct {
+    cursor_x: gl.float,
+    cursor_y: gl.float,
+};
+
+const WindowUserData = struct {
+    new_window_size: ?NewWindowSize = null,
+    new_cursor_pos: ?NewCursorPos = null,
+};
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    zstbi.init(allocator);
+    stbi.init(allocator);
 
     glfw.setErrorCallback(errorCallback);
     if (!glfw.init(.{})) {
@@ -593,9 +218,13 @@ pub fn main() !void {
     }
     defer glfw.terminate();
 
+    const settings = Settings{};
+    var screen = Screen{};
+    var camera = Camera.init(.new(0, 0, 0), 0, 0, screen.aspect_ratio);
+
     const debug_context = true;
 
-    const window = glfw.Window.create(@intCast(window_width), @intCast(window_height), "Natura ex Deus", null, null, .{
+    const window = glfw.Window.create(@intCast(screen.window_width), @intCast(screen.window_height), "Natura ex Deus", null, null, .{
         .opengl_profile = .opengl_core_profile,
         .context_version_major = 4,
         .context_version_minor = 6,
@@ -636,35 +265,34 @@ pub fn main() !void {
         std.log.err("Failed to load OpenGL debug context", .{});
     }
 
-    cacheCameraDirectionAndRight();
-    view_matrix = Matrix4x4f.lookToward(camera_position, camera_direction, camera_up);
-    projection_matrix = Matrix4x4f.perspective(fov_x, aspect_ratio, near, far);
-    cacheViewProjectionMatrix();
+    var window_user_data = WindowUserData{};
 
-    chunks_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_vs.glsl", "assets/shaders/chunks_fs.glsl");
-    chunks_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
-
-    chunks_bb_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_bb_vs.glsl", "assets/shaders/chunks_bb_fs.glsl");
-    chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
-
-    chunks_debug_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_debug_vs.glsl", "assets/shaders/chunks_debug_fs.glsl");
-    chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
-    chunks_debug_shader_program.setUniform2ui("uWindowSize", @intCast(window_width), @intCast(window_height));
-
-    text_shader_program = try ShaderProgram.new(allocator, "assets/shaders/text_vs.glsl", "assets/shaders/text_fs.glsl");
+    window.setUserPointer(@ptrCast(&window_user_data));
 
     window.setInputModeCursor(.disabled);
-    window.setCursorPos(prev_cursor_x, prev_cursor_y);
+    window.setCursorPos(screen.prev_cursor_x, screen.prev_cursor_y);
     window.setCursorPosCallback(cursorCallback);
     window.setFramebufferSizeCallback(framebufferSizeCallback);
     window.setKeyCallback(keyCallback);
 
+    var chunks_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_vs.glsl", "assets/shaders/chunks_fs.glsl");
+    chunks_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+
+    var chunks_bb_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_bb_vs.glsl", "assets/shaders/chunks_bb_fs.glsl");
+    chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+
+    var chunks_debug_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_debug_vs.glsl", "assets/shaders/chunks_debug_fs.glsl");
+    chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+    chunks_debug_shader_program.setUniform2ui("uWindowSize", @intCast(screen.window_width), @intCast(screen.window_height));
+
+    var text_shader_program = try ShaderProgram.new(allocator, "assets/shaders/text_vs.glsl", "assets/shaders/text_fs.glsl");
+
     gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1);
 
-    var block_images = std.ArrayList(zstbi.Image).init(allocator);
+    var block_images = std.ArrayList(stbi.Image).init(allocator);
 
     for (Block.Texture.TEXTURES) |texture| {
-        const image = try zstbi.Image.loadFromFile(texture.getPath(), 0);
+        const image = try stbi.Image.loadFromFile(texture.getPath(), 0);
         try block_images.append(image);
     }
 
@@ -674,13 +302,13 @@ pub fn main() !void {
     });
     block_textures.bind(0);
 
-    var font_image = try zstbi.Image.loadFromFile("assets/textures/font.png", 0);
-    var glyph_images = try allocator.alloc(zstbi.Image, ui.Glyph.len);
+    var font_image = try stbi.Image.loadFromFile("assets/textures/font.png", 0);
+    var glyph_images = try allocator.alloc(stbi.Image, ui.Glyph.len);
 
     for (0..ui.Glyph.len) |glyph_idx| {
         const base_x = glyph_idx * 6;
 
-        var glyph_image = try zstbi.Image.createEmpty(6, 6, 1, .{});
+        var glyph_image = try stbi.Image.createEmpty(6, 6, 1, .{});
 
         var data_idx: usize = 0;
         for (0..6) |y| {
@@ -702,7 +330,7 @@ pub fn main() !void {
     });
     font_texture.bind(1);
 
-    var indirect_light_image = try zstbi.Image.loadFromFile("assets/textures/indirect_light.png", 0);
+    var indirect_light_image = try stbi.Image.loadFromFile("assets/textures/indirect_light.png", 0);
     var indirect_light_data: [16]Vec3f = undefined;
     for (0..(indirect_light_image.data.len / 4)) |idx| {
         const vec3 = Vec3f{
@@ -777,7 +405,7 @@ pub fn main() !void {
     std.log.info("Chunk mesh buffers done. {d} s", .{debug_time});
 
     debug_timer.reset();
-    _ = cullChunkFacesAndFrustum(&chunk_mesh_layers);
+    _ = chunk_mesh_layers.cull(&camera);
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Culling done. {d} s", .{debug_time});
@@ -801,10 +429,10 @@ pub fn main() !void {
     }
 
     var bounding_box_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
-    bounding_box_buffer.initBufferAndBind(ChunkBoundingBox.vertices, 5);
+    bounding_box_buffer.initBufferAndBind(chunk_bounding_box.vertices, 5);
 
     var bounding_box_lines_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
-    bounding_box_lines_buffer.initBufferAndBind(ChunkBoundingBox.lines, 11);
+    bounding_box_lines_buffer.initBufferAndBind(chunk_bounding_box.lines, 11);
 
     var text_manager = ui.TextManager.init();
 
@@ -814,7 +442,7 @@ pub fn main() !void {
 
     var offscreen_texture_handle: gl.uint = undefined;
     gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&offscreen_texture_handle));
-    gl.TextureStorage2D(offscreen_texture_handle, 1, gl.RGBA8, window_width, window_height);
+    gl.TextureStorage2D(offscreen_texture_handle, 1, gl.RGBA8, screen.window_width, screen.window_height);
     gl.BindTextureUnit(2, offscreen_texture_handle);
 
     var offscreen_framebuffer_handle: gl.uint = undefined;
@@ -826,62 +454,108 @@ pub fn main() !void {
     gl.Enable(gl.BLEND);
     gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    const movement_speed: gl.float = 16.0;
+    var delta_time: gl.float = 1.0 / 60.0;
     var timer = try std.time.Timer.start();
 
     while (!window.shouldClose()) {
-        gl.ClearColor(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
-        gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-        var camera_moved = false;
+        var calc_view_matrix = false;
+        var calc_projection_matrix = false;
 
         if (window.getKey(glfw.Key.s) == .press) {
-            camera_position.subtractInPlace(camera_horizontal_direction.multiplyScalar(movement_speed * delta_time));
-            camera_moved = true;
+            camera.position.subtractInPlace(camera.horizontal_direction.multiplyScalar(settings.movement_speed * delta_time));
+            calc_view_matrix = true;
         }
 
         if (window.getKey(glfw.Key.w) == .press) {
-            camera_position.addInPlace(camera_horizontal_direction.multiplyScalar(movement_speed * delta_time));
-            camera_moved = true;
+            camera.position.addInPlace(camera.horizontal_direction.multiplyScalar(settings.movement_speed * delta_time));
+            calc_view_matrix = true;
         }
 
         if (window.getKey(glfw.Key.left_shift) == .press) {
-            camera_position.subtractInPlace(camera_up.multiplyScalar(movement_speed * delta_time));
-            camera_moved = true;
+            camera.position.subtractInPlace(Camera.up.multiplyScalar(settings.movement_speed * delta_time));
+            calc_view_matrix = true;
         }
 
         if (window.getKey(glfw.Key.space) == .press) {
-            camera_position.addInPlace(camera_up.multiplyScalar(movement_speed * delta_time));
-            camera_moved = true;
+            camera.position.addInPlace(Camera.up.multiplyScalar(settings.movement_speed * delta_time));
+            calc_view_matrix = true;
         }
 
         if (window.getKey(glfw.Key.a) == .press) {
-            camera_position.subtractInPlace(camera_right.multiplyScalar(movement_speed * delta_time));
-            camera_moved = true;
+            camera.position.subtractInPlace(camera.right.multiplyScalar(settings.movement_speed * delta_time));
+            calc_view_matrix = true;
         }
 
         if (window.getKey(glfw.Key.d) == .press) {
-            camera_position.addInPlace(camera_right.multiplyScalar(movement_speed * delta_time));
-            camera_moved = true;
+            camera.position.addInPlace(camera.right.multiplyScalar(settings.movement_speed * delta_time));
+            calc_view_matrix = true;
         }
 
-        if (camera_angles_changed or camera_moved) {
-            if (camera_angles_changed) {
-                camera_angles_changed = false;
-                cacheCameraDirectionAndRight();
-            }
+        if (window_user_data.new_cursor_pos) |new_cursor_pos| {
+            const sensitivity = settings.mouse_speed * delta_time;
 
-            cacheViewMatrix();
-            cacheViewProjectionMatrix();
-            chunks_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
-            chunks_shader_program.setUniform3f("uCameraPosition", camera_position.x, camera_position.y, camera_position.z);
+            const offset_x = (new_cursor_pos.cursor_x - screen.prev_cursor_x) * sensitivity;
+            const offset_y = (screen.prev_cursor_y - new_cursor_pos.cursor_y) * sensitivity;
 
-            chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
-            chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", view_projection_matrix);
+            screen.prev_cursor_x = new_cursor_pos.cursor_x;
+            screen.prev_cursor_y = new_cursor_pos.cursor_y;
+
+            camera.yaw += offset_x;
+            camera.pitch = std.math.clamp(camera.pitch + offset_y, -89.0, 89.0);
+
+            camera.calcDirectionAndRight();
+
+            calc_view_matrix = true;
         }
 
-        const visible_num = cullChunkFacesAndFrustum(&chunk_mesh_layers);
+        if (window_user_data.new_window_size) |new_window_size| {
+            screen.window_width = new_window_size.window_width;
+            screen.window_height = new_window_size.window_height;
+            screen.window_width_f = @floatFromInt(screen.window_width);
+            screen.window_height_f = @floatFromInt(screen.window_height);
+
+            gl.Viewport(0, 0, screen.window_width, screen.window_height);
+
+            gl.DeleteTextures(1, @ptrCast(&offscreen_texture_handle));
+            gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&offscreen_texture_handle));
+            gl.TextureStorage2D(offscreen_texture_handle, 1, gl.RGBA8, screen.window_width, screen.window_height);
+            gl.BindTextureUnit(2, offscreen_texture_handle);
+
+            gl.DeleteFramebuffers(1, @ptrCast(&offscreen_framebuffer_handle));
+            gl.CreateFramebuffers(1, @ptrCast(&offscreen_framebuffer_handle));
+            gl.NamedFramebufferTexture(offscreen_framebuffer_handle, gl.COLOR_ATTACHMENT0, offscreen_texture_handle, 0);
+
+            screen.calcAspectRatio();
+            chunks_debug_shader_program.setUniform2ui("uWindowSize", @intCast(screen.window_width), @intCast(screen.window_height));
+
+            calc_projection_matrix = true;
+        }
+
+        if (calc_view_matrix) {
+            camera.calcViewMatrix();
+
+            chunks_shader_program.setUniform3f("uCameraPosition", camera.position.x, camera.position.y, camera.position.z);
+        }
+
+        if (calc_projection_matrix) {
+            camera.calcProjectionMatrix(screen.aspect_ratio);
+        }
+
+        const calc_view_projection_matrix = calc_view_matrix or calc_projection_matrix;
+        if (calc_view_projection_matrix) {
+            camera.calcViewProjectionMatrix();
+            camera.calcFrustumPlanes();
+
+            chunks_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+            chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+            chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+        }
+
+        const visible_num = chunk_mesh_layers.cull(&camera);
         chunk_mesh_layers.uploadCommandBuffers();
+
+        gl.ClearColor(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
+        gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         chunks_shader_program.bind();
         chunk_mesh_layers.draw();
@@ -918,7 +592,7 @@ pub fn main() !void {
             gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
         }
 
-        gl.BlitNamedFramebuffer(0, offscreen_framebuffer_handle, 0, 0, window_width, window_height, 0, 0, window_width, window_height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+        gl.BlitNamedFramebuffer(0, offscreen_framebuffer_handle, 0, 0, screen.window_width, screen.window_height, 0, 0, screen.window_width, screen.window_height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
 
         chunks_debug_shader_program.bind();
         {
@@ -948,14 +622,14 @@ pub fn main() !void {
             .text = try std.fmt.allocPrint(allocator, "visible: {}/{}", .{ visible_num, chunk_mesh_layers.pos.buffer.items.len * 6 }),
         });
 
-        const camera_chunk_pos = camera_position.toChunkPos();
+        const camera_chunk_pos = camera.position.toChunkPos();
         try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 12,
             .text = try std.fmt.allocPrint(allocator, "chunk: [x: {} y: {} z: {}]", .{ camera_chunk_pos.x, camera_chunk_pos.y, camera_chunk_pos.z }),
         });
 
-        const camera_world_pos = camera_position.toWorldPos();
+        const camera_world_pos = camera.position.toWorldPos();
         const camera_local_pos = camera_world_pos.toLocalPos();
         try text_manager.append(allocator, .{
             .pixel_x = 0,
@@ -972,19 +646,19 @@ pub fn main() !void {
         try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 30,
-            .text = try std.fmt.allocPrint(allocator, "camera: [x: {d:.6} y: {d:.6} z: {d:.6}]", .{ camera_position.x, camera_position.y, camera_position.z }),
+            .text = try std.fmt.allocPrint(allocator, "camera: [x: {d:.6} y: {d:.6} z: {d:.6}]", .{ camera.position.x, camera.position.y, camera.position.z }),
         });
 
         try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 36,
-            .text = try std.fmt.allocPrint(allocator, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(camera_yaw, 360.0) - 180.0, camera_pitch }),
+            .text = try std.fmt.allocPrint(allocator, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(camera.yaw, 360.0) - 180.0, camera.pitch }),
         });
 
-        const result = world.raycast(camera_position, camera_direction);
+        const result = world.raycast(camera.position, camera.direction);
         try onRaycast(allocator, &world, &text_manager, result);
 
-        try text_manager.buildVertices(allocator, window_width, window_height, ui_scale);
+        try text_manager.buildVertices(allocator, screen.window_width, screen.window_height, settings.ui_scale);
         text_manager.text_vertices.resizeBufferAndBind(12);
 
         text_shader_program.bind();
@@ -1007,5 +681,5 @@ pub fn main() !void {
     indirect_light_image.deinit();
     font_image.deinit();
 
-    zstbi.deinit();
+    stbi.deinit();
 }
