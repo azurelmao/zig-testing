@@ -283,7 +283,6 @@ pub fn main() !void {
 
     var chunks_debug_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_debug_vs.glsl", "assets/shaders/chunks_debug_fs.glsl");
     chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
-    chunks_debug_shader_program.setUniform2ui("uWindowSize", @intCast(screen.window_width), @intCast(screen.window_height));
 
     var text_shader_program = try ShaderProgram.new(allocator, "assets/shaders/text_vs.glsl", "assets/shaders/text_fs.glsl");
 
@@ -526,7 +525,6 @@ pub fn main() !void {
             gl.NamedFramebufferTexture(offscreen_framebuffer_handle, gl.COLOR_ATTACHMENT0, offscreen_texture_handle, 0);
 
             screen.calcAspectRatio();
-            chunks_debug_shader_program.setUniform2ui("uWindowSize", @intCast(screen.window_width), @intCast(screen.window_height));
 
             calc_projection_matrix = true;
         }
