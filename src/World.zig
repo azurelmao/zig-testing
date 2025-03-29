@@ -7,7 +7,7 @@ const Side = @import("side.zig").Side;
 const DedupQueue = @import("dedup_queue.zig").DedupQueue;
 const Vec3f = @import("vec3f.zig").Vec3f;
 
-const Self = @This();
+const World = @This();
 
 const Chunks = std.AutoHashMapUnmanaged(Chunk.Pos, Chunk);
 const ChunkPosQueue = DedupQueue(Chunk.Pos);
@@ -89,7 +89,7 @@ pub const Pos = struct {
     }
 };
 
-pub fn init(seed: i32) !Self {
+pub fn init(seed: i32) !World {
     const prng = std.Random.DefaultPrng.init(expr: {
         var prng_seed: u64 = undefined;
         try std.posix.getrandom(std.mem.asBytes(&prng_seed));
@@ -105,33 +105,33 @@ pub fn init(seed: i32) !Self {
     };
 }
 
-pub fn getChunk(self: *Self, pos: Chunk.Pos) !*Chunk {
+pub fn getChunk(self: *World, pos: Chunk.Pos) !*Chunk {
     return self.chunks.getPtr(pos) orelse error.ChunkNotFound;
 }
 
-pub fn getChunkOrNull(self: *Self, pos: Chunk.Pos) ?*Chunk {
+pub fn getChunkOrNull(self: *World, pos: Chunk.Pos) ?*Chunk {
     return self.chunks.getPtr(pos);
 }
 
-pub fn getBlock(self: *Self, pos: Pos) !Block {
+pub fn getBlock(self: *World, pos: Pos) !Block {
     const chunk = try self.getChunk(pos.toChunkPos());
 
     return chunk.getBlock(pos.toLocalPos());
 }
 
-pub fn getBlockOrNull(self: *Self, pos: Pos) ?Block {
+pub fn getBlockOrNull(self: *World, pos: Pos) ?Block {
     const chunk = self.getChunkOrNull(pos.toChunkPos()) orelse return null;
 
     return chunk.getBlock(pos.toLocalPos());
 }
 
-pub fn setBlock(self: *Self, pos: Pos, block: Block) !void {
+pub fn setBlock(self: *World, pos: Pos, block: Block) !void {
     const chunk = try self.getChunk(pos.toChunkPos());
 
     chunk.setBlock(pos.toLocalPos(), block);
 }
 
-pub fn setBlockAndAffectLight(self: *Self, pos: Pos, block: Block) !void {
+pub fn setBlockAndAffectLight(self: *World, pos: Pos, block: Block) !void {
     const chunk_pos = pos.toChunkPos();
     const chunk = try self.getChunk(chunk_pos);
 
@@ -164,7 +164,7 @@ pub const RaycastResult = struct {
     block: ?Block,
 };
 
-pub fn raycast(self: *Self, origin: Vec3f, direction: Vec3f) RaycastResult {
+pub fn raycast(self: *World, origin: Vec3f, direction: Vec3f) RaycastResult {
     var moving_position = origin.floor();
 
     const step = Vec3f.new(std.math.sign(direction.x), std.math.sign(direction.y), std.math.sign(direction.z));
@@ -257,7 +257,7 @@ pub const BottomOfTheWorld = BelowHeight * Chunk.Size;
 pub const SeaLevel = 0;
 pub const SeaLevelDeep = SeaLevel - 16;
 
-pub fn generate(self: *Self, allocator: std.mem.Allocator) !void {
+pub fn generate(self: *World, allocator: std.mem.Allocator) !void {
     const gen1 = znoise.FnlGenerator{
         .noise_type = .opensimplex2,
         .seed = self.seed,
@@ -635,7 +635,7 @@ pub fn fillChunkWithIndirectLight(chunk: *Chunk, indirect_light_bitset: *[Chunk.
     }
 }
 
-pub fn getLight(self: *Self, pos: Pos) !Light {
+pub fn getLight(self: *World, pos: Pos) !Light {
     const chunk = self.getChunk(pos.toChunkPos()) catch {
         return error.GetLight;
     };
@@ -643,7 +643,7 @@ pub fn getLight(self: *Self, pos: Pos) !Light {
     return chunk.getLight(pos.toLocalPos());
 }
 
-pub fn setLight(self: *Self, pos: Pos, light: Light) !void {
+pub fn setLight(self: *World, pos: Pos, light: Light) !void {
     const chunk = self.getChunk(pos.toChunkPos()) catch {
         return error.SetLight;
     };
@@ -651,7 +651,7 @@ pub fn setLight(self: *Self, pos: Pos, light: Light) !void {
     chunk.setLight(pos.toLocalPos(), light);
 }
 
-pub fn addLight(self: *Self, pos: Pos, light: Light) !void {
+pub fn addLight(self: *World, pos: Pos, light: Light) !void {
     const chunk_pos = pos.toChunkPos();
     var chunk = self.getChunk(chunk_pos) catch {
         return error.AddLight;
@@ -665,7 +665,7 @@ pub fn addLight(self: *Self, pos: Pos, light: Light) !void {
     try self.chunks_which_need_to_add_lights.enqueue(chunk_pos);
 }
 
-pub fn removeLight(self: *Self, pos: Pos, light: Light) !void {
+pub fn removeLight(self: *World, pos: Pos, light: Light) !void {
     const chunk_pos = pos.toChunkPos();
     const chunk = self.getChunk(chunk_pos) catch {
         return error.RemoveLight;
@@ -683,7 +683,7 @@ const NeighborChunks = struct {
     chunks: [6]?*Chunk,
 };
 
-pub fn getNeighborChunks(self: *Self, chunk_pos: Chunk.Pos) NeighborChunks {
+pub fn getNeighborChunks(self: *World, chunk_pos: Chunk.Pos) NeighborChunks {
     var chunks: [6]?*Chunk = undefined;
 
     inline for (0..6) |face_idx| {
@@ -693,7 +693,7 @@ pub fn getNeighborChunks(self: *Self, chunk_pos: Chunk.Pos) NeighborChunks {
     return .{ .chunks = chunks };
 }
 
-pub fn propagateLights(self: *Self, allocator: std.mem.Allocator) !void {
+pub fn propagateLights(self: *World, allocator: std.mem.Allocator) !void {
     while (self.chunks_which_need_to_add_lights.dequeue()) |chunk_pos| {
         const chunk = self.getChunk(chunk_pos) catch {
             std.log.err("{}", .{chunk_pos});
@@ -720,7 +720,7 @@ pub fn propagateLights(self: *Self, allocator: std.mem.Allocator) !void {
     }
 }
 
-pub fn propagateLightAddition(self: *Self, allocator: std.mem.Allocator, chunk: *Chunk) !void {
+pub fn propagateLightAddition(self: *World, allocator: std.mem.Allocator, chunk: *Chunk) !void {
     for (0..chunk.light_addition_queue.readableLength()) |node_idx| {
         const node = chunk.light_addition_queue.peekItem(node_idx);
         const local_pos = node.pos.toLocalPos();
@@ -844,7 +844,7 @@ pub fn propagateLightAddition(self: *Self, allocator: std.mem.Allocator, chunk: 
     }
 }
 
-pub fn propagateLightRemoval(self: *Self, allocator: std.mem.Allocator, chunk: *Chunk) !void {
+pub fn propagateLightRemoval(self: *World, allocator: std.mem.Allocator, chunk: *Chunk) !void {
     for (0..chunk.light_removal_queue.readableLength()) |i| {
         const node = chunk.light_removal_queue.peekItem(i);
         const local_pos = node.pos.toLocalPos();

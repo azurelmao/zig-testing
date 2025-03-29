@@ -1,9 +1,8 @@
 const std = @import("std");
 const gl = @import("gl");
-const zstbi = @import("zstbi");
-const print = std.debug.print;
+const stbi = @import("zstbi");
 
-const Self = @This();
+const TextureArray2D = @This();
 
 const Wrapping = enum(gl.int) {
     clamp_to_edge = gl.CLAMP_TO_EDGE,
@@ -50,7 +49,7 @@ const Options = struct {
 
 handle: gl.uint,
 
-pub fn init(images: []const zstbi.Image, width: gl.sizei, height: gl.sizei, options: Options) !Self {
+pub fn init(images: []const stbi.Image, width: gl.sizei, height: gl.sizei, options: Options) !TextureArray2D {
     for (images) |image| {
         if (image.width != width or image.height != height) {
             return error.IncorrectImageSize;
@@ -74,6 +73,6 @@ pub fn init(images: []const zstbi.Image, width: gl.sizei, height: gl.sizei, opti
     return .{ .handle = handle };
 }
 
-pub fn bind(self: Self, unit: gl.uint) void {
+pub fn bind(self: TextureArray2D, unit: gl.uint) void {
     gl.BindTextureUnit(unit, self.handle);
 }

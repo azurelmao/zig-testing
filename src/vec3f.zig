@@ -9,9 +9,7 @@ pub const Vec3f = packed struct(u128) {
     z: gl.float,
     _: gl.float = 0,
 
-    const Self = @This();
-
-    pub fn new(x: gl.float, y: gl.float, z: gl.float) Self {
+    pub fn new(x: gl.float, y: gl.float, z: gl.float) Vec3f {
         return .{
             .x = x,
             .y = y,
@@ -19,7 +17,7 @@ pub const Vec3f = packed struct(u128) {
         };
     }
 
-    pub fn fromScalar(scalar: gl.float) Self {
+    pub fn fromScalar(scalar: gl.float) Vec3f {
         return .{
             .x = scalar,
             .y = scalar,
@@ -27,7 +25,7 @@ pub const Vec3f = packed struct(u128) {
         };
     }
 
-    pub fn toChunkPos(self: Self) Chunk.Pos {
+    pub fn toChunkPos(self: Vec3f) Chunk.Pos {
         const x = @as(i11, @intFromFloat(@floor(self.x))) >> Chunk.BitSize;
         const y = @as(i11, @intFromFloat(@floor(self.y))) >> Chunk.BitSize;
         const z = @as(i11, @intFromFloat(@floor(self.z))) >> Chunk.BitSize;
@@ -39,7 +37,7 @@ pub const Vec3f = packed struct(u128) {
         };
     }
 
-    pub fn toWorldPos(self: Self) World.Pos {
+    pub fn toWorldPos(self: Vec3f) World.Pos {
         return .{
             .x = @intFromFloat(@floor(self.x)),
             .y = @intFromFloat(@floor(self.y)),
@@ -47,7 +45,7 @@ pub const Vec3f = packed struct(u128) {
         };
     }
 
-    pub fn floor(self: Self) Self {
+    pub fn floor(self: Vec3f) Vec3f {
         return .{
             .x = @floor(self.x),
             .y = @floor(self.y),
@@ -55,109 +53,109 @@ pub const Vec3f = packed struct(u128) {
         };
     }
 
-    pub fn negate(self: Self) Self {
+    pub fn negate(self: Vec3f) Vec3f {
         return new(-self.x, -self.y, -self.z);
     }
 
-    pub fn negateInPlace(self: *Self) void {
+    pub fn negateInPlace(self: *Vec3f) void {
         self.x = -self.x;
         self.y = -self.y;
         self.z = -self.z;
     }
 
-    pub fn add(self: Self, other: Self) Self {
+    pub fn add(self: Vec3f, other: Vec3f) Vec3f {
         return new(self.x + other.x, self.y + other.y, self.z + other.z);
     }
 
-    pub fn addInPlace(self: *Self, other: Self) void {
+    pub fn addInPlace(self: *Vec3f, other: Vec3f) void {
         self.x += other.x;
         self.y += other.y;
         self.z += other.z;
     }
 
-    pub fn addScalar(self: Self, scalar: gl.float) Self {
+    pub fn addScalar(self: Vec3f, scalar: gl.float) Vec3f {
         return new(self.x + scalar, self.y + scalar, self.z + scalar);
     }
 
-    pub fn addInPlaceScalar(self: *Self, scalar: gl.float) void {
+    pub fn addInPlaceScalar(self: *Vec3f, scalar: gl.float) void {
         self.x += scalar;
         self.y += scalar;
         self.z += scalar;
     }
 
-    pub fn subtract(self: Self, other: Self) Self {
+    pub fn subtract(self: Vec3f, other: Vec3f) Vec3f {
         return new(self.x - other.x, self.y - other.y, self.z - other.z);
     }
 
-    pub fn subtractInPlace(self: *Self, other: Self) void {
+    pub fn subtractInPlace(self: *Vec3f, other: Vec3f) void {
         self.x -= other.x;
         self.y -= other.y;
         self.z -= other.z;
     }
 
-    pub fn subtractScalar(self: Self, scalar: gl.float) Self {
+    pub fn subtractScalar(self: Vec3f, scalar: gl.float) Vec3f {
         return new(self.x - scalar, self.y - scalar, self.z - scalar);
     }
 
-    pub fn subtractInPlaceScalar(self: *Self, scalar: gl.float) void {
+    pub fn subtractInPlaceScalar(self: *Vec3f, scalar: gl.float) void {
         self.x -= scalar;
         self.y -= scalar;
         self.z -= scalar;
     }
 
-    pub fn multiply(self: Self, other: Self) Self {
+    pub fn multiply(self: Vec3f, other: Vec3f) Vec3f {
         return new(self.x * other.x, self.y * other.y, self.z * other.z);
     }
 
-    pub fn multiplyInPlace(self: *Self, other: Self) void {
+    pub fn multiplyInPlace(self: *Vec3f, other: Vec3f) void {
         self.x *= other.x;
         self.y *= other.y;
         self.z *= other.z;
     }
 
-    pub fn multiplyScalar(self: Self, scalar: gl.float) Self {
+    pub fn multiplyScalar(self: Vec3f, scalar: gl.float) Vec3f {
         return new(self.x * scalar, self.y * scalar, self.z * scalar);
     }
 
-    pub fn multiplyInPlaceScalar(self: *Self, scalar: gl.float) void {
+    pub fn multiplyInPlaceScalar(self: *Vec3f, scalar: gl.float) void {
         self.x *= scalar;
         self.y *= scalar;
         self.z *= scalar;
     }
 
-    pub fn divide(self: Self, other: Self) Self {
+    pub fn divide(self: Vec3f, other: Vec3f) Vec3f {
         return new(self.x / other.x, self.y / other.y, self.z / other.z);
     }
 
-    pub fn divideInPlace(self: *Self, other: Self) void {
+    pub fn divideInPlace(self: *Vec3f, other: Vec3f) void {
         self.x /= other.x;
         self.y /= other.y;
         self.z /= other.z;
     }
 
-    pub fn divideScalar(self: Self, scalar: gl.float) Self {
+    pub fn divideScalar(self: Vec3f, scalar: gl.float) Vec3f {
         return new(self.x / scalar, self.y / scalar, self.z / scalar);
     }
 
-    pub fn divideInPlaceScalar(self: *Self, scalar: gl.float) void {
+    pub fn divideInPlaceScalar(self: *Vec3f, scalar: gl.float) void {
         self.x /= scalar;
         self.y /= scalar;
         self.z /= scalar;
     }
 
-    pub fn normalize(self: Self) Self {
+    pub fn normalize(self: Vec3f) Vec3f {
         const magnitude1 = self.magnitude();
         return new(self.x / magnitude1, self.y / magnitude1, self.z / magnitude1);
     }
 
-    pub fn normalizeInPlace(self: *Self) void {
+    pub fn normalizeInPlace(self: *Vec3f) void {
         const magnitude1 = self.magnitude();
         self.x /= magnitude1;
         self.y /= magnitude1;
         self.z /= magnitude1;
     }
 
-    pub fn cross(self: Self, other: Self) Self {
+    pub fn cross(self: Vec3f, other: Vec3f) Vec3f {
         const a1 = self.y * other.z;
         const a2 = self.z * other.y;
         const a3 = self.z * other.x;
@@ -168,19 +166,19 @@ pub const Vec3f = packed struct(u128) {
         return new(a1 - a2, a3 - a4, a5 - a6);
     }
 
-    pub fn dot(self: Self, other: Self) gl.float {
+    pub fn dot(self: Vec3f, other: Vec3f) gl.float {
         return self.x * other.x + self.y * other.y + self.z * other.z;
     }
 
-    pub fn magnitudeSquared(self: Self) gl.float {
+    pub fn magnitudeSquared(self: Vec3f) gl.float {
         return self.x * self.x + self.y * self.y + self.z * self.z;
     }
 
-    pub fn magnitude(self: Self) gl.float {
+    pub fn magnitude(self: Vec3f) gl.float {
         return std.math.sqrt(self.x * self.x + self.y * self.y + self.z * self.z);
     }
 
-    pub fn abs(self: Self) Self {
+    pub fn abs(self: Vec3f) Vec3f {
         return .{
             .x = @abs(self.x),
             .y = @abs(self.y),

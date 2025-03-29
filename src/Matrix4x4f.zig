@@ -2,49 +2,49 @@ const std = @import("std");
 const gl = @import("gl");
 const Vec3f = @import("vec3f.zig").Vec3f;
 
-const Self = @This();
+const Matrix4x4f = @This();
 
 data: [16]gl.float,
 
-pub fn zero() Self {
+pub fn zero() Matrix4x4f {
     return .{ .data = @splat(0) };
 }
 
-pub fn identity() Self {
+pub fn identity() Matrix4x4f {
     var result = zero();
     result.identityInPlace();
     return result;
 }
 
 /// `self` has to be a zeroed matrix for the correct matrix to be constructed
-pub fn identityInPlace(self: *Self) void {
+pub fn identityInPlace(self: *Matrix4x4f) void {
     self.data[0] = 1;
     self.data[5] = 1;
     self.data[10] = 1;
     self.data[15] = 1;
 }
 
-pub fn translation(vec: Vec3f) Self {
+pub fn translation(vec: Vec3f) Matrix4x4f {
     var result = identity();
     result.translationInPlace(vec);
     return result;
 }
 
 /// `self` has to be an identity or same matrix for the correct matrix to be constructed
-pub fn translationInPlace(self: *Self, vec: Vec3f) void {
+pub fn translationInPlace(self: *Matrix4x4f, vec: Vec3f) void {
     self.data[12] = vec.x;
     self.data[13] = vec.y;
     self.data[14] = vec.z;
 }
 
-pub fn lookAt(eye: Vec3f, target: Vec3f, up: Vec3f) Self {
+pub fn lookAt(eye: Vec3f, target: Vec3f, up: Vec3f) Matrix4x4f {
     var result = identity();
     result.lookAtInPlace(eye, target, up);
     return result;
 }
 
 /// `self` has to be an identity or same matrix for the correct matrix to be constructed
-pub fn lookAtInPlace(self: *Self, eye: Vec3f, target: Vec3f, up: Vec3f) void {
+pub fn lookAtInPlace(self: *Matrix4x4f, eye: Vec3f, target: Vec3f, up: Vec3f) void {
     var forward = eye.subtract(target);
     forward.normalizeInPlace();
 
@@ -70,14 +70,14 @@ pub fn lookAtInPlace(self: *Self, eye: Vec3f, target: Vec3f, up: Vec3f) void {
     self.data[14] = -forward.x * eye.x - forward.y * eye.y - forward.z * eye.z;
 }
 
-pub fn lookToward(eye: Vec3f, direction: Vec3f, up: Vec3f) Self {
+pub fn lookToward(eye: Vec3f, direction: Vec3f, up: Vec3f) Matrix4x4f {
     var result = identity();
     result.lookTowardInPlace(eye, direction, up);
     return result;
 }
 
 /// `self` has to be an identity or same matrix for the correct matrix to be constructed
-pub fn lookTowardInPlace(self: *Self, eye: Vec3f, direction: Vec3f, up: Vec3f) void {
+pub fn lookTowardInPlace(self: *Matrix4x4f, eye: Vec3f, direction: Vec3f, up: Vec3f) void {
     var forward = direction.negate();
     forward.normalizeInPlace();
 
@@ -103,7 +103,7 @@ pub fn lookTowardInPlace(self: *Self, eye: Vec3f, direction: Vec3f, up: Vec3f) v
     self.data[14] = -forward.x * eye.x - forward.y * eye.y - forward.z * eye.z;
 }
 
-pub fn perspective(fov_x: gl.float, aspect_ratio: gl.float, near: gl.float, far: gl.float) Self {
+pub fn perspective(fov_x: gl.float, aspect_ratio: gl.float, near: gl.float, far: gl.float) Matrix4x4f {
     var result = zero();
     result.perspectiveInPlace(fov_x, aspect_ratio, near, far);
     return result;
@@ -113,7 +113,7 @@ const DEG_TO_RAD: gl.float = std.math.pi / 180.0;
 
 /// `self` has to be a zeroed or same matrix for the correct matrix to be constructed
 /// `near` cannot be equal to 0.0
-pub fn perspectiveInPlace(self: *Self, fov_x: gl.float, aspect_ratio: gl.float, near: gl.float, far: gl.float) void {
+pub fn perspectiveInPlace(self: *Matrix4x4f, fov_x: gl.float, aspect_ratio: gl.float, near: gl.float, far: gl.float) void {
     const tangent = std.math.tan(fov_x / 2 * DEG_TO_RAD);
     const right = near * tangent;
     const top = right / aspect_ratio;
@@ -126,7 +126,7 @@ pub fn perspectiveInPlace(self: *Self, fov_x: gl.float, aspect_ratio: gl.float, 
     self.data[15] = 0;
 }
 
-pub fn multiply(self: Self, other: Self) Self {
+pub fn multiply(self: Matrix4x4f, other: Matrix4x4f) Matrix4x4f {
     var result = zero();
 
     for (0..4) |i| {
@@ -144,7 +144,7 @@ pub fn multiply(self: Self, other: Self) Self {
     return result;
 }
 
-pub fn print(self: *Self) void {
+pub fn print(self: *Matrix4x4f) void {
     for (self.data, 0..) |value, idx| {
         if (idx % 4 == 0) {
             std.debug.print("| ", .{});

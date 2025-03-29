@@ -1,9 +1,8 @@
 const std = @import("std");
 const gl = @import("gl");
-const zstbi = @import("zstbi");
-const print = std.debug.print;
+const stbi = @import("zstbi");
 
-const Self = @This();
+const Texture2D = @This();
 
 const Wrapping = enum(gl.int) {
     clamp_to_edge = gl.CLAMP_TO_EDGE,
@@ -49,7 +48,7 @@ const Options = struct {
 
 handle: gl.uint,
 
-pub fn init(image: zstbi.Image, options: Options) Self {
+pub fn init(image: stbi.Image, options: Options) Texture2D {
     var handle: gl.uint = undefined;
     gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&handle));
     gl.TextureStorage2D(handle, 1, @intFromEnum(options.texture_format), @intCast(image.width), @intCast(image.height));
@@ -63,6 +62,6 @@ pub fn init(image: zstbi.Image, options: Options) Self {
     return .{ .handle = handle };
 }
 
-pub fn bind(self: Self, unit: gl.uint) void {
+pub fn bind(self: Texture2D, unit: gl.uint) void {
     gl.BindTextureUnit(unit, self.handle);
 }

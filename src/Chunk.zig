@@ -3,7 +3,7 @@ const Vec3f = @import("vec3f.zig").Vec3f;
 const Block = @import("block.zig").Block;
 const World = @import("World.zig");
 
-const Self = @This();
+const Chunk = @This();
 
 pub const BitSize = 5;
 pub const BitMask = 0b11111;
@@ -104,7 +104,7 @@ pub const LocalPos = packed struct(u15) {
     }
 };
 
-pub fn new(allocator: std.mem.Allocator, pos: Pos, default_block: Block) !Self {
+pub fn new(allocator: std.mem.Allocator, pos: Pos, default_block: Block) !Chunk {
     const blocks = try allocator.create([Volume]Block);
     @memset(blocks, default_block);
 
@@ -132,19 +132,19 @@ pub fn new(allocator: std.mem.Allocator, pos: Pos, default_block: Block) !Self {
     };
 }
 
-pub fn getLight(self: *Self, pos: LocalPos) Light {
+pub fn getLight(self: *Chunk, pos: LocalPos) Light {
     return self.light[pos.index()];
 }
 
-pub fn setLight(self: *Self, pos: LocalPos, light: Light) void {
+pub fn setLight(self: *Chunk, pos: LocalPos, light: Light) void {
     self.light[pos.index()] = light;
 }
 
-pub fn getBlock(self: *Self, pos: LocalPos) Block {
+pub fn getBlock(self: *Chunk, pos: LocalPos) Block {
     return self.blocks[pos.index()];
 }
 
-pub fn setBlock(self: *Self, pos: LocalPos, block: Block) void {
+pub fn setBlock(self: *Chunk, pos: LocalPos, block: Block) void {
     const x: usize = @intCast(pos.x);
     const z: usize = @intCast(pos.z);
     const idx = x * Size + z;
