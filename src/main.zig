@@ -467,6 +467,7 @@ pub fn main() !void {
             screen.window_height_f = @floatFromInt(new_window_size.window_height);
 
             screen.calcAspectRatio();
+            crosshair_shader_program.setUniform2f("uWindowSize", screen.window_width_f, screen.window_height_f);
 
             gl.Viewport(0, 0, screen.window_width, screen.window_height);
 
@@ -541,7 +542,6 @@ pub fn main() !void {
             chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
             selected_block_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
             selected_side_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
-            crosshair_shader_program.setUniform2f("uWindowSize", screen.window_width_f, screen.window_height_f);
         }
 
         gl.ClearColor(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);

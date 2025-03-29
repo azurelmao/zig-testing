@@ -88,7 +88,7 @@ pub fn generate(self: *ChunkMeshLayers, allocator: std.mem.Allocator, world: *Wo
 
         try self.pos.buffer.append(allocator, chunk_pos.toVec3f());
 
-        if (chunk.num_of_air > 0) {
+        if (chunk.num_of_air != Chunk.Volume) {
             try single_self.generate(chunk, &neighbor_chunks);
 
             inline for (0..Block.Layer.len) |layer_idx| {
