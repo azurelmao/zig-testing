@@ -18,76 +18,15 @@ const Screen = @import("Screen.zig");
 const TextureArray2D = @import("TextureArray2D.zig");
 const Texture2D = @import("Texture2D.zig");
 const ChunkMeshLayers = @import("ChunkMeshLayers.zig");
-const ui = @import("ui.zig");
 const chunk_bounding_box = @import("chunk_bounding_box.zig");
+const callbacks = @import("callbacks.zig");
+const ui = @import("ui.zig");
 
 pub const std_options: std.Options = .{
     .log_level = .info,
 };
 
 var procs: gl.ProcTable = undefined;
-
-fn errorCallback(error_code: glfw.ErrorCode, description: [:0]const u8) void {
-    std.log.err("glfw: {}: {s}\n", .{ error_code, description });
-}
-
-fn keyCallback(window: glfw.Window, key: glfw.Key, scancode: i32, action: glfw.Action, mods: glfw.Mods) void {
-    _ = scancode;
-    _ = mods;
-
-    switch (key) {
-        .escape => if (action == .press) {
-            window.setShouldClose(true);
-        },
-        else => {},
-    }
-}
-
-fn cursorCallback(window: glfw.Window, cursor_x: f64, cursor_y: f64) void {
-    window.getUserPointer(WindowUserData).?.*.new_cursor_pos = .{
-        .cursor_x = @floatCast(cursor_x),
-        .cursor_y = @floatCast(cursor_y),
-    };
-}
-
-fn framebufferSizeCallback(window: glfw.Window, window_width: u32, window_height: u32) void {
-    window.getUserPointer(WindowUserData).?.*.new_window_size = .{
-        .window_width = @intCast(window_width),
-        .window_height = @intCast(window_height),
-    };
-}
-
-fn debugCallback(source: gl.@"enum", @"type": gl.@"enum", id: gl.uint, severity: gl.@"enum", length: gl.sizei, message: [*:0]const u8, user_params: ?*const anyopaque) callconv(gl.APIENTRY) void {
-    _ = user_params;
-    _ = length;
-
-    const source_str = switch (source) {
-        gl.DEBUG_SOURCE_API => "api",
-        gl.DEBUG_SOURCE_APPLICATION => "application",
-        gl.DEBUG_SOURCE_THIRD_PARTY => "third party",
-        gl.DEBUG_SOURCE_WINDOW_SYSTEM => "window system",
-        gl.DEBUG_SOURCE_SHADER_COMPILER => "shader compiler",
-        else => "other",
-    };
-
-    const type_str = switch (@"type") {
-        gl.DEBUG_TYPE_DEPRECATED_BEHAVIOR => "deprecated behavior",
-        gl.DEBUG_TYPE_MARKER => "marker",
-        gl.DEBUG_TYPE_UNDEFINED_BEHAVIOR => "undefined behavior",
-        gl.DEBUG_TYPE_POP_GROUP => "pop group",
-        gl.DEBUG_TYPE_PORTABILITY => "portability",
-        gl.DEBUG_TYPE_PUSH_GROUP => "push group",
-        gl.DEBUG_TYPE_ERROR => "error",
-        gl.DEBUG_TYPE_PERFORMANCE => "performance",
-        else => "other",
-    };
-
-    switch (severity) {
-        gl.DEBUG_SEVERITY_HIGH => std.log.err("OpenGL Debug Message [id: {}]  Source: {s}  Type: {s}\n{s}", .{ id, source_str, type_str, message }),
-        gl.DEBUG_SEVERITY_MEDIUM => std.log.warn("OpenGL Debug Message [id: {}]  Source: {s}  Type: {s}\n{s}", .{ id, source_str, type_str, message }),
-        else => std.log.info("OpenGL Debug Message [id: {}]  Source: {s}  Type: {s}\n{s}", .{ id, source_str, type_str, message }),
-    }
-}
 
 fn onRaycast(allocator: std.mem.Allocator, world: *World, text_manager: *ui.TextManager, result: World.RaycastResult) !void {
     const world_pos = result.pos;
@@ -189,21 +128,6 @@ const Settings = struct {
     movement_speed: gl.float = 16.0,
 };
 
-const NewWindowSize = struct {
-    window_width: gl.sizei,
-    window_height: gl.sizei,
-};
-
-const NewCursorPos = struct {
-    cursor_x: gl.float,
-    cursor_y: gl.float,
-};
-
-const WindowUserData = struct {
-    new_window_size: ?NewWindowSize = null,
-    new_cursor_pos: ?NewCursorPos = null,
-};
-
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -211,7 +135,7 @@ pub fn main() !void {
 
     stbi.init(allocator);
 
-    glfw.setErrorCallback(errorCallback);
+    glfw.setErrorCallback(callbacks.errorCallback);
     if (!glfw.init(.{})) {
         std.log.err("failed to initialize GLFW: {?s}", .{glfw.getErrorString()});
         return error.GLFWInitFailed;
@@ -259,21 +183,21 @@ pub fn main() !void {
     if (flags & gl.CONTEXT_FLAG_DEBUG_BIT > 0) {
         gl.Enable(gl.DEBUG_OUTPUT);
         gl.Enable(gl.DEBUG_OUTPUT_SYNCHRONOUS);
-        gl.DebugMessageCallback(debugCallback, null);
+        gl.DebugMessageCallback(callbacks.debugCallback, null);
         gl.DebugMessageControl(gl.DONT_CARE, gl.DONT_CARE, gl.DONT_CARE, 0, null, gl.TRUE);
     } else if (debug_context) {
         std.log.err("Failed to load OpenGL debug context", .{});
     }
 
-    var window_user_data = WindowUserData{};
+    var window_user_data = callbacks.WindowUserData{};
 
     window.setUserPointer(@ptrCast(&window_user_data));
 
     window.setInputModeCursor(.disabled);
     window.setCursorPos(screen.prev_cursor_x, screen.prev_cursor_y);
-    window.setCursorPosCallback(cursorCallback);
-    window.setFramebufferSizeCallback(framebufferSizeCallback);
-    window.setKeyCallback(keyCallback);
+    window.setCursorPosCallback(callbacks.cursorCallback);
+    window.setFramebufferSizeCallback(callbacks.framebufferSizeCallback);
+    window.setKeyCallback(callbacks.keyCallback);
 
     var chunks_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_vs.glsl", "assets/shaders/chunks_fs.glsl");
     chunks_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
