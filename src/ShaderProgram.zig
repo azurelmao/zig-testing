@@ -8,11 +8,10 @@ const Self = @This();
 var currently_bound_shader_program: ?gl.uint = null;
 
 handle: gl.uint,
-uniforms: std.StringHashMap(gl.int),
+uniforms: std.StringHashMapUnmanaged(gl.int),
 
-pub fn new(allocator: std.mem.Allocator, vertex_shader_path: []const gl.char, fragment_shader_path: []const gl.char) !Self {
+pub fn init(allocator: std.mem.Allocator, vertex_shader_path: []const gl.char, fragment_shader_path: []const gl.char) !Self {
     const handle = gl.CreateProgram();
-    var uniforms = std.StringHashMap(gl.int).init(allocator);
 
     const vertexShader = try readAndCompileShader(allocator, vertex_shader_path, gl.VERTEX_SHADER);
     gl.AttachShader(handle, vertexShader);
@@ -34,6 +33,7 @@ pub fn new(allocator: std.mem.Allocator, vertex_shader_path: []const gl.char, fr
     gl.GetProgramiv(handle, gl.ACTIVE_UNIFORMS, &count_uniforms);
     gl.GetProgramiv(handle, gl.ACTIVE_UNIFORM_MAX_LENGTH, &uniform_max_len);
 
+    var uniforms = std.StringHashMapUnmanaged(gl.int).empty;
     for (0..@intCast(count_uniforms)) |i| {
         const uniform_name = try allocator.alloc(gl.char, @intCast(uniform_max_len));
 
@@ -41,7 +41,7 @@ pub fn new(allocator: std.mem.Allocator, vertex_shader_path: []const gl.char, fr
         gl.GetActiveUniformName(handle, @intCast(i), uniform_max_len, &uniform_len, uniform_name.ptr);
 
         const uniform_location = gl.GetUniformLocation(handle, @ptrCast(uniform_name.ptr));
-        try uniforms.put(uniform_name[0..@intCast(uniform_len)], uniform_location);
+        try uniforms.put(allocator, uniform_name[0..@intCast(uniform_len)], uniform_location);
     }
 
     return .{ .handle = handle, .uniforms = uniforms };
@@ -71,101 +71,101 @@ pub fn readAndCompileShader(allocator: std.mem.Allocator, shader_path: []const g
     return handle;
 }
 
-pub fn getUniformLocation(self: Self, location: []const u8) gl.int {
-    return self.uniforms.get(location) orelse {
-        std.debug.panic("Unknown uniform '{s}'", .{location});
+pub fn getUniformLocation(self: Self, uniform: []const u8) gl.int {
+    return self.uniforms.get(uniform) orelse {
+        std.debug.panic("Unknown uniform '{s}'", .{uniform});
     };
 }
 
-pub fn setUniform1i(self: Self, location: []const u8, v0: gl.int) void {
-    const location2 = self.getUniformLocation(location);
+pub fn setUniform1i(self: Self, uniform: []const u8, v0: gl.int) void {
+    const location = self.getUniformLocation(uniform);
 
     self.bind();
-    gl.Uniform1i(location2, v0);
+    gl.Uniform1i(location, v0);
 }
 
-pub fn setUniform2i(self: Self, location: []const u8, v0: gl.int, v1: gl.int) void {
-    const location2 = self.getUniformLocation(location);
+pub fn setUniform2i(self: Self, uniform: []const u8, v0: gl.int, v1: gl.int) void {
+    const location = self.getUniformLocation(uniform);
 
     self.bind();
-    gl.Uniform2i(location2, v0, v1);
+    gl.Uniform2i(location, v0, v1);
 }
 
-pub fn setUniform3i(self: Self, location: []const u8, v0: gl.int, v1: gl.int, v2: gl.int) void {
-    const location2 = self.getUniformLocation(location);
+pub fn setUniform3i(self: Self, uniform: []const u8, v0: gl.int, v1: gl.int, v2: gl.int) void {
+    const location = self.getUniformLocation(uniform);
 
     self.bind();
-    gl.Uniform3i(location2, v0, v1, v2);
+    gl.Uniform3i(location, v0, v1, v2);
 }
 
-pub fn setUniform4i(self: Self, location: []const u8, v0: gl.int, v1: gl.int, v2: gl.int, v3: gl.int) void {
-    const location2 = self.getUniformLocation(location);
+pub fn setUniform4i(self: Self, uniform: []const u8, v0: gl.int, v1: gl.int, v2: gl.int, v3: gl.int) void {
+    const location = self.getUniformLocation(uniform);
 
     self.bind();
-    gl.Uniform4i(location2, v0, v1, v2, v3);
+    gl.Uniform4i(location, v0, v1, v2, v3);
 }
 
-pub fn setUniform1ui(self: Self, location: []const u8, v0: gl.uint) void {
-    const location2 = self.getUniformLocation(location);
+pub fn setUniform1ui(self: Self, uniform: []const u8, v0: gl.uint) void {
+    const location = self.getUniformLocation(uniform);
 
     self.bind();
-    gl.Uniform1ui(location2, v0);
+    gl.Uniform1ui(location, v0);
 }
 
-pub fn setUniform2ui(self: Self, location: []const u8, v0: gl.uint, v1: gl.uint) void {
-    const location2 = self.getUniformLocation(location);
+pub fn setUniform2ui(self: Self, uniform: []const u8, v0: gl.uint, v1: gl.uint) void {
+    const location = self.getUniformLocation(uniform);
 
     self.bind();
-    gl.Uniform2ui(location2, v0, v1);
+    gl.Uniform2ui(location, v0, v1);
 }
 
-pub fn setUniform3ui(self: Self, location: []const u8, v0: gl.uint, v1: gl.uint, v2: gl.uint) void {
-    const location2 = self.getUniformLocation(location);
+pub fn setUniform3ui(self: Self, uniform: []const u8, v0: gl.uint, v1: gl.uint, v2: gl.uint) void {
+    const location = self.getUniformLocation(uniform);
 
     self.bind();
-    gl.Uniform3ui(location2, v0, v1, v2);
+    gl.Uniform3ui(location, v0, v1, v2);
 }
 
-pub fn setUniform4ui(self: Self, location: []const u8, v0: gl.uint, v1: gl.uint, v2: gl.uint, v3: gl.uint) void {
-    const location2 = self.getUniformLocation(location);
+pub fn setUniform4ui(self: Self, uniform: []const u8, v0: gl.uint, v1: gl.uint, v2: gl.uint, v3: gl.uint) void {
+    const location = self.getUniformLocation(uniform);
 
     self.bind();
-    gl.Uniform4ui(location2, v0, v1, v2, v3);
+    gl.Uniform4ui(location, v0, v1, v2, v3);
 }
 
-pub fn setUniform1f(self: Self, location: []const u8, v0: gl.float) void {
-    const location2 = self.getUniformLocation(location);
+pub fn setUniform1f(self: Self, uniform: []const u8, v0: gl.float) void {
+    const location = self.getUniformLocation(uniform);
 
     self.bind();
-    gl.Uniform1f(location2, v0);
+    gl.Uniform1f(location, v0);
 }
 
-pub fn setUniform2f(self: Self, location: []const u8, v0: gl.float, v1: gl.float) void {
-    const location2 = self.getUniformLocation(location);
+pub fn setUniform2f(self: Self, uniform: []const u8, v0: gl.float, v1: gl.float) void {
+    const location = self.getUniformLocation(uniform);
 
     self.bind();
-    gl.Uniform2f(location2, v0, v1);
+    gl.Uniform2f(location, v0, v1);
 }
 
-pub fn setUniform3f(self: Self, location: []const u8, v0: gl.float, v1: gl.float, v2: gl.float) void {
-    const location2 = self.getUniformLocation(location);
+pub fn setUniform3f(self: Self, uniform: []const u8, v0: gl.float, v1: gl.float, v2: gl.float) void {
+    const location = self.getUniformLocation(uniform);
 
     self.bind();
-    gl.Uniform3f(location2, v0, v1, v2);
+    gl.Uniform3f(location, v0, v1, v2);
 }
 
-pub fn setUniform4f(self: Self, location: []const u8, v0: gl.float, v1: gl.float, v2: gl.float, v3: gl.float) void {
-    const location2 = self.getUniformLocation(location);
+pub fn setUniform4f(self: Self, uniform: []const u8, v0: gl.float, v1: gl.float, v2: gl.float, v3: gl.float) void {
+    const location = self.getUniformLocation(uniform);
 
     self.bind();
-    gl.Uniform4f(location2, v0, v1, v2, v3);
+    gl.Uniform4f(location, v0, v1, v2, v3);
 }
 
-pub fn setUniformMatrix4f(self: Self, location: []const u8, matrix: Matrix4x4f) void {
-    const location2 = self.getUniformLocation(location);
+pub fn setUniformMatrix4f(self: Self, uniform: []const u8, matrix: Matrix4x4f) void {
+    const location = self.getUniformLocation(uniform);
 
     self.bind();
-    gl.UniformMatrix4fv(location2, 1, 0, @ptrCast(&matrix.data));
+    gl.UniformMatrix4fv(location, 1, 0, @ptrCast(&matrix.data));
 }
 
 pub fn bind(self: Self) void {

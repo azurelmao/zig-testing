@@ -152,6 +152,10 @@ pub const RaycastSide = enum {
     south,
     inside,
     out_of_bounds,
+
+    pub inline fn idx(self: RaycastSide) usize {
+        return @intFromEnum(self);
+    }
 };
 
 pub const RaycastResult = struct {

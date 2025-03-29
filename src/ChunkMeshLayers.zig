@@ -60,7 +60,7 @@ pub fn draw(self: *ChunkMeshLayers) void {
 
         if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
             chunk_mesh_layer.mesh.bindBuffer(3);
-            gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, chunk_mesh_layer.command.unmanaged.handle);
+            chunk_mesh_layer.command.bindIndirectBuffer();
 
             gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
             gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.buffer.items.len), 0);
@@ -88,7 +88,7 @@ pub fn generate(self: *ChunkMeshLayers, allocator: std.mem.Allocator, world: *Wo
 
         try self.pos.buffer.append(allocator, chunk_pos.toVec3f());
 
-        if (chunk.num_of_air != 0 and chunk.num_of_air != Chunk.Volume) {
+        if (chunk.num_of_air > 0) {
             try single_self.generate(chunk, &neighbor_chunks);
 
             inline for (0..Block.Layer.len) |layer_idx| {
@@ -105,7 +105,7 @@ pub fn generate(self: *ChunkMeshLayers, allocator: std.mem.Allocator, world: *Wo
                         .first_vertex = @intCast(chunk_mesh_layer.mesh.buffer.items.len * 6),
                         .count = @intCast(len * 6),
                         .instance_count = if (len > 0) 1 else 0,
-                        .base_instance = 0,
+                        .base_instance = if (len > 0) 1 else 0,
                     };
 
                     try chunk_mesh_layer.command.buffer.append(allocator, command);
@@ -119,16 +119,14 @@ pub fn generate(self: *ChunkMeshLayers, allocator: std.mem.Allocator, world: *Wo
 
                 try chunk_mesh_layer.len.appendNTimes(allocator, 0, 6);
 
-                inline for (0..6) |_| {
-                    const command = DrawArraysIndirectCommand{
-                        .first_vertex = @intCast(chunk_mesh_layer.mesh.buffer.items.len * 6),
-                        .count = 0,
-                        .instance_count = 0,
-                        .base_instance = 0,
-                    };
+                const command = DrawArraysIndirectCommand{
+                    .first_vertex = @intCast(chunk_mesh_layer.mesh.buffer.items.len * 6),
+                    .count = 0,
+                    .instance_count = 0,
+                    .base_instance = 0,
+                };
 
-                    try chunk_mesh_layer.command.buffer.append(allocator, command);
-                }
+                try chunk_mesh_layer.command.buffer.appendNTimes(allocator, command, 6);
             }
         }
     }

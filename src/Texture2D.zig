@@ -26,11 +26,25 @@ const MagFilter = enum(gl.int) {
     linear = gl.LINEAR,
 };
 
+const TextureFormat = enum(gl.uint) {
+    rgba8 = gl.RGBA8,
+    rgb8 = gl.RGB8,
+    r8 = gl.R8,
+};
+
+const DataFormat = enum(gl.uint) {
+    rgba = gl.RGBA,
+    rgb = gl.RGB,
+    r = gl.RED,
+};
+
 const Options = struct {
     wrap_s: Wrapping = Wrapping.repeat,
     wrap_t: Wrapping = Wrapping.repeat,
     min_filter: MinFilter = MinFilter.nearest,
     mag_filter: MagFilter = MagFilter.nearest,
+    texture_format: TextureFormat,
+    data_format: DataFormat,
 };
 
 handle: gl.uint,
@@ -38,8 +52,8 @@ handle: gl.uint,
 pub fn init(image: zstbi.Image, options: Options) Self {
     var handle: gl.uint = undefined;
     gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&handle));
-    gl.TextureStorage2D(handle, 1, gl.RGBA8, image.width, image.height);
-    gl.TextureSubImage2D(handle, 0, 0, 0, image.width, image.height, gl.RGBA, gl.UNSIGNED_BYTE, @ptrCast(image.data.ptr));
+    gl.TextureStorage2D(handle, 1, @intFromEnum(options.texture_format), @intCast(image.width), @intCast(image.height));
+    gl.TextureSubImage2D(handle, 0, 0, 0, @intCast(image.width), @intCast(image.height), @intFromEnum(options.data_format), gl.UNSIGNED_BYTE, @ptrCast(image.data.ptr));
 
     gl.TextureParameteri(handle, gl.TEXTURE_WRAP_S, @intFromEnum(options.wrap_s));
     gl.TextureParameteri(handle, gl.TEXTURE_WRAP_T, @intFromEnum(options.wrap_t));

@@ -19,6 +19,10 @@ pub fn ShaderStorageBufferUnmanaged(comptime T: type) type {
             gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, index, self.handle);
         }
 
+        pub fn bindIndirectBuffer(self: *Self) void {
+            gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, self.handle);
+        }
+
         pub fn initBuffer(self: *Self, buffer: []const T) void {
             gl.CreateBuffers(1, @ptrCast(&self.handle));
             gl.NamedBufferStorage(
@@ -81,6 +85,10 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
 
         pub fn bindBuffer(self: *Self, index: gl.uint) void {
             self.unmanaged.bindBuffer(index);
+        }
+
+        pub fn bindIndirectBuffer(self: *Self) void {
+            self.unmanaged.bindIndirectBuffer();
         }
 
         pub fn initBuffer(self: *Self) void {

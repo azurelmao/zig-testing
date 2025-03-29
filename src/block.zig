@@ -1,6 +1,7 @@
 const std = @import("std");
 const Side = @import("side.zig").Side;
 const Light = @import("Chunk.zig").Light;
+const Vec3f = @import("vec3f.zig").Vec3f;
 
 pub const Block = enum(u8) {
     air,
@@ -334,5 +335,40 @@ pub const Block = enum(u8) {
         break :expr ModelData{
             .faces = faces,
         };
+    };
+
+    pub const bounding_box: []const Vec3f = &.{
+        .{ .x = 0, .y = 0, .z = 0 },
+        .{ .x = 0, .y = 0, .z = 1 },
+        .{ .x = 1, .y = 0, .z = 0 },
+        .{ .x = 1, .y = 0, .z = 1 },
+
+        .{ .x = 0, .y = 0, .z = 0 },
+        .{ .x = 1, .y = 0, .z = 0 },
+        .{ .x = 0, .y = 0, .z = 1 },
+        .{ .x = 1, .y = 0, .z = 1 },
+
+        .{ .x = 0, .y = 1, .z = 0 },
+        .{ .x = 0, .y = 1, .z = 1 },
+        .{ .x = 1, .y = 1, .z = 0 },
+        .{ .x = 1, .y = 1, .z = 1 },
+
+        .{ .x = 0, .y = 1, .z = 0 },
+        .{ .x = 1, .y = 1, .z = 0 },
+        .{ .x = 0, .y = 1, .z = 1 },
+        .{ .x = 1, .y = 1, .z = 1 },
+
+        // vertical
+        .{ .x = 0, .y = 0, .z = 0 },
+        .{ .x = 0, .y = 1, .z = 0 },
+
+        .{ .x = 0, .y = 0, .z = 1 },
+        .{ .x = 0, .y = 1, .z = 1 },
+
+        .{ .x = 1, .y = 0, .z = 0 },
+        .{ .x = 1, .y = 1, .z = 0 },
+
+        .{ .x = 1, .y = 0, .z = 1 },
+        .{ .x = 1, .y = 1, .z = 1 },
     };
 };

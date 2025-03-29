@@ -199,16 +199,25 @@ pub fn main() !void {
     window.setFramebufferSizeCallback(callbacks.framebufferSizeCallback);
     window.setKeyCallback(callbacks.keyCallback);
 
-    var chunks_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_vs.glsl", "assets/shaders/chunks_fs.glsl");
+    var chunks_shader_program = try ShaderProgram.init(allocator, "assets/shaders/chunks_vs.glsl", "assets/shaders/chunks_fs.glsl");
     chunks_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
 
-    var chunks_bb_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_bb_vs.glsl", "assets/shaders/chunks_bb_fs.glsl");
+    var chunks_bb_shader_program = try ShaderProgram.init(allocator, "assets/shaders/chunks_bb_vs.glsl", "assets/shaders/chunks_bb_fs.glsl");
     chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
 
-    var chunks_debug_shader_program = try ShaderProgram.new(allocator, "assets/shaders/chunks_debug_vs.glsl", "assets/shaders/chunks_debug_fs.glsl");
+    var chunks_debug_shader_program = try ShaderProgram.init(allocator, "assets/shaders/chunks_debug_vs.glsl", "assets/shaders/chunks_debug_fs.glsl");
     chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
 
-    var text_shader_program = try ShaderProgram.new(allocator, "assets/shaders/text_vs.glsl", "assets/shaders/text_fs.glsl");
+    var text_shader_program = try ShaderProgram.init(allocator, "assets/shaders/text_vs.glsl", "assets/shaders/text_fs.glsl");
+
+    var selected_block_shader_program = try ShaderProgram.init(allocator, "assets/shaders/selected_block_vs.glsl", "assets/shaders/selected_block_fs.glsl");
+    selected_block_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+
+    var selected_side_shader_program = try ShaderProgram.init(allocator, "assets/shaders/selected_side_vs.glsl", "assets/shaders/selected_side_fs.glsl");
+    selected_side_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+
+    var crosshair_shader_program = try ShaderProgram.init(allocator, "assets/shaders/crosshair_vs.glsl", "assets/shaders/crosshair_fs.glsl");
+    crosshair_shader_program.setUniform2f("uWindowSize", screen.window_width_f, screen.window_height_f);
 
     gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1);
 
@@ -253,7 +262,15 @@ pub fn main() !void {
     });
     font_texture.bind(1);
 
-    var indirect_light_image = try stbi.Image.loadFromFile("assets/textures/indirect_light.png", 0);
+    var crosshair_image = try stbi.Image.loadFromFile("assets/textures/crosshair.png", 1);
+
+    const crosshair_texture = Texture2D.init(crosshair_image, .{
+        .texture_format = .r8,
+        .data_format = .r,
+    });
+    crosshair_texture.bind(3);
+
+    var indirect_light_image = try stbi.Image.loadFromFile("assets/textures/indirect_light.png", 4);
     var indirect_light_data: [16]Vec3f = undefined;
     for (0..(indirect_light_image.data.len / 4)) |idx| {
         const vec3 = Vec3f{
@@ -328,7 +345,7 @@ pub fn main() !void {
     std.log.info("Chunk mesh buffers done. {d} s", .{debug_time});
 
     debug_timer.reset();
-    _ = chunk_mesh_layers.cull(&camera);
+    var visible_num = chunk_mesh_layers.cull(&camera);
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Culling done. {d} s", .{debug_time});
@@ -357,6 +374,32 @@ pub fn main() !void {
     var bounding_box_lines_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
     bounding_box_lines_buffer.initBufferAndBind(chunk_bounding_box.lines, 11);
 
+    var result = world.raycast(camera.position, camera.direction);
+    var draw_selected_side = false;
+    {
+        const selected_pos = result.pos.toVec3f();
+        selected_block_shader_program.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
+        selected_side_shader_program.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
+
+        const side = result.side;
+
+        if (side != .out_of_bounds and side != .inside) {
+            if (result.block) |block| {
+                const model_idx = block.getModelIndices().faces[side.idx()];
+                selected_side_shader_program.setUniform1ui("uModelIdx", model_idx);
+
+                draw_selected_side = true;
+            } else {
+                draw_selected_side = false;
+            }
+        } else {
+            draw_selected_side = false;
+        }
+    }
+
+    var selected_block_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
+    selected_block_buffer.initBufferAndBind(Block.bounding_box, 13);
+
     var text_manager = ui.TextManager.init();
 
     var vao_handle: gl.uint = undefined;
@@ -381,61 +424,49 @@ pub fn main() !void {
     var timer = try std.time.Timer.start();
 
     while (!window.shouldClose()) {
+        const mouse_speed = settings.mouse_speed * delta_time;
+        const movement_speed = settings.movement_speed * delta_time;
+
         var calc_view_matrix = false;
         var calc_projection_matrix = false;
 
         if (window.getKey(glfw.Key.s) == .press) {
-            camera.position.subtractInPlace(camera.horizontal_direction.multiplyScalar(settings.movement_speed * delta_time));
+            camera.position.subtractInPlace(camera.horizontal_direction.multiplyScalar(movement_speed));
             calc_view_matrix = true;
         }
 
         if (window.getKey(glfw.Key.w) == .press) {
-            camera.position.addInPlace(camera.horizontal_direction.multiplyScalar(settings.movement_speed * delta_time));
+            camera.position.addInPlace(camera.horizontal_direction.multiplyScalar(movement_speed));
             calc_view_matrix = true;
         }
 
         if (window.getKey(glfw.Key.left_shift) == .press) {
-            camera.position.subtractInPlace(Camera.up.multiplyScalar(settings.movement_speed * delta_time));
+            camera.position.subtractInPlace(Camera.up.multiplyScalar(movement_speed));
             calc_view_matrix = true;
         }
 
         if (window.getKey(glfw.Key.space) == .press) {
-            camera.position.addInPlace(Camera.up.multiplyScalar(settings.movement_speed * delta_time));
+            camera.position.addInPlace(Camera.up.multiplyScalar(movement_speed));
             calc_view_matrix = true;
         }
 
         if (window.getKey(glfw.Key.a) == .press) {
-            camera.position.subtractInPlace(camera.right.multiplyScalar(settings.movement_speed * delta_time));
+            camera.position.subtractInPlace(camera.right.multiplyScalar(movement_speed));
             calc_view_matrix = true;
         }
 
         if (window.getKey(glfw.Key.d) == .press) {
-            camera.position.addInPlace(camera.right.multiplyScalar(settings.movement_speed * delta_time));
-            calc_view_matrix = true;
-        }
-
-        if (window_user_data.new_cursor_pos) |new_cursor_pos| {
-            const sensitivity = settings.mouse_speed * delta_time;
-
-            const offset_x = (new_cursor_pos.cursor_x - screen.prev_cursor_x) * sensitivity;
-            const offset_y = (screen.prev_cursor_y - new_cursor_pos.cursor_y) * sensitivity;
-
-            screen.prev_cursor_x = new_cursor_pos.cursor_x;
-            screen.prev_cursor_y = new_cursor_pos.cursor_y;
-
-            camera.yaw += offset_x;
-            camera.pitch = std.math.clamp(camera.pitch + offset_y, -89.0, 89.0);
-
-            camera.calcDirectionAndRight();
-
+            camera.position.addInPlace(camera.right.multiplyScalar(movement_speed));
             calc_view_matrix = true;
         }
 
         if (window_user_data.new_window_size) |new_window_size| {
             screen.window_width = new_window_size.window_width;
             screen.window_height = new_window_size.window_height;
-            screen.window_width_f = @floatFromInt(screen.window_width);
-            screen.window_height_f = @floatFromInt(screen.window_height);
+            screen.window_width_f = @floatFromInt(new_window_size.window_width);
+            screen.window_height_f = @floatFromInt(new_window_size.window_height);
+
+            screen.calcAspectRatio();
 
             gl.Viewport(0, 0, screen.window_width, screen.window_height);
 
@@ -448,9 +479,22 @@ pub fn main() !void {
             gl.CreateFramebuffers(1, @ptrCast(&offscreen_framebuffer_handle));
             gl.NamedFramebufferTexture(offscreen_framebuffer_handle, gl.COLOR_ATTACHMENT0, offscreen_texture_handle, 0);
 
-            screen.calcAspectRatio();
-
             calc_projection_matrix = true;
+        }
+
+        if (window_user_data.new_cursor_pos) |new_cursor_pos| {
+            const offset_x = (new_cursor_pos.cursor_x - screen.prev_cursor_x) * mouse_speed;
+            const offset_y = (screen.prev_cursor_y - new_cursor_pos.cursor_y) * mouse_speed;
+
+            screen.prev_cursor_x = new_cursor_pos.cursor_x;
+            screen.prev_cursor_y = new_cursor_pos.cursor_y;
+
+            camera.yaw += offset_x;
+            camera.pitch = std.math.clamp(camera.pitch + offset_y, -89.0, 89.0);
+
+            camera.calcDirectionAndRight();
+
+            calc_view_matrix = true;
         }
 
         if (calc_view_matrix) {
@@ -468,13 +512,37 @@ pub fn main() !void {
             camera.calcViewProjectionMatrix();
             camera.calcFrustumPlanes();
 
+            result = world.raycast(camera.position, camera.direction);
+
+            const selected_pos = result.pos.toVec3f();
+            selected_block_shader_program.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
+            selected_side_shader_program.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
+
+            const side = result.side;
+
+            if (side != .out_of_bounds and side != .inside) {
+                if (result.block) |block| {
+                    const model_idx = block.getModelIndices().faces[side.idx()];
+                    selected_side_shader_program.setUniform1ui("uModelIdx", model_idx);
+
+                    draw_selected_side = true;
+                } else {
+                    draw_selected_side = false;
+                }
+            } else {
+                draw_selected_side = false;
+            }
+
+            visible_num = chunk_mesh_layers.cull(&camera);
+            chunk_mesh_layers.uploadCommandBuffers();
+
             chunks_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
             chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
             chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+            selected_block_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+            selected_side_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+            crosshair_shader_program.setUniform2f("uWindowSize", screen.window_width_f, screen.window_height_f);
         }
-
-        const visible_num = chunk_mesh_layers.cull(&camera);
-        chunk_mesh_layers.uploadCommandBuffers();
 
         gl.ClearColor(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -530,6 +598,42 @@ pub fn main() !void {
             gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(chunk_mesh_layers.pos.buffer.items.len));
         }
 
+        if (draw_selected_side) {
+            selected_side_shader_program.bind();
+            {
+                gl.Enable(gl.POLYGON_OFFSET_FILL);
+                defer gl.Disable(gl.POLYGON_OFFSET_FILL);
+
+                gl.PolygonOffset(-1.0, 1.0);
+                defer gl.PolygonOffset(0.0, 0.0);
+
+                gl.DrawArrays(gl.TRIANGLES, 0, 6);
+            }
+        }
+
+        selected_block_shader_program.bind();
+        {
+            gl.Enable(gl.POLYGON_OFFSET_LINE);
+            defer gl.Disable(gl.POLYGON_OFFSET_LINE);
+
+            gl.PolygonOffset(-2.0, 1.0);
+            defer gl.PolygonOffset(0.0, 0.0);
+
+            gl.Enable(gl.LINE_SMOOTH);
+            defer gl.Disable(gl.LINE_SMOOTH);
+
+            gl.LineWidth(2.0);
+            defer gl.LineWidth(1.0);
+
+            gl.DepthFunc(gl.LEQUAL);
+            defer gl.DepthFunc(gl.LESS);
+
+            gl.DrawArrays(gl.LINES, 0, Block.bounding_box.len);
+        }
+
+        crosshair_shader_program.bind();
+        gl.DrawArrays(gl.TRIANGLES, 0, 6);
+
         text_manager.clear();
 
         try text_manager.append(allocator, .{
@@ -577,7 +681,6 @@ pub fn main() !void {
             .text = try std.fmt.allocPrint(allocator, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(camera.yaw, 360.0) - 180.0, camera.pitch }),
         });
 
-        const result = world.raycast(camera.position, camera.direction);
         try onRaycast(allocator, &world, &text_manager, result);
 
         try text_manager.buildVertices(allocator, screen.window_width, screen.window_height, settings.ui_scale);
@@ -602,6 +705,7 @@ pub fn main() !void {
 
     indirect_light_image.deinit();
     font_image.deinit();
+    crosshair_image.deinit();
 
     stbi.deinit();
 }

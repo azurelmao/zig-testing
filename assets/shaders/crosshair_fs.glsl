@@ -1,7 +1,10 @@
 #version 460 core
 
+in vec2 pTextureUV;
+
 layout (location = 0) out vec4 oColor;
 layout (binding = 2) uniform sampler2D uFramebuffer;
+layout (binding = 3) uniform sampler2D uTexture;
 
 vec3 rgb2hsv(vec3 c) {
     vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
@@ -27,5 +30,5 @@ void main() {
     
     vec3 finalColor = hsv2rgb(rgb2hsv(invertedColor) + vec3(0, unit, 0));
 
-    oColor = vec4(finalColor, 1.0);
+    oColor = vec4(finalColor, 1.0) * texture(uTexture, pTextureUV).rrrr;
 }
