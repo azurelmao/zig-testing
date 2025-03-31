@@ -203,42 +203,39 @@ pub fn main() !void {
         const Sun = @This();
 
         angle: gl.float,
+        position: Vec3f,
         view_projection_matrix: Matrix4x4f,
 
-        pub fn init(angle: gl.float, window_width: gl.float, window_height: gl.float, far: gl.float) Sun {
-            const angle_rads = angle * DEG_TO_RAD;
-
-            const x = std.math.cos(angle_rads);
-            const y = std.math.sin(angle_rads);
-
-            const eye = Vec3f.new(x, y, 0);
-
-            const view_matrix = Matrix4x4f.lookAt(eye, Vec3f.new(0, 0, 0), Vec3f.new(0, 0, 1));
-            const projection_matrix = Matrix4x4f.orthographic(window_width, window_height, -far, far);
-            const view_projection_matrix = view_matrix.multiply(projection_matrix);
-
-            return .{
+        pub fn init(angle: gl.float) Sun {
+            var sun = Sun{
                 .angle = angle,
-                .view_projection_matrix = view_projection_matrix,
+                .position = undefined,
+                .view_projection_matrix = undefined,
             };
+
+            sun.calcViewProjectionMatrix();
+
+            return sun;
         }
 
         const DEG_TO_RAD: gl.float = std.math.pi / 180.0;
 
-        pub fn calcViewProjectionMatrix(self: *Sun, window_width: gl.float, window_height: gl.float, far: gl.float) void {
+        pub fn calcViewProjectionMatrix(self: *Sun) void {
             const angle_rads = self.angle * DEG_TO_RAD;
 
             const x = std.math.cos(angle_rads);
             const y = std.math.sin(angle_rads);
 
-            const eye = Vec3f.new(x, y, 0);
+            const position = Vec3f.new(x, y, 0).normalize().multiplyScalar(10);
+            const direction = position.normalize();
 
-            const view_matrix = Matrix4x4f.lookAt(eye, Vec3f.new(0, 0, 0), Vec3f.new(0, 0, 1));
-            const projection_matrix = Matrix4x4f.orthographic(window_width, window_height, -far, far);
+            const view_matrix = Matrix4x4f.lookToward(position, direction, Vec3f.new(0, 0, 1));
+            const projection_matrix = Matrix4x4f.orthographic(100, 100, -1000, 1000);
             self.view_projection_matrix = view_matrix.multiply(projection_matrix);
+            self.position = position;
         }
     };
-    var sun = Sun.init(90, screen.window_width_f, screen.window_height_f, camera.far);
+    var sun = Sun.init(0);
 
     var ndc_to_tex_matrix = Matrix4x4f.zero();
     ndc_to_tex_matrix.data[0] = 0.5;
@@ -254,7 +251,7 @@ pub fn main() !void {
 
     var chunks_shader_program = try ShaderProgram.init(allocator, "assets/shaders/chunks_vs.glsl", "assets/shaders/chunks_fs.glsl");
     chunks_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
-    chunks_shader_program.setUniformMatrix4f("uSunViewProjection", ndc_to_tex_matrix.multiply(sun.view_projection_matrix));
+    chunks_shader_program.setUniformMatrix4f("uSunViewProjection", sun.view_projection_matrix);
 
     var chunks_bb_shader_program = try ShaderProgram.init(allocator, "assets/shaders/chunks_bb_vs.glsl", "assets/shaders/chunks_bb_fs.glsl");
     chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
@@ -605,9 +602,6 @@ pub fn main() !void {
                 draw_selected_side = false;
             }
 
-            visible_num = chunk_mesh_layers.cull(&camera);
-            chunk_mesh_layers.uploadCommandBuffers();
-
             chunks_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
             chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
             chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
@@ -622,6 +616,7 @@ pub fn main() !void {
         const depth: gl.float = 1.0;
         gl.ClearNamedFramebufferfv(shadow_framebuffer_handle, gl.DEPTH, 0, @ptrCast(&depth));
 
+        chunk_mesh_layers.resetCommandBuffers();
         sun_shader_program.bind();
         {
             gl.BindFramebuffer(gl.FRAMEBUFFER, shadow_framebuffer_handle);
@@ -637,6 +632,11 @@ pub fn main() !void {
                     gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.buffer.items.len), 0);
                 }
             }
+        }
+
+        if (calc_view_projection_matrix) {
+            visible_num = chunk_mesh_layers.cull(&camera);
+            chunk_mesh_layers.uploadCommandBuffers();
         }
 
         gl.ClearColor(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
@@ -706,6 +706,7 @@ pub fn main() !void {
         }
 
         selected_block_shader_program.bind();
+        selected_block_shader_program.setUniform3f("uBlockPosition", sun.position.x, sun.position.y, sun.position.z);
         {
             gl.Enable(gl.POLYGON_OFFSET_LINE);
             defer gl.Disable(gl.POLYGON_OFFSET_LINE);
@@ -715,9 +716,6 @@ pub fn main() !void {
 
             gl.Enable(gl.LINE_SMOOTH);
             defer gl.Disable(gl.LINE_SMOOTH);
-
-            gl.LineWidth(2.0);
-            defer gl.LineWidth(1.0);
 
             gl.DepthFunc(gl.LEQUAL);
             defer gl.DepthFunc(gl.LESS);
@@ -784,9 +782,9 @@ pub fn main() !void {
         gl.DrawArrays(gl.TRIANGLES, 0, @intCast(text_manager.text_vertices.buffer.items.len));
 
         sun.angle += 1;
-        sun.calcViewProjectionMatrix(screen.window_width_f, screen.window_height_f, camera.far);
+        sun.calcViewProjectionMatrix();
         sun_shader_program.setUniformMatrix4f("uViewProjection", sun.view_projection_matrix);
-        chunks_shader_program.setUniformMatrix4f("uSunViewProjection", ndc_to_tex_matrix.multiply(sun.view_projection_matrix));
+        chunks_shader_program.setUniformMatrix4f("uSunViewProjection", sun.view_projection_matrix);
 
         delta_time = @floatCast(@as(f64, @floatFromInt(timer.lap())) / 1_000_000_000.0);
 

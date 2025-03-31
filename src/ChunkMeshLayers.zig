@@ -68,6 +68,20 @@ pub fn clearCommandBuffers(self: *ChunkMeshLayers) void {
     }
 }
 
+pub fn resetCommandBuffers(self: *ChunkMeshLayers) void {
+    for (0..self.pos.buffer.items.len) |chunk_mesh_idx_| {
+        const chunk_mesh_idx = chunk_mesh_idx_ * 6;
+
+        inline for (0..Block.Layer.len) |layer_idx| {
+            const chunk_mesh_layer = &self.layers[layer_idx];
+
+            inline for (0..6) |face_idx| {
+                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].base_instance;
+            }
+        }
+    }
+}
+
 pub fn generate(self: *ChunkMeshLayers, allocator: std.mem.Allocator, world: *World) !void {
     var single_self = SingleChunkMeshLayers.new(allocator);
 

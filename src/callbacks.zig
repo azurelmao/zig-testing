@@ -73,7 +73,7 @@ pub fn debugCallback(source: gl.@"enum", @"type": gl.@"enum", id: gl.uint, sever
         else => "other",
     };
 
-    const format = "opengl:\nid: {}\nsource: {s}\ntype: {s}\n{?s}";
+    const format = "opengl: id: {} source: {s} type: {s}\n{?s}";
     const args = .{ id, source_str, type_str, message_slice };
 
     switch (severity) {

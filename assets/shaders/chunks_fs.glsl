@@ -33,9 +33,12 @@ void main() {
         light = vec3(0.1);
     }
 
-    vec4 color = vec4(texColor.rgb * pNormalLight * light, texColor.a);
+    // vec4 color = vec4(texColor.rgb * pNormalLight * light, texColor.a);
 
-    oColor = linearFog(color, distance(uCameraPosition, pVertexPosition), 153.6, 691.2, fogColor);
+    vec3 cameraPosition = uCameraPosition;
+
+    // oColor = linearFog(color, distance(uCameraPosition, pVertexPosition), 153.6, 691.2, fogColor);
+    oColor = vec4(vec3(pShadowPosition.z), 1);
 }
 
 // oXXX for output
