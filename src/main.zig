@@ -199,8 +199,62 @@ pub fn main() !void {
     window.setFramebufferSizeCallback(callbacks.framebufferSizeCallback);
     window.setKeyCallback(callbacks.keyCallback);
 
+    const Sun = struct {
+        const Sun = @This();
+
+        angle: gl.float,
+        view_projection_matrix: Matrix4x4f,
+
+        pub fn init(angle: gl.float, window_width: gl.float, window_height: gl.float, far: gl.float) Sun {
+            const angle_rads = angle * DEG_TO_RAD;
+
+            const x = std.math.cos(angle_rads);
+            const y = std.math.sin(angle_rads);
+
+            const eye = Vec3f.new(x, y, 0);
+
+            const view_matrix = Matrix4x4f.lookAt(eye, Vec3f.new(0, 0, 0), Vec3f.new(0, 0, 1));
+            const projection_matrix = Matrix4x4f.orthographic(window_width, window_height, -far, far);
+            const view_projection_matrix = view_matrix.multiply(projection_matrix);
+
+            return .{
+                .angle = angle,
+                .view_projection_matrix = view_projection_matrix,
+            };
+        }
+
+        const DEG_TO_RAD: gl.float = std.math.pi / 180.0;
+
+        pub fn calcViewProjectionMatrix(self: *Sun, window_width: gl.float, window_height: gl.float, far: gl.float) void {
+            const angle_rads = self.angle * DEG_TO_RAD;
+
+            const x = std.math.cos(angle_rads);
+            const y = std.math.sin(angle_rads);
+
+            const eye = Vec3f.new(x, y, 0);
+
+            const view_matrix = Matrix4x4f.lookAt(eye, Vec3f.new(0, 0, 0), Vec3f.new(0, 0, 1));
+            const projection_matrix = Matrix4x4f.orthographic(window_width, window_height, -far, far);
+            self.view_projection_matrix = view_matrix.multiply(projection_matrix);
+        }
+    };
+    var sun = Sun.init(90, screen.window_width_f, screen.window_height_f, camera.far);
+
+    var ndc_to_tex_matrix = Matrix4x4f.zero();
+    ndc_to_tex_matrix.data[0] = 0.5;
+    ndc_to_tex_matrix.data[5] = 0.5;
+    ndc_to_tex_matrix.data[10] = 0.5;
+    ndc_to_tex_matrix.data[12] = 0.5;
+    ndc_to_tex_matrix.data[13] = 0.5;
+    ndc_to_tex_matrix.data[14] = 0.5;
+    ndc_to_tex_matrix.data[15] = 1;
+
+    var sun_shader_program = try ShaderProgram.init(allocator, "assets/shaders/sun_vs.glsl", "assets/shaders/sun_fs.glsl");
+    sun_shader_program.setUniformMatrix4f("uViewProjection", sun.view_projection_matrix);
+
     var chunks_shader_program = try ShaderProgram.init(allocator, "assets/shaders/chunks_vs.glsl", "assets/shaders/chunks_fs.glsl");
     chunks_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+    chunks_shader_program.setUniformMatrix4f("uSunViewProjection", ndc_to_tex_matrix.multiply(sun.view_projection_matrix));
 
     var chunks_bb_shader_program = try ShaderProgram.init(allocator, "assets/shaders/chunks_bb_vs.glsl", "assets/shaders/chunks_bb_fs.glsl");
     chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
@@ -268,7 +322,7 @@ pub fn main() !void {
         .texture_format = .r8,
         .data_format = .r,
     });
-    crosshair_texture.bind(3);
+    crosshair_texture.bind(2);
 
     var indirect_light_image = try stbi.Image.loadFromFile("assets/textures/indirect_light.png", 4);
     var indirect_light_data: [16]Vec3f = undefined;
@@ -336,6 +390,29 @@ pub fn main() !void {
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Light propagation done. {d} s", .{debug_time});
 
+    var result = world.raycast(camera.position, camera.direction);
+    var draw_selected_side = false;
+    {
+        const selected_pos = result.pos.toVec3f();
+        selected_block_shader_program.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
+        selected_side_shader_program.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
+
+        const side = result.side;
+
+        if (side != .out_of_bounds and side != .inside) {
+            if (result.block) |block| {
+                const model_idx = block.getModelIndices().faces[side.idx()];
+                selected_side_shader_program.setUniform1ui("uModelIdx", model_idx);
+
+                draw_selected_side = true;
+            } else {
+                draw_selected_side = false;
+            }
+        } else {
+            draw_selected_side = false;
+        }
+    }
+
     var chunk_mesh_layers = ChunkMeshLayers.init();
 
     debug_timer.reset();
@@ -374,29 +451,6 @@ pub fn main() !void {
     var bounding_box_lines_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
     bounding_box_lines_buffer.initBufferAndBind(chunk_bounding_box.lines, 11);
 
-    var result = world.raycast(camera.position, camera.direction);
-    var draw_selected_side = false;
-    {
-        const selected_pos = result.pos.toVec3f();
-        selected_block_shader_program.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
-        selected_side_shader_program.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
-
-        const side = result.side;
-
-        if (side != .out_of_bounds and side != .inside) {
-            if (result.block) |block| {
-                const model_idx = block.getModelIndices().faces[side.idx()];
-                selected_side_shader_program.setUniform1ui("uModelIdx", model_idx);
-
-                draw_selected_side = true;
-            } else {
-                draw_selected_side = false;
-            }
-        } else {
-            draw_selected_side = false;
-        }
-    }
-
     var selected_block_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
     selected_block_buffer.initBufferAndBind(Block.bounding_box, 13);
 
@@ -409,11 +463,28 @@ pub fn main() !void {
     var offscreen_texture_handle: gl.uint = undefined;
     gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&offscreen_texture_handle));
     gl.TextureStorage2D(offscreen_texture_handle, 1, gl.RGBA8, screen.window_width, screen.window_height);
-    gl.BindTextureUnit(2, offscreen_texture_handle);
+    gl.BindTextureUnit(3, offscreen_texture_handle);
 
     var offscreen_framebuffer_handle: gl.uint = undefined;
     gl.CreateFramebuffers(1, @ptrCast(&offscreen_framebuffer_handle));
     gl.NamedFramebufferTexture(offscreen_framebuffer_handle, gl.COLOR_ATTACHMENT0, offscreen_texture_handle, 0);
+
+    if (gl.CheckNamedFramebufferStatus(offscreen_framebuffer_handle, gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE) {
+        std.debug.panic("Incomplete offscreen framebuffer status", .{});
+    }
+
+    var shadow_texture_handle: gl.uint = undefined;
+    gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&shadow_texture_handle));
+    gl.TextureStorage2D(shadow_texture_handle, 1, gl.DEPTH_COMPONENT32F, screen.window_width, screen.window_height);
+    gl.BindTextureUnit(4, shadow_texture_handle);
+
+    var shadow_framebuffer_handle: gl.uint = undefined;
+    gl.CreateFramebuffers(1, @ptrCast(&shadow_framebuffer_handle));
+    gl.NamedFramebufferTexture(shadow_framebuffer_handle, gl.DEPTH_ATTACHMENT, shadow_texture_handle, 0);
+
+    if (gl.CheckNamedFramebufferStatus(shadow_framebuffer_handle, gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE) {
+        std.debug.panic("Incomplete shadow framebuffer status", .{});
+    }
 
     gl.Enable(gl.DEPTH_TEST);
     gl.Enable(gl.CULL_FACE);
@@ -474,7 +545,7 @@ pub fn main() !void {
             gl.DeleteTextures(1, @ptrCast(&offscreen_texture_handle));
             gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&offscreen_texture_handle));
             gl.TextureStorage2D(offscreen_texture_handle, 1, gl.RGBA8, screen.window_width, screen.window_height);
-            gl.BindTextureUnit(2, offscreen_texture_handle);
+            gl.BindTextureUnit(3, offscreen_texture_handle);
 
             gl.DeleteFramebuffers(1, @ptrCast(&offscreen_framebuffer_handle));
             gl.CreateFramebuffers(1, @ptrCast(&offscreen_framebuffer_handle));
@@ -542,25 +613,48 @@ pub fn main() !void {
             chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
             selected_block_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
             selected_side_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+
+            gl.BindFramebuffer(gl.FRAMEBUFFER, shadow_framebuffer_handle);
+            gl.Viewport(0, 0, screen.window_width, screen.window_height);
+            gl.BindFramebuffer(gl.FRAMEBUFFER, 0);
+        }
+
+        const depth: gl.float = 1.0;
+        gl.ClearNamedFramebufferfv(shadow_framebuffer_handle, gl.DEPTH, 0, @ptrCast(&depth));
+
+        sun_shader_program.bind();
+        {
+            gl.BindFramebuffer(gl.FRAMEBUFFER, shadow_framebuffer_handle);
+            defer gl.BindFramebuffer(gl.FRAMEBUFFER, 0);
+
+            inline for (0..Block.Layer.len) |layer_idx| {
+                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
+
+                if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
+                    chunk_mesh_layer.mesh.bindBuffer(3);
+                    chunk_mesh_layer.command.bindIndirectBuffer();
+
+                    gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.buffer.items.len), 0);
+                }
+            }
         }
 
         gl.ClearColor(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         chunks_shader_program.bind();
-        chunk_mesh_layers.draw();
+        inline for (0..Block.Layer.len) |layer_idx| {
+            const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-        for (0..chunk_mesh_layers.pos.buffer.items.len) |chunk_mesh_idx_| {
-            const chunk_mesh_idx = chunk_mesh_idx_ * 6;
+            if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
+                chunk_mesh_layer.mesh.bindBuffer(3);
+                chunk_mesh_layer.command.bindIndirectBuffer();
 
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-                inline for (0..6) |face_idx| {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = 0;
-                }
+                gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.buffer.items.len), 0);
             }
         }
+
+        chunk_mesh_layers.clearCommandBuffers();
         chunk_mesh_layers.uploadCommandBuffers();
 
         chunks_bb_shader_program.bind();
@@ -688,6 +782,11 @@ pub fn main() !void {
 
         text_shader_program.bind();
         gl.DrawArrays(gl.TRIANGLES, 0, @intCast(text_manager.text_vertices.buffer.items.len));
+
+        sun.angle += 1;
+        sun.calcViewProjectionMatrix(screen.window_width_f, screen.window_height_f, camera.far);
+        sun_shader_program.setUniformMatrix4f("uViewProjection", sun.view_projection_matrix);
+        chunks_shader_program.setUniformMatrix4f("uSunViewProjection", ndc_to_tex_matrix.multiply(sun.view_projection_matrix));
 
         delta_time = @floatCast(@as(f64, @floatFromInt(timer.lap())) / 1_000_000_000.0);
 

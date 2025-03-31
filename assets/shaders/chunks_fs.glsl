@@ -7,9 +7,11 @@ flat in float pNormalLight;
 flat in vec3 pLight;
 
 in vec3 pVertexPosition;
+in vec3 pShadowPosition;
 
 layout (location = 0) out vec4 oColor;
 layout (binding = 0) uniform sampler2DArray uTexture;
+layout (binding = 4) uniform sampler2D uShadowTexture;
 uniform vec3 uCameraPosition;
 
 vec4 linearFog(vec4 inColor, float vertexDistance, float fogStart, float fogEnd, vec4 fogColor) {
@@ -25,7 +27,13 @@ const vec4 fogColor = vec4(0.47843137254901963, 0.6588235294117647, 0.9921568627
 
 void main() {
     vec4 texColor = texture(uTexture, vec3(pTextureUV, pTextureIdx));
-    vec4 color = vec4(texColor.rgb * pNormalLight * pLight, texColor.a);
+
+    vec3 light = vec3(1);
+    if (texture(uShadowTexture, pShadowPosition.xy).z < pShadowPosition.z) {
+        light = vec3(0.1);
+    }
+
+    vec4 color = vec4(texColor.rgb * pNormalLight * light, texColor.a);
 
     oColor = linearFog(color, distance(uCameraPosition, pVertexPosition), 153.6, 691.2, fogColor);
 }

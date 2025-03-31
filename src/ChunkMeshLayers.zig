@@ -54,17 +54,16 @@ pub fn uploadCommandBuffers(self: *ChunkMeshLayers) void {
     }
 }
 
-pub fn draw(self: *ChunkMeshLayers) void {
-    inline for (0..Block.Layer.len) |layer_idx| {
-        const chunk_mesh_layer = &self.layers[layer_idx];
+pub fn clearCommandBuffers(self: *ChunkMeshLayers) void {
+    for (0..self.pos.buffer.items.len) |chunk_mesh_idx_| {
+        const chunk_mesh_idx = chunk_mesh_idx_ * 6;
 
-        if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
-            chunk_mesh_layer.mesh.bindBuffer(3);
-            chunk_mesh_layer.command.bindIndirectBuffer();
+        inline for (0..Block.Layer.len) |layer_idx| {
+            const chunk_mesh_layer = &self.layers[layer_idx];
 
-            gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
-            gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.buffer.items.len), 0);
-            gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
+            inline for (0..6) |face_idx| {
+                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = 0;
+            }
         }
     }
 }

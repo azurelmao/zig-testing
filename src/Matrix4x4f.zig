@@ -103,6 +103,7 @@ pub fn lookTowardInPlace(self: *Matrix4x4f, eye: Vec3f, direction: Vec3f, up: Ve
     self.data[14] = -forward.x * eye.x - forward.y * eye.y - forward.z * eye.z;
 }
 
+/// `near` cannot be equal to 0.0
 pub fn perspective(fov_x: gl.float, aspect_ratio: gl.float, near: gl.float, far: gl.float) Matrix4x4f {
     var result = zero();
     result.perspectiveInPlace(fov_x, aspect_ratio, near, far);
@@ -124,6 +125,23 @@ pub fn perspectiveInPlace(self: *Matrix4x4f, fov_x: gl.float, aspect_ratio: gl.f
     self.data[11] = -1;
     self.data[14] = -(2 * far * near) / (far - near);
     self.data[15] = 0;
+}
+
+pub fn orthographic(window_width: gl.float, window_height: gl.float, near: gl.float, far: gl.float) Matrix4x4f {
+    var result = zero();
+    result.orthographicInPlace(window_width, window_height, near, far);
+    return result;
+}
+
+pub fn orthographicInPlace(self: *Matrix4x4f, window_width: gl.float, window_height: gl.float, near: gl.float, far: gl.float) void {
+    const right = window_width / 2.0;
+    const top = window_height / 2.0;
+
+    self.data[0] = 1.0 / right;
+    self.data[5] = 1.0 / top;
+    self.data[10] = -2.0 / (far - near);
+    self.data[14] = -(far + near) / (far - near);
+    self.data[15] = 1;
 }
 
 pub fn multiply(self: Matrix4x4f, other: Matrix4x4f) Matrix4x4f {
