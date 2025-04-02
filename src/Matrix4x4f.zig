@@ -127,15 +127,15 @@ pub fn perspectiveInPlace(self: *Matrix4x4f, fov_x: gl.float, aspect_ratio: gl.f
     self.data[15] = 0;
 }
 
-pub fn orthographic(window_width: gl.float, window_height: gl.float, near: gl.float, far: gl.float) Matrix4x4f {
+pub fn orthographic(width: gl.float, height: gl.float, near: gl.float, far: gl.float) Matrix4x4f {
     var result = zero();
-    result.orthographicInPlace(window_width, window_height, near, far);
+    result.orthographicInPlace(width, height, near, far);
     return result;
 }
 
-pub fn orthographicInPlace(self: *Matrix4x4f, window_width: gl.float, window_height: gl.float, near: gl.float, far: gl.float) void {
-    const right = window_width / 2.0;
-    const top = window_height / 2.0;
+pub fn orthographicInPlace(self: *Matrix4x4f, width: gl.float, height: gl.float, near: gl.float, far: gl.float) void {
+    const right = width / 2.0;
+    const top = height / 2.0;
 
     self.data[0] = 1.0 / right;
     self.data[5] = 1.0 / top;

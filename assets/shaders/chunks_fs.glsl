@@ -30,15 +30,12 @@ void main() {
 
     vec3 light = vec3(1);
     if (texture(uShadowTexture, pShadowPosition.xy).z < pShadowPosition.z) {
-        light = vec3(0.1);
+        light = vec3(pShadowPosition.xyz);
     }
 
-    // vec4 color = vec4(texColor.rgb * pNormalLight * light, texColor.a);
+    vec4 color = vec4(texColor.rgb * pNormalLight * light, texColor.a);
 
-    vec3 cameraPosition = uCameraPosition;
-
-    // oColor = linearFog(color, distance(uCameraPosition, pVertexPosition), 153.6, 691.2, fogColor);
-    oColor = vec4(vec3(pShadowPosition.z), 1);
+    oColor = linearFog(color, distance(uCameraPosition, pVertexPosition), 153.6, 691.2, fogColor);
 }
 
 // oXXX for output
