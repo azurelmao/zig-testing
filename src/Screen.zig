@@ -2,8 +2,8 @@ const gl = @import("gl");
 
 const Screen = @This();
 
-const INITIAL_WINDOW_WIDTH = 640.0 * 2.0;
-const INITIAL_WINDOW_HEIGHT = 480.0 * 2.0;
+const INITIAL_WINDOW_WIDTH = 640.0;
+const INITIAL_WINDOW_HEIGHT = 480.0;
 
 window_width: gl.sizei = INITIAL_WINDOW_WIDTH,
 window_height: gl.sizei = INITIAL_WINDOW_HEIGHT,

@@ -29,8 +29,8 @@ void main() {
     vec4 texColor = texture(uTexture, vec3(pTextureUV, pTextureIdx));
 
     vec3 light = vec3(1);
-    if (texture(uShadowTexture, pShadowPosition.xy).z < pShadowPosition.z) {
-        light = vec3(pShadowPosition.xyz);
+    if (texture(uShadowTexture, pShadowPosition.xy * 0.5 + 0.5).r < pShadowPosition.z) {
+        light = pLight;
     }
 
     vec4 color = vec4(texColor.rgb * pNormalLight * light, texColor.a);
