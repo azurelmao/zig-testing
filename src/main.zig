@@ -575,9 +575,6 @@ pub fn main() !void {
             }
         }
 
-        chunk_mesh_layers.clearCommandBuffers();
-        chunk_mesh_layers.uploadCommandBuffers();
-
         chunks_bb_shader_program.bind();
         {
             gl.Enable(gl.POLYGON_OFFSET_FILL);
