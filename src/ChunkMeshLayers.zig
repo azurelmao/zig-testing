@@ -76,7 +76,7 @@ pub fn resetCommandBuffers(self: *ChunkMeshLayers) void {
             const chunk_mesh_layer = &self.layers[layer_idx];
 
             inline for (0..6) |face_idx| {
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].base_instance;
+                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = if (chunk_mesh_layer.len.items[chunk_mesh_idx + face_idx] > 0) 1 else 0;
             }
         }
     }

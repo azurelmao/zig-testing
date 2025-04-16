@@ -131,14 +131,14 @@ pub fn setBlock(self: *World, pos: Pos, block: Block) !void {
     chunk.setBlock(pos.toLocalPos(), block);
 }
 
-pub fn setBlockAndAffectLight(self: *World, pos: Pos, block: Block) !void {
+pub fn setBlockAndAffectLight(self: *World, allocator: std.mem.Allocator, pos: Pos, block: Block) !void {
     const chunk_pos = pos.toChunkPos();
     const chunk = try self.getChunk(chunk_pos);
 
     const local_pos = pos.toLocalPos();
     const light = chunk.getLight(local_pos);
     try chunk.light_removal_queue.writeItem(.{ .pos = Pos.from(chunk_pos, local_pos), .light = light });
-    try self.chunks_which_need_to_remove_lights.enqueue(chunk_pos);
+    try self.chunks_which_need_to_remove_lights.enqueue(allocator, chunk_pos);
 
     chunk.setBlock(local_pos, block);
 }
