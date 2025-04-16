@@ -123,7 +123,7 @@ fn onRaycast(allocator: std.mem.Allocator, world: *World, text_manager: *ui.Text
 }
 
 const Settings = struct {
-    ui_scale: gl.sizei = 3,
+    ui_scale: gl.sizei = 2,
     mouse_speed: gl.float = 10.0,
     movement_speed: gl.float = 16.0,
 };
@@ -243,7 +243,7 @@ pub fn main() !void {
             self.position = position;
         }
     };
-    var sun = Sun.init(90, 100, 100, 1, 60);
+    var sun = Sun.init(90, 100, 100, 1, 100);
 
     var sun_shader_program = try ShaderProgram.init(allocator, "assets/shaders/sun_vs.glsl", "assets/shaders/sun_fs.glsl");
     sun_shader_program.setUniformMatrix4f("uViewProjection", sun.view_projection_matrix);
@@ -380,6 +380,16 @@ pub fn main() !void {
 
     // try world.setBlockAndAffectLight(.{ .x = 16, .y = 37, .z = 16 }, .glass_tinted);
 
+    for (0..15) |x_| {
+        const x: i16 = @intCast(x_);
+
+        for (0..15) |z_| {
+            const z: i16 = @intCast(z_);
+
+            try world.setBlockAndAffectLight(allocator, .{ .x = x, .y = 20, .z = z }, .bricks);
+        }
+    }
+
     debug_timer.reset();
     try world.propagateLights(allocator);
 
@@ -471,7 +481,9 @@ pub fn main() !void {
 
     var shadow_texture_handle: gl.uint = undefined;
     gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&shadow_texture_handle));
-    gl.TextureStorage2D(shadow_texture_handle, 1, gl.DEPTH_COMPONENT32F, sun.shadow_map_width, sun.shadow_map_height);
+    gl.TextureStorage2D(shadow_texture_handle, 1, gl.DEPTH_COMPONENT32F, sun.shadow_map_width * 16, sun.shadow_map_height * 16);
+    gl.TextureParameteri(shadow_texture_handle, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.TextureParameteri(shadow_texture_handle, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.TextureParameteri(shadow_texture_handle, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.TextureParameteri(shadow_texture_handle, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.BindTextureUnit(4, shadow_texture_handle);
@@ -582,9 +594,6 @@ pub fn main() !void {
             camera.calcViewProjectionMatrix();
             camera.calcFrustumPlanes();
 
-            visible_num = chunk_mesh_layers.cull(&camera);
-            chunk_mesh_layers.uploadCommandBuffers();
-
             result = world.raycast(camera.position, camera.direction);
 
             const selected_pos = result.pos.toVec3f();
@@ -616,12 +625,15 @@ pub fn main() !void {
         const depth: gl.float = 1.0;
         gl.ClearNamedFramebufferfv(shadow_framebuffer_handle, gl.DEPTH, 0, @ptrCast(&depth));
 
+        chunk_mesh_layers.resetCommandBuffers();
+        chunk_mesh_layers.uploadCommandBuffers();
+
         sun_shader_program.bind();
         {
             gl.BindFramebuffer(gl.FRAMEBUFFER, shadow_framebuffer_handle);
             defer gl.BindFramebuffer(gl.FRAMEBUFFER, 0);
 
-            gl.Viewport(0, 0, sun.shadow_map_width, sun.shadow_map_height);
+            gl.Viewport(0, 0, sun.shadow_map_width * 16, sun.shadow_map_height * 16);
             defer gl.Viewport(0, 0, screen.window_width, screen.window_height);
 
             inline for (0..Block.Layer.len) |layer_idx| {
@@ -634,6 +646,11 @@ pub fn main() !void {
                     gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.buffer.items.len), 0);
                 }
             }
+        }
+
+        if (calc_view_projection_matrix) {
+            visible_num = chunk_mesh_layers.cull(&camera);
+            chunk_mesh_layers.uploadCommandBuffers();
         }
 
         gl.ClearColor(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
