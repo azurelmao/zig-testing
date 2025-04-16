@@ -31,8 +31,6 @@ layout (binding = 4, std430) readonly buffer ssbo4 {
 };
 
 uniform mat4 uViewProjection;
-uniform mat4 uSunViewProjection;
-// uniform mat4 uNdcToTex;
 
 out vec2 pTextureUV;
 flat out uint pTextureIdx;
@@ -41,7 +39,6 @@ flat out float pNormalLight;
 flat out vec3 pLight;
 
 out vec3 pVertexPosition;
-out vec3 pShadowPosition;
 
 vec3 unpackLocalPosition(uint data) {
     float x = bitfieldExtract(data, 0, 5);
@@ -132,7 +129,6 @@ void main() {
     vec4 worldPosition = vec4(modelPosition + localPosition + sChunkPos[gl_DrawID / 6], 1.0);
 
     pVertexPosition = worldPosition.xyz;
-    pShadowPosition = (uSunViewProjection * worldPosition).xyz;
     gl_Position = uViewProjection * worldPosition;
 }
 

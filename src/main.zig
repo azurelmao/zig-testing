@@ -199,58 +199,8 @@ pub fn main() !void {
     window.setFramebufferSizeCallback(callbacks.framebufferSizeCallback);
     window.setKeyCallback(callbacks.keyCallback);
 
-    const Sun = struct {
-        const Sun = @This();
-
-        angle: gl.float,
-        position: Vec3f,
-        shadow_map_width: gl.sizei,
-        shadow_map_height: gl.sizei,
-        shadow_map_near: gl.float,
-        shadow_map_far: gl.float,
-        view_projection_matrix: Matrix4x4f,
-
-        pub fn init(angle: gl.float, shadow_map_width: gl.sizei, shadow_map_height: gl.sizei, shadow_map_near: gl.float, shadow_map_far: gl.float) Sun {
-            var sun = Sun{
-                .angle = angle,
-                .shadow_map_width = shadow_map_width,
-                .shadow_map_height = shadow_map_height,
-                .shadow_map_near = shadow_map_near,
-                .shadow_map_far = shadow_map_far,
-                .position = undefined,
-                .view_projection_matrix = undefined,
-            };
-
-            sun.calcViewProjectionMatrix();
-
-            return sun;
-        }
-
-        const DEG_TO_RAD: gl.float = std.math.pi / 180.0;
-
-        pub fn calcViewProjectionMatrix(self: *Sun) void {
-            const angle_rads = self.angle * DEG_TO_RAD;
-
-            const x = std.math.cos(angle_rads);
-            const y = std.math.sin(angle_rads);
-
-            const position = Vec3f.new(x, y, 0).normalize().multiplyScalar(30);
-
-            const view_matrix = Matrix4x4f.lookAt(position, Vec3f.new(0, 0, 0), Vec3f.new(0, 0, 1));
-            const projection_matrix = Matrix4x4f.orthographic(@floatFromInt(self.shadow_map_width), @floatFromInt(self.shadow_map_height), self.shadow_map_near, self.shadow_map_far);
-
-            self.view_projection_matrix = view_matrix.multiply(projection_matrix);
-            self.position = position;
-        }
-    };
-    var sun = Sun.init(90, 100, 100, 1, 100);
-
-    var sun_shader_program = try ShaderProgram.init(allocator, "assets/shaders/sun_vs.glsl", "assets/shaders/sun_fs.glsl");
-    sun_shader_program.setUniformMatrix4f("uViewProjection", sun.view_projection_matrix);
-
     var chunks_shader_program = try ShaderProgram.init(allocator, "assets/shaders/chunks_vs.glsl", "assets/shaders/chunks_fs.glsl");
     chunks_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
-    chunks_shader_program.setUniformMatrix4f("uSunViewProjection", sun.view_projection_matrix);
 
     var chunks_bb_shader_program = try ShaderProgram.init(allocator, "assets/shaders/chunks_bb_vs.glsl", "assets/shaders/chunks_bb_fs.glsl");
     chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
@@ -479,23 +429,6 @@ pub fn main() !void {
         std.debug.panic("Incomplete offscreen framebuffer status", .{});
     }
 
-    var shadow_texture_handle: gl.uint = undefined;
-    gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&shadow_texture_handle));
-    gl.TextureStorage2D(shadow_texture_handle, 1, gl.DEPTH_COMPONENT32F, sun.shadow_map_width * 16, sun.shadow_map_height * 16);
-    gl.TextureParameteri(shadow_texture_handle, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.TextureParameteri(shadow_texture_handle, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.TextureParameteri(shadow_texture_handle, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.TextureParameteri(shadow_texture_handle, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.BindTextureUnit(4, shadow_texture_handle);
-
-    var shadow_framebuffer_handle: gl.uint = undefined;
-    gl.CreateFramebuffers(1, @ptrCast(&shadow_framebuffer_handle));
-    gl.NamedFramebufferTexture(shadow_framebuffer_handle, gl.DEPTH_ATTACHMENT, shadow_texture_handle, 0);
-
-    if (gl.CheckNamedFramebufferStatus(shadow_framebuffer_handle, gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE) {
-        std.debug.panic("Incomplete shadow framebuffer status", .{});
-    }
-
     gl.Enable(gl.DEPTH_TEST);
     gl.Enable(gl.CULL_FACE);
     gl.Enable(gl.BLEND);
@@ -622,32 +555,6 @@ pub fn main() !void {
             selected_side_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
         }
 
-        const depth: gl.float = 1.0;
-        gl.ClearNamedFramebufferfv(shadow_framebuffer_handle, gl.DEPTH, 0, @ptrCast(&depth));
-
-        chunk_mesh_layers.resetCommandBuffers();
-        chunk_mesh_layers.uploadCommandBuffers();
-
-        sun_shader_program.bind();
-        {
-            gl.BindFramebuffer(gl.FRAMEBUFFER, shadow_framebuffer_handle);
-            defer gl.BindFramebuffer(gl.FRAMEBUFFER, 0);
-
-            gl.Viewport(0, 0, sun.shadow_map_width * 16, sun.shadow_map_height * 16);
-            defer gl.Viewport(0, 0, screen.window_width, screen.window_height);
-
-            inline for (0..Block.Layer.len) |layer_idx| {
-                const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
-
-                if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
-                    chunk_mesh_layer.mesh.bindBuffer(3);
-                    chunk_mesh_layer.command.bindIndirectBuffer();
-
-                    gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.buffer.items.len), 0);
-                }
-            }
-        }
-
         if (calc_view_projection_matrix) {
             visible_num = chunk_mesh_layers.cull(&camera);
             chunk_mesh_layers.uploadCommandBuffers();
@@ -720,7 +627,6 @@ pub fn main() !void {
         }
 
         selected_block_shader_program.bind();
-        selected_block_shader_program.setUniform3f("uBlockPosition", sun.position.x, sun.position.y, sun.position.z);
         {
             gl.Enable(gl.POLYGON_OFFSET_LINE);
             defer gl.Disable(gl.POLYGON_OFFSET_LINE);
@@ -794,10 +700,6 @@ pub fn main() !void {
 
         text_shader_program.bind();
         gl.DrawArrays(gl.TRIANGLES, 0, @intCast(text_manager.text_vertices.buffer.items.len));
-
-        sun.calcViewProjectionMatrix();
-        sun_shader_program.setUniformMatrix4f("uViewProjection", sun.view_projection_matrix);
-        chunks_shader_program.setUniformMatrix4f("uSunViewProjection", sun.view_projection_matrix);
 
         delta_time = @floatCast(@as(f64, @floatFromInt(timer.lap())) / 1_000_000_000.0);
 
