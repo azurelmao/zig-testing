@@ -49,7 +49,7 @@ const Options = struct {
 
 handle: gl.uint,
 
-pub fn init(images: []const stbi.Image, width: gl.sizei, height: gl.sizei, options: Options) !TextureArray2D {
+pub fn init(unit: gl.uint, images: []const stbi.Image, width: gl.sizei, height: gl.sizei, options: Options) !TextureArray2D {
     for (images) |image| {
         if (image.width != width or image.height != height) {
             return error.IncorrectImageSize;
@@ -70,9 +70,7 @@ pub fn init(images: []const stbi.Image, width: gl.sizei, height: gl.sizei, optio
     gl.TextureParameteri(handle, gl.TEXTURE_MIN_FILTER, @intFromEnum(options.min_filter));
     gl.TextureParameteri(handle, gl.TEXTURE_MAG_FILTER, @intFromEnum(options.mag_filter));
 
-    return .{ .handle = handle };
-}
+    gl.BindTextureUnit(unit, handle);
 
-pub fn bind(self: TextureArray2D, unit: gl.uint) void {
-    gl.BindTextureUnit(unit, self.handle);
+    return .{ .handle = handle };
 }

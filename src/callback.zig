@@ -12,7 +12,7 @@ const NewCursorPos = struct {
     cursor_y: gl.float,
 };
 
-pub const WindowUserData = struct {
+pub const UserData = struct {
     new_window_size: ?NewWindowSize = null,
     new_cursor_pos: ?NewCursorPos = null,
 };
@@ -34,14 +34,14 @@ pub fn keyCallback(window: glfw.Window, key: glfw.Key, scancode: i32, action: gl
 }
 
 pub fn cursorCallback(window: glfw.Window, cursor_x: f64, cursor_y: f64) void {
-    window.getUserPointer(WindowUserData).?.*.new_cursor_pos = .{
+    window.getUserPointer(UserData).?.*.new_cursor_pos = .{
         .cursor_x = @floatCast(cursor_x),
         .cursor_y = @floatCast(cursor_y),
     };
 }
 
 pub fn framebufferSizeCallback(window: glfw.Window, window_width: u32, window_height: u32) void {
-    window.getUserPointer(WindowUserData).?.*.new_window_size = .{
+    window.getUserPointer(UserData).?.*.new_window_size = .{
         .window_width = @intCast(window_width),
         .window_height = @intCast(window_height),
     };

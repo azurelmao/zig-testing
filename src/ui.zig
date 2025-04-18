@@ -1,6 +1,6 @@
 const std = @import("std");
 const gl = @import("gl");
-const ShaderStorageBuffer = @import("buffer.zig").ShaderStorageBuffer;
+const ShaderStorageBufferWithArrayList = @import("buffer.zig").ShaderStorageBufferWithArrayList;
 
 pub const Text = struct {
     text: []const u8,
@@ -26,12 +26,12 @@ pub const Text = struct {
 
 pub const TextManager = struct {
     text_list: std.ArrayListUnmanaged(Text),
-    text_vertices: ShaderStorageBuffer(Text.Vertex),
+    text_vertices: ShaderStorageBufferWithArrayList(Text.Vertex),
 
     pub fn init() TextManager {
         return .{
             .text_list = .empty,
-            .text_vertices = .init(gl.DYNAMIC_STORAGE_BIT),
+            .text_vertices = .init(100, gl.DYNAMIC_STORAGE_BIT),
         };
     }
 
@@ -40,7 +40,7 @@ pub const TextManager = struct {
     }
 
     pub fn clear(self: *TextManager) void {
-        self.text_vertices.buffer.clearRetainingCapacity();
+        self.text_vertices.data.clearRetainingCapacity();
         self.text_list.clearRetainingCapacity();
     }
 
@@ -77,7 +77,7 @@ pub const TextManager = struct {
                 const width: gl.float = @floatFromInt(pixel_width);
                 const max_u = width / max_width;
 
-                try self.text_vertices.buffer.appendSlice(allocator, &.{
+                try self.text_vertices.data.appendSlice(allocator, &.{
                     .{ .x = max_x, .y = max_y, .u = max_u, .v = 0, .idx = idx },
                     .{ .x = min_x, .y = max_y, .u = 0, .v = 0, .idx = idx },
                     .{ .x = min_x, .y = min_y, .u = 0, .v = 1, .idx = idx },
@@ -190,7 +190,7 @@ pub const Glyph = enum(u8) {
     right_curly,
     tilde,
 
-    pub const len = 96;
+    pub const len = std.enums.values(Glyph).len;
 
     pub fn fromChar(char: u8) Glyph {
         return if (char >= ' ' and char <= '~') @enumFromInt(char - ' ' + 1) else .unknown;

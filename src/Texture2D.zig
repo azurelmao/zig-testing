@@ -48,7 +48,7 @@ const Options = struct {
 
 handle: gl.uint,
 
-pub fn init(image: stbi.Image, options: Options) Texture2D {
+pub fn init(unit: gl.uint, image: stbi.Image, options: Options) Texture2D {
     var handle: gl.uint = undefined;
     gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&handle));
     gl.TextureStorage2D(handle, 1, @intFromEnum(options.texture_format), @intCast(image.width), @intCast(image.height));
@@ -59,9 +59,7 @@ pub fn init(image: stbi.Image, options: Options) Texture2D {
     gl.TextureParameteri(handle, gl.TEXTURE_MIN_FILTER, @intFromEnum(options.min_filter));
     gl.TextureParameteri(handle, gl.TEXTURE_MAG_FILTER, @intFromEnum(options.mag_filter));
 
-    return .{ .handle = handle };
-}
+    gl.BindTextureUnit(unit, handle);
 
-pub fn bind(self: Texture2D, unit: gl.uint) void {
-    gl.BindTextureUnit(unit, self.handle);
+    return .{ .handle = handle };
 }

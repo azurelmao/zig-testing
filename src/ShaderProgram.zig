@@ -1,11 +1,8 @@
 const std = @import("std");
 const gl = @import("gl");
-const print = std.debug.print;
 const Matrix4x4f = @import("Matrix4x4f.zig");
 
 const ShaderProgram = @This();
-
-var currently_bound_shader_program: ?gl.uint = null;
 
 handle: gl.uint,
 uniforms: std.StringHashMapUnmanaged(gl.int),
@@ -47,7 +44,7 @@ pub fn init(allocator: std.mem.Allocator, vertex_shader_path: []const gl.char, f
     return .{ .handle = handle, .uniforms = uniforms };
 }
 
-pub fn readAndCompileShader(allocator: std.mem.Allocator, shader_path: []const gl.char, @"type": gl.@"enum") !gl.uint {
+fn readAndCompileShader(allocator: std.mem.Allocator, shader_path: []const gl.char, @"type": gl.@"enum") !gl.uint {
     const shader_source: []const gl.char = try std.fs.cwd().readFileAllocOptions(allocator, shader_path, std.math.maxInt(u16), null, @alignOf(u8), 0);
 
     const handle = gl.CreateShader(@"type");
@@ -80,102 +77,81 @@ pub fn getUniformLocation(self: ShaderProgram, uniform: []const u8) gl.int {
 pub fn setUniform1i(self: ShaderProgram, uniform: []const u8, v0: gl.int) void {
     const location = self.getUniformLocation(uniform);
 
-    self.bind();
-    gl.Uniform1i(location, v0);
+    gl.ProgramUniform1i(self.handle, location, v0);
 }
 
 pub fn setUniform2i(self: ShaderProgram, uniform: []const u8, v0: gl.int, v1: gl.int) void {
     const location = self.getUniformLocation(uniform);
 
-    self.bind();
-    gl.Uniform2i(location, v0, v1);
+    gl.ProgramUniform2i(self.handle, location, v0, v1);
 }
 
 pub fn setUniform3i(self: ShaderProgram, uniform: []const u8, v0: gl.int, v1: gl.int, v2: gl.int) void {
     const location = self.getUniformLocation(uniform);
 
-    self.bind();
-    gl.Uniform3i(location, v0, v1, v2);
+    gl.ProgramUniform3i(self.handle, location, v0, v1, v2);
 }
 
 pub fn setUniform4i(self: ShaderProgram, uniform: []const u8, v0: gl.int, v1: gl.int, v2: gl.int, v3: gl.int) void {
     const location = self.getUniformLocation(uniform);
 
-    self.bind();
-    gl.Uniform4i(location, v0, v1, v2, v3);
+    gl.ProgramUniform4i(self.handle, location, v0, v1, v2, v3);
 }
 
 pub fn setUniform1ui(self: ShaderProgram, uniform: []const u8, v0: gl.uint) void {
     const location = self.getUniformLocation(uniform);
 
-    self.bind();
-    gl.Uniform1ui(location, v0);
+    gl.ProgramUniform1ui(self.handle, location, v0);
 }
 
 pub fn setUniform2ui(self: ShaderProgram, uniform: []const u8, v0: gl.uint, v1: gl.uint) void {
     const location = self.getUniformLocation(uniform);
 
-    self.bind();
-    gl.Uniform2ui(location, v0, v1);
+    gl.ProgramUniform2ui(self.handle, location, v0, v1);
 }
 
 pub fn setUniform3ui(self: ShaderProgram, uniform: []const u8, v0: gl.uint, v1: gl.uint, v2: gl.uint) void {
     const location = self.getUniformLocation(uniform);
 
-    self.bind();
-    gl.Uniform3ui(location, v0, v1, v2);
+    gl.ProgramUniform3ui(self.handle, location, v0, v1, v2);
 }
 
 pub fn setUniform4ui(self: ShaderProgram, uniform: []const u8, v0: gl.uint, v1: gl.uint, v2: gl.uint, v3: gl.uint) void {
     const location = self.getUniformLocation(uniform);
 
-    self.bind();
-    gl.Uniform4ui(location, v0, v1, v2, v3);
+    gl.ProgramUniform4ui(self.handle, location, v0, v1, v2, v3);
 }
 
 pub fn setUniform1f(self: ShaderProgram, uniform: []const u8, v0: gl.float) void {
     const location = self.getUniformLocation(uniform);
 
-    self.bind();
-    gl.Uniform1f(location, v0);
+    gl.ProgramUniform1f(self.handle, location, v0);
 }
 
 pub fn setUniform2f(self: ShaderProgram, uniform: []const u8, v0: gl.float, v1: gl.float) void {
     const location = self.getUniformLocation(uniform);
 
-    self.bind();
-    gl.Uniform2f(location, v0, v1);
+    gl.ProgramUniform2f(self.handle, location, v0, v1);
 }
 
 pub fn setUniform3f(self: ShaderProgram, uniform: []const u8, v0: gl.float, v1: gl.float, v2: gl.float) void {
     const location = self.getUniformLocation(uniform);
 
-    self.bind();
-    gl.Uniform3f(location, v0, v1, v2);
+    gl.ProgramUniform3f(self.handle, location, v0, v1, v2);
 }
 
 pub fn setUniform4f(self: ShaderProgram, uniform: []const u8, v0: gl.float, v1: gl.float, v2: gl.float, v3: gl.float) void {
     const location = self.getUniformLocation(uniform);
 
-    self.bind();
-    gl.Uniform4f(location, v0, v1, v2, v3);
+    gl.ProgramUniform4f(self.handle, location, v0, v1, v2, v3);
 }
 
 pub fn setUniformMatrix4f(self: ShaderProgram, uniform: []const u8, matrix: Matrix4x4f) void {
     const location = self.getUniformLocation(uniform);
 
-    self.bind();
-    gl.UniformMatrix4fv(location, 1, 0, @ptrCast(&matrix.data));
+    gl.ProgramUniformMatrix4fv(self.handle, location, 1, 0, @ptrCast(&matrix.data));
 }
 
 pub fn bind(self: ShaderProgram) void {
-    if (currently_bound_shader_program) |handle| {
-        if (handle != self.handle) {
-            currently_bound_shader_program = self.handle;
-            gl.UseProgram(self.handle);
-        }
-    } else {
-        currently_bound_shader_program = self.handle;
-        gl.UseProgram(self.handle);
-    }
+    gl.UseProgram(self.handle);
 }

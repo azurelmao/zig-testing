@@ -1,114 +1,159 @@
 const std = @import("std");
 const gl = @import("gl");
 
-pub fn ShaderStorageBufferUnmanaged(comptime T: type) type {
+pub fn ShaderStorageBuffer(comptime T: type) type {
     return struct {
         handle: gl.uint,
+        len: usize,
         flags: gl.bitfield,
 
         const Self = @This();
 
-        pub fn init(flags: gl.bitfield) Self {
+        pub fn init(len: usize, flags: gl.bitfield) Self {
+            var handle: gl.uint = undefined;
+            gl.CreateBuffers(1, @ptrCast(&handle));
+            gl.NamedBufferStorage(
+                handle,
+                @intCast(@sizeOf(T) * len),
+                null,
+                flags,
+            );
+
             return .{
-                .handle = 0,
+                .handle = handle,
+                .len = len,
                 .flags = flags,
             };
         }
 
-        pub fn bindBuffer(self: *Self, index: gl.uint) void {
+        pub fn initAndBind(index: gl.uint, len: usize, flags: gl.bitfield) Self {
+            const self = init(len, flags);
+            gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, index, self.handle);
+
+            return self;
+        }
+
+        pub fn initFromSlice(data: []const T, flags: gl.bitfield) Self {
+            var handle: gl.uint = undefined;
+            gl.CreateBuffers(1, @ptrCast(&handle));
+            gl.NamedBufferStorage(
+                handle,
+                @intCast(@sizeOf(T) * data.len),
+                @ptrCast(data.ptr),
+                flags,
+            );
+
+            return .{
+                .handle = handle,
+                .len = data.len,
+                .flags = flags,
+            };
+        }
+
+        pub fn initFromSliceAndBind(index: gl.uint, data: []const T, flags: gl.bitfield) Self {
+            const self = initFromSlice(data, flags);
+            gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, index, self.handle);
+
+            return self;
+        }
+
+        pub fn bind(self: *const Self, index: gl.uint) void {
             gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, index, self.handle);
         }
 
-        pub fn bindIndirectBuffer(self: *Self) void {
+        pub fn bindAsIndirectBuffer(self: *const Self) void {
             gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, self.handle);
         }
 
-        pub fn initBuffer(self: *Self, buffer: []const T) void {
-            gl.CreateBuffers(1, @ptrCast(&self.handle));
-            gl.NamedBufferStorage(
-                self.handle,
-                @intCast(@sizeOf(T) * buffer.len),
-                @ptrCast(buffer.ptr),
-                self.flags,
-            );
-        }
-
-        pub fn initBufferAndBind(self: *Self, buffer: []const T, index: gl.uint) void {
-            self.initBuffer(buffer);
-            self.bindBuffer(index);
-        }
-
-        pub fn resizeBuffer(self: *Self, buffer: []const T) void {
-            if (self.handle != 0) {
-                gl.DeleteBuffers(1, @ptrCast(&self.handle));
-                self.handle = 0;
-            }
+        pub fn resize(self: *Self, len: usize) void {
+            gl.DeleteBuffers(1, @ptrCast(&self.handle));
 
             gl.CreateBuffers(1, @ptrCast(&self.handle));
             gl.NamedBufferStorage(
                 self.handle,
-                @intCast(@sizeOf(T) * buffer.len),
-                @ptrCast(buffer.ptr),
+                @intCast(@sizeOf(T) * len),
+                null,
                 self.flags,
             );
         }
 
-        pub fn resizeBufferAndBind(self: *Self, buffer: []const T, index: gl.uint) void {
-            self.resizeBuffer(buffer);
-            self.bindBuffer(index);
-        }
+        pub fn upload(self: *const Self, data: []const T) !void {
+            if (data.len > self.len) return error.DataTooLarge;
 
-        pub fn uploadBuffer(self: *Self, buffer: []const T) void {
             gl.NamedBufferSubData(
                 self.handle,
                 0,
-                @intCast(@sizeOf(T) * buffer.len),
-                @ptrCast(buffer.ptr),
+                @intCast(@sizeOf(T) * data.len),
+                @ptrCast(data.ptr),
             );
+        }
+
+        pub fn uploadAndOrResize(self: *Self, data: []const T) void {
+            if (data.len > self.len) {
+                gl.DeleteBuffers(1, @ptrCast(&self.handle));
+
+                gl.CreateBuffers(1, @ptrCast(&self.handle));
+                gl.NamedBufferStorage(
+                    self.handle,
+                    @intCast(@sizeOf(T) * data.len),
+                    @ptrCast(data.ptr),
+                    self.flags,
+                );
+            } else {
+                gl.NamedBufferSubData(
+                    self.handle,
+                    0,
+                    @intCast(@sizeOf(T) * data.len),
+                    @ptrCast(data.ptr),
+                );
+            }
+        }
+
+        pub fn label(self: *const Self, name: [:0]const u8) void {
+            gl.ObjectLabel(gl.BUFFER, self.handle, -1, name);
         }
     };
 }
 
-pub fn ShaderStorageBuffer(comptime T: type) type {
+pub fn ShaderStorageBufferWithArrayList(comptime T: type) type {
     return struct {
-        buffer: std.ArrayListUnmanaged(T),
-        unmanaged: ShaderStorageBufferUnmanaged(T),
+        data: std.ArrayListUnmanaged(T),
+        ssbo: ShaderStorageBuffer(T),
 
         const Self = @This();
 
-        pub fn init(flags: gl.bitfield) Self {
+        pub fn init(len: usize, flags: gl.bitfield) Self {
             return .{
-                .buffer = .empty,
-                .unmanaged = .init(flags),
+                .data = .empty,
+                .ssbo = .init(len, flags),
             };
         }
 
-        pub fn bindBuffer(self: *Self, index: gl.uint) void {
-            self.unmanaged.bindBuffer(index);
+        pub fn initAndBind(index: gl.uint, len: usize, flags: gl.bitfield) Self {
+            return .{
+                .data = .empty,
+                .ssbo = .initAndBind(index, len, flags),
+            };
         }
 
-        pub fn bindIndirectBuffer(self: *Self) void {
-            self.unmanaged.bindIndirectBuffer();
+        pub fn bind(self: *const Self, index: gl.uint) void {
+            self.ssbo.bind(index);
         }
 
-        pub fn initBuffer(self: *Self) void {
-            self.unmanaged.initBuffer(self.buffer.items);
+        pub fn bindAsIndirectBuffer(self: *const Self) void {
+            self.ssbo.bindAsIndirectBuffer();
         }
 
-        pub fn initBufferAndBind(self: *Self, index: gl.uint) void {
-            self.unmanaged.initBufferAndBind(self.buffer.items, index);
+        pub fn resize(self: *Self, len: usize) void {
+            self.ssbo.resize(len);
         }
 
-        pub fn resizeBuffer(self: *Self) void {
-            self.unmanaged.resizeBuffer(self.buffer.items);
+        pub fn upload(self: *const Self) !void {
+            self.ssbo.upload(self.data.items);
         }
 
-        pub fn resizeBufferAndBind(self: *Self, index: gl.uint) void {
-            self.unmanaged.resizeBufferAndBind(self.buffer.items, index);
-        }
-
-        pub fn uploadBuffer(self: *Self) void {
-            self.unmanaged.uploadBuffer(self.buffer.items);
+        pub fn uploadAndOrResize(self: *Self) void {
+            self.ssbo.uploadAndOrResize(self.data.items);
         }
     };
 }

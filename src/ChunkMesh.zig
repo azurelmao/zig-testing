@@ -1,7 +1,7 @@
 const Vec3f = @import("vec3f.zig").Vec3f;
 const Chunk = @import("Chunk.zig");
 
-pub const lines: []const Vec3f = &.{
+pub const BOUNDING_BOX_LINES_BUFFER: []const Vec3f = &.{
     .{ .x = 0, .y = 0, .z = 0 },
     .{ .x = 0, .y = 0, .z = Chunk.Size },
     .{ .x = Chunk.Size, .y = 0, .z = 0 },
@@ -36,7 +36,7 @@ pub const lines: []const Vec3f = &.{
     .{ .x = Chunk.Size, .y = Chunk.Size, .z = Chunk.Size },
 };
 
-pub const vertices: []const Vec3f = west ++ east ++ bottom ++ top ++ north ++ south;
+pub const BOUNDING_BOX_BUFFER: []const Vec3f = west ++ east ++ bottom ++ top ++ north ++ south;
 
 const west: []const Vec3f = &.{
     .{ .x = 0, .y = Chunk.Size, .z = Chunk.Size },

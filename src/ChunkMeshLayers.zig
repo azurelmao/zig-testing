@@ -5,24 +5,24 @@ const Chunk = @import("Chunk.zig");
 const World = @import("World.zig");
 const Vec3f = @import("vec3f.zig").Vec3f;
 const Camera = @import("Camera.zig");
-const ShaderStorageBuffer = @import("buffer.zig").ShaderStorageBuffer;
+const ShaderStorageBufferWithArrayList = @import("buffer.zig").ShaderStorageBufferWithArrayList;
 const SingleChunkMeshLayers = @import("SingleChunkMeshLayers.zig");
 
 const ChunkMeshLayers = @This();
 
 layers: [Block.Layer.len]ChunkMeshBuffers,
-pos: ShaderStorageBuffer(Vec3f),
+pos: ShaderStorageBufferWithArrayList(Vec3f),
 
 pub const ChunkMeshBuffers = struct {
     len: std.ArrayListUnmanaged(usize),
-    mesh: ShaderStorageBuffer(SingleChunkMeshLayers.LocalPosAndModelIdx),
-    command: ShaderStorageBuffer(DrawArraysIndirectCommand),
+    mesh: ShaderStorageBufferWithArrayList(SingleChunkMeshLayers.BlockVertex),
+    command: ShaderStorageBufferWithArrayList(DrawArraysIndirectCommand),
 
     pub fn init() ChunkMeshBuffers {
         return .{
             .len = .empty,
-            .mesh = .init(gl.DYNAMIC_STORAGE_BIT),
-            .command = .init(gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT),
+            .mesh = .init(World.VOLUME * 1000, gl.DYNAMIC_STORAGE_BIT),
+            .command = .init(World.VOLUME, gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT),
         };
     }
 };
@@ -43,40 +43,40 @@ pub fn init() ChunkMeshLayers {
 
     return .{
         .layers = layers,
-        .pos = .init(gl.DYNAMIC_STORAGE_BIT),
+        .pos = .initAndBind(2, World.VOLUME, gl.DYNAMIC_STORAGE_BIT),
     };
 }
 
 pub fn uploadCommandBuffers(self: *ChunkMeshLayers) void {
     inline for (0..Block.Layer.len) |layer_idx| {
         const chunk_mesh_layer = &self.layers[layer_idx];
-        chunk_mesh_layer.command.uploadBuffer();
+        chunk_mesh_layer.command.uploadAndOrResize();
     }
 }
 
 pub fn clearCommandBuffers(self: *ChunkMeshLayers) void {
-    for (0..self.pos.buffer.items.len) |chunk_mesh_idx_| {
+    for (0..self.pos.data.items.len) |chunk_mesh_idx_| {
         const chunk_mesh_idx = chunk_mesh_idx_ * 6;
 
         inline for (0..Block.Layer.len) |layer_idx| {
             const chunk_mesh_layer = &self.layers[layer_idx];
 
             inline for (0..6) |face_idx| {
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx + face_idx].instance_count = 0;
             }
         }
     }
 }
 
 pub fn resetCommandBuffers(self: *ChunkMeshLayers) void {
-    for (0..self.pos.buffer.items.len) |chunk_mesh_idx_| {
+    for (0..self.pos.data.items.len) |chunk_mesh_idx_| {
         const chunk_mesh_idx = chunk_mesh_idx_ * 6;
 
         inline for (0..Block.Layer.len) |layer_idx| {
             const chunk_mesh_layer = &self.layers[layer_idx];
 
             inline for (0..6) |face_idx| {
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = if (chunk_mesh_layer.len.items[chunk_mesh_idx + face_idx] > 0) 1 else 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx + face_idx].instance_count = if (chunk_mesh_layer.len.items[chunk_mesh_idx + face_idx] > 0) 1 else 0;
             }
         }
     }
@@ -99,7 +99,7 @@ pub fn generate(self: *ChunkMeshLayers, allocator: std.mem.Allocator, world: *Wo
             break :expr .{ .chunks = chunks };
         };
 
-        try self.pos.buffer.append(allocator, chunk_pos.toVec3f());
+        try self.pos.data.append(allocator, chunk_pos.toVec3f());
 
         if (chunk.num_of_air != Chunk.Volume) {
             try single_self.generate(chunk, &neighbor_chunks);
@@ -115,14 +115,14 @@ pub fn generate(self: *ChunkMeshLayers, allocator: std.mem.Allocator, world: *Wo
                     try chunk_mesh_layer.len.append(allocator, len);
 
                     const command = DrawArraysIndirectCommand{
-                        .first_vertex = @intCast(chunk_mesh_layer.mesh.buffer.items.len * 6),
+                        .first_vertex = @intCast(chunk_mesh_layer.mesh.data.items.len * 6),
                         .count = @intCast(len * 6),
                         .instance_count = if (len > 0) 1 else 0,
                         .base_instance = if (len > 0) 1 else 0,
                     };
 
-                    try chunk_mesh_layer.command.buffer.append(allocator, command);
-                    try chunk_mesh_layer.mesh.buffer.appendSlice(allocator, single_chunk_mesh_face.items);
+                    try chunk_mesh_layer.command.data.append(allocator, command);
+                    try chunk_mesh_layer.mesh.data.appendSlice(allocator, single_chunk_mesh_face.items);
                     single_chunk_mesh_face.clearRetainingCapacity();
                 }
             }
@@ -133,13 +133,13 @@ pub fn generate(self: *ChunkMeshLayers, allocator: std.mem.Allocator, world: *Wo
                 try chunk_mesh_layer.len.appendNTimes(allocator, 0, 6);
 
                 const command = DrawArraysIndirectCommand{
-                    .first_vertex = @intCast(chunk_mesh_layer.mesh.buffer.items.len * 6),
+                    .first_vertex = @intCast(chunk_mesh_layer.mesh.data.items.len * 6),
                     .count = 0,
                     .instance_count = 0,
                     .base_instance = 0,
                 };
 
-                try chunk_mesh_layer.command.buffer.appendNTimes(allocator, command, 6);
+                try chunk_mesh_layer.command.data.appendNTimes(allocator, command, 6);
             }
         }
     }
@@ -154,7 +154,7 @@ pub fn cull(self: *ChunkMeshLayers, camera: *const Camera) u32 {
     const camera_chunk_pos = camera.position.toChunkPos();
 
     var visible_num: u32 = 0;
-    for (self.pos.buffer.items, 0..) |chunk_mesh_pos, chunk_mesh_idx_| {
+    for (self.pos.data.items, 0..) |chunk_mesh_pos, chunk_mesh_idx_| {
         const chunk_pos = chunk_mesh_pos.toChunkPos();
         const chunk_mesh_idx = chunk_mesh_idx_ * 6;
 
@@ -164,8 +164,8 @@ pub fn cull(self: *ChunkMeshLayers, camera: *const Camera) u32 {
 
                 inline for (0..6) |face_idx| {
                     if (chunk_mesh_layer.len.items[chunk_mesh_idx + face_idx] > 0) {
-                        chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = 1;
-                        chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].base_instance = 1;
+                        chunk_mesh_layer.command.data.items[chunk_mesh_idx + face_idx].instance_count = 1;
+                        chunk_mesh_layer.command.data.items[chunk_mesh_idx + face_idx].base_instance = 1;
                         visible_num += 6;
                     }
                 }
@@ -186,8 +186,8 @@ pub fn cull(self: *ChunkMeshLayers, camera: *const Camera) u32 {
                 const chunk_mesh_layer = &self.layers[layer_idx];
 
                 inline for (0..6) |face_idx| {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].instance_count = 0;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + face_idx].base_instance = 0;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + face_idx].instance_count = 0;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + face_idx].base_instance = 0;
                 }
             }
 
@@ -201,24 +201,24 @@ pub fn cull(self: *ChunkMeshLayers, camera: *const Camera) u32 {
                 const chunk_mesh_layer = &self.layers[layer_idx];
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx].instance_count = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx].base_instance = 1;
                     visible_num += 1;
                 }
 
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].instance_count = 0;
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].base_instance = 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx + 1].instance_count = 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx + 1].base_instance = 0;
             }
         } else if (diff.x != 0) {
             inline for (0..Block.Layer.len) |layer_idx| {
                 const chunk_mesh_layer = &self.layers[layer_idx];
 
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].instance_count = 0;
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].base_instance = 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx].instance_count = 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx].base_instance = 0;
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 1] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].base_instance = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 1].instance_count = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 1].base_instance = 1;
                     visible_num += 1;
                 }
             }
@@ -227,14 +227,14 @@ pub fn cull(self: *ChunkMeshLayers, camera: *const Camera) u32 {
                 const chunk_mesh_layer = &self.layers[layer_idx];
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx].base_instance = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx].instance_count = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx].base_instance = 1;
                     visible_num += 1;
                 }
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 1] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 1].base_instance = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 1].instance_count = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 1].base_instance = 1;
                     visible_num += 1;
                 }
             }
@@ -245,24 +245,24 @@ pub fn cull(self: *ChunkMeshLayers, camera: *const Camera) u32 {
                 const chunk_mesh_layer = &self.layers[layer_idx];
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 2] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].base_instance = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 2].instance_count = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 2].base_instance = 1;
                     visible_num += 1;
                 }
 
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].instance_count = 0;
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].base_instance = 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx + 3].instance_count = 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx + 3].base_instance = 0;
             }
         } else if (diff.y != 0) {
             inline for (0..Block.Layer.len) |layer_idx| {
                 const chunk_mesh_layer = &self.layers[layer_idx];
 
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].instance_count = 0;
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].base_instance = 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx + 2].instance_count = 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx + 2].base_instance = 0;
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 3] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].base_instance = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 3].instance_count = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 3].base_instance = 1;
                     visible_num += 1;
                 }
             }
@@ -271,14 +271,14 @@ pub fn cull(self: *ChunkMeshLayers, camera: *const Camera) u32 {
                 const chunk_mesh_layer = &self.layers[layer_idx];
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 2] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 2].base_instance = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 2].instance_count = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 2].base_instance = 1;
                     visible_num += 1;
                 }
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 3] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 3].base_instance = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 3].instance_count = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 3].base_instance = 1;
                     visible_num += 1;
                 }
             }
@@ -289,24 +289,24 @@ pub fn cull(self: *ChunkMeshLayers, camera: *const Camera) u32 {
                 const chunk_mesh_layer = &self.layers[layer_idx];
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 4] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].base_instance = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 4].instance_count = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 4].base_instance = 1;
                     visible_num += 1;
                 }
 
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].instance_count = 0;
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].base_instance = 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx + 5].instance_count = 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx + 5].base_instance = 0;
             }
         } else if (diff.z > 0) {
             inline for (0..Block.Layer.len) |layer_idx| {
                 const chunk_mesh_layer = &self.layers[layer_idx];
 
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].instance_count = 0;
-                chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].base_instance = 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx + 4].instance_count = 0;
+                chunk_mesh_layer.command.data.items[chunk_mesh_idx + 4].base_instance = 0;
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 5] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].base_instance = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 5].instance_count = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 5].base_instance = 1;
                     visible_num += 1;
                 }
             }
@@ -315,14 +315,14 @@ pub fn cull(self: *ChunkMeshLayers, camera: *const Camera) u32 {
                 const chunk_mesh_layer = &self.layers[layer_idx];
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 4] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 4].base_instance = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 4].instance_count = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 4].base_instance = 1;
                     visible_num += 1;
                 }
 
                 if (chunk_mesh_layer.len.items[chunk_mesh_idx + 5] > 0) {
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].instance_count = 1;
-                    chunk_mesh_layer.command.buffer.items[chunk_mesh_idx + 5].base_instance = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 5].instance_count = 1;
+                    chunk_mesh_layer.command.data.items[chunk_mesh_idx + 5].base_instance = 1;
                     visible_num += 1;
                 }
             }

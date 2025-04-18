@@ -249,13 +249,14 @@ pub fn raycast(self: *World, origin: Vec3f, direction: Vec3f) RaycastResult {
     };
 }
 
-pub const Width = 1;
-pub const Height = 8;
-pub const AboveHeight = 2;
-pub const BelowHeight = AboveHeight - Height;
-pub const BottomOfTheWorld = BelowHeight * Chunk.Size;
-pub const SeaLevel = 0;
-pub const SeaLevelDeep = SeaLevel - 16;
+pub const WIDTH = 1;
+pub const HEIGHT = 8;
+pub const VOLUME = WIDTH * HEIGHT * 4;
+pub const ABOVE_HEIGHT = 2;
+pub const BELOW_HEIGHT = ABOVE_HEIGHT - HEIGHT;
+pub const BOTTOM_OF_THE_WORLD = BELOW_HEIGHT * Chunk.Size;
+pub const SEA_LEVEL = 0;
+pub const SEA_LEVEL_DEEP = SEA_LEVEL - 16;
 
 pub fn generate(self: *World, allocator: std.mem.Allocator) !void {
     const gen1 = znoise.FnlGenerator{
@@ -309,8 +310,8 @@ pub fn generate(self: *World, allocator: std.mem.Allocator) !void {
 
     var height_map = try allocator.create([Chunk.Area]i16);
 
-    for (0..Width * 2) |chunk_x_| {
-        for (0..Width * 2) |chunk_z_| {
+    for (0..WIDTH * 2) |chunk_x_| {
+        for (0..WIDTH * 2) |chunk_z_| {
             var min_height: ?i16 = null;
             var max_height: ?i16 = null;
 
@@ -331,10 +332,10 @@ pub fn generate(self: *World, allocator: std.mem.Allocator) !void {
             const min_chunk_height: i11 = @intCast((min_height.? >> Chunk.BitSize) - 1);
             const max_chunk_height: i11 = @intCast(max_height.? >> Chunk.BitSize);
 
-            var chunk_y: i11 = AboveHeight - 1;
-            while (chunk_y >= BelowHeight) : (chunk_y -= 1) {
-                const chunk_x = @as(i11, @intCast(chunk_x_)) - Width;
-                const chunk_z = @as(i11, @intCast(chunk_z_)) - Width;
+            var chunk_y: i11 = ABOVE_HEIGHT - 1;
+            while (chunk_y >= BELOW_HEIGHT) : (chunk_y -= 1) {
+                const chunk_x = @as(i11, @intCast(chunk_x_)) - WIDTH;
+                const chunk_z = @as(i11, @intCast(chunk_z_)) - WIDTH;
                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
 
                 var chunk = try Chunk.new(allocator, chunk_pos, .air);
@@ -353,12 +354,12 @@ pub fn generate(self: *World, allocator: std.mem.Allocator) !void {
     const indirect_light_bitset = try allocator.create([Chunk.Area]u32);
     const cave_bitset = try allocator.create([Chunk.Area]u32);
 
-    for (0..Width * 2) |chunk_x_| {
-        for (0..Width * 2) |chunk_z_| {
-            const chunk_x = @as(i11, @intCast(chunk_x_)) - Width;
-            const chunk_z = @as(i11, @intCast(chunk_z_)) - Width;
+    for (0..WIDTH * 2) |chunk_x_| {
+        for (0..WIDTH * 2) |chunk_z_| {
+            const chunk_x = @as(i11, @intCast(chunk_x_)) - WIDTH;
+            const chunk_z = @as(i11, @intCast(chunk_z_)) - WIDTH;
 
-            var chunk_y: i11 = AboveHeight - 1;
+            var chunk_y: i11 = ABOVE_HEIGHT - 1;
             {
                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
                 const chunk = try self.getChunk(chunk_pos);
@@ -369,7 +370,7 @@ pub fn generate(self: *World, allocator: std.mem.Allocator) !void {
             }
 
             chunk_y -= 1;
-            while (chunk_y >= BelowHeight) : (chunk_y -= 1) {
+            while (chunk_y >= BELOW_HEIGHT) : (chunk_y -= 1) {
                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
                 const chunk = try self.getChunk(chunk_pos);
 
@@ -386,9 +387,9 @@ pub fn getHeight(gen1: *const znoise.FnlGenerator, gen2: *const znoise.FnlGenera
     const noise2 = gen2.noise2(x, z) * 20;
     const noise3 = gen3.noise2(x, z);
 
-    var height = SeaLevel + noise1 + noise2 + noise3;
+    var height = SEA_LEVEL + noise1 + noise2 + noise3;
 
-    if (height < SeaLevelDeep) {
+    if (height < SEA_LEVEL_DEEP) {
         var sea_noise1 = @abs(sea_rift_gen.noise2(x, z)) * 16;
         const sea_noise2 = @abs(sea_rift_gen.noise2(x / 2, z / 2)) * 16;
         const sea_noise3 = @abs(sea_rift_gen.noise2(x / 10, z / 10)) * 16;
@@ -399,12 +400,12 @@ pub fn getHeight(gen1: *const znoise.FnlGenerator, gen2: *const znoise.FnlGenera
 
         const sea_noise = sea_noise1 + sea_noise2 + sea_noise3;
 
-        if (SeaLevelDeep - sea_noise > height) {
-            height = SeaLevelDeep - sea_noise;
+        if (SEA_LEVEL_DEEP - sea_noise > height) {
+            height = SEA_LEVEL_DEEP - sea_noise;
         }
     }
 
-    return @max(BottomOfTheWorld, @as(i16, @intFromFloat(@floor(height))));
+    return @max(BOTTOM_OF_THE_WORLD, @as(i16, @intFromFloat(@floor(height))));
 }
 
 pub fn generateNoise2D(chunk: *Chunk, height_map: *[Chunk.Area]i16) !void {
@@ -423,7 +424,7 @@ pub fn generateNoise2D(chunk: *Chunk, height_map: *[Chunk.Area]i16) !void {
 
                 if (world_pos.y < height) {
                     if (world_pos.y == height - 1) {
-                        if (world_pos.y < SeaLevel) {
+                        if (world_pos.y < SEA_LEVEL) {
                             chunk.setBlock(local_pos, .sand);
                         } else {
                             chunk.setBlock(local_pos, .grass);
@@ -432,9 +433,9 @@ pub fn generateNoise2D(chunk: *Chunk, height_map: *[Chunk.Area]i16) !void {
                         chunk.setBlock(local_pos, .stone);
                     }
                 } else {
-                    if (world_pos.y == BottomOfTheWorld) {
+                    if (world_pos.y == BOTTOM_OF_THE_WORLD) {
                         chunk.setBlock(local_pos, .stone);
-                    } else if (world_pos.y < SeaLevel) {
+                    } else if (world_pos.y < SEA_LEVEL) {
                         chunk.setBlock(local_pos, .water);
                     }
                 }
@@ -460,9 +461,9 @@ pub fn generateNoise3D(chunk: *Chunk, gen: *const znoise.FnlGenerator) !void {
                 if (density > 0.0) {
                     chunk.setBlock(local_pos, .stone);
                 } else {
-                    if (world_pos.y == BottomOfTheWorld) {
+                    if (world_pos.y == BOTTOM_OF_THE_WORLD) {
                         chunk.setBlock(local_pos, .bedrock);
-                    } else if (world_pos.y == BottomOfTheWorld + 1) {
+                    } else if (world_pos.y == BOTTOM_OF_THE_WORLD + 1) {
                         chunk.setBlock(local_pos, .lava);
 
                         var light_pos = world_pos;

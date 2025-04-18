@@ -5,25 +5,25 @@ const LocalPos = Chunk.LocalPos;
 const Light = Chunk.Light;
 const Block = @import("block.zig").Block;
 
-const Self = @This();
+const SingleChunkMeshLayers = @This();
 
 layers: [Block.Layer.len]SingleChunkMeshFaces,
 
 const SingleChunkMeshFaces = struct {
-    faces: [6]std.ArrayList(LocalPosAndModelIdx),
+    faces: [6]std.ArrayList(BlockVertex),
 
     pub fn new(allocator: std.mem.Allocator) SingleChunkMeshFaces {
-        var faces: [6]std.ArrayList(LocalPosAndModelIdx) = undefined;
+        var faces: [6]std.ArrayList(BlockVertex) = undefined;
 
         for (0..6) |face_idx| {
-            faces[face_idx] = std.ArrayList(LocalPosAndModelIdx).init(allocator);
+            faces[face_idx] = std.ArrayList(BlockVertex).init(allocator);
         }
 
         return .{ .faces = faces };
     }
 };
 
-pub const LocalPosAndModelIdx = packed struct(u64) {
+pub const BlockVertex = packed struct(u64) {
     x: u5,
     y: u5,
     z: u5,
@@ -32,7 +32,7 @@ pub const LocalPosAndModelIdx = packed struct(u64) {
     _: u16 = 0,
 };
 
-pub fn new(allocator: std.mem.Allocator) Self {
+pub fn new(allocator: std.mem.Allocator) SingleChunkMeshLayers {
     var layers: [Block.Layer.len]SingleChunkMeshFaces = undefined;
 
     inline for (0..Block.Layer.len) |layer_idx| {
@@ -169,7 +169,7 @@ pub const NeighborChunks = struct {
     }
 };
 
-pub fn generate(single_chunk_mesh_layers: *Self, chunk: *Chunk, neighbor_chunks: *const NeighborChunks) !void {
+pub fn generate(single_chunk_mesh_layers: *SingleChunkMeshLayers, chunk: *Chunk, neighbor_chunks: *const NeighborChunks) !void {
     var single_chunk_mesh_faces: *SingleChunkMeshFaces = undefined;
 
     for (0..Chunk.Size) |x| {
@@ -182,7 +182,7 @@ pub fn generate(single_chunk_mesh_layers: *Self, chunk: *Chunk, neighbor_chunks:
                     continue;
                 }
 
-                single_chunk_mesh_faces = &single_chunk_mesh_layers.layers[@intFromEnum(block.getLayer())];
+                single_chunk_mesh_faces = &single_chunk_mesh_layers.layers[block.getLayer().idx()];
 
                 const model_indices = block.getModelIndices();
 

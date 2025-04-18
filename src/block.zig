@@ -42,7 +42,7 @@ pub const Block = enum(u8) {
         var model_to_vertex_indices: [Model.MODELS.len]VertexIndices = undefined;
         var block_to_model_indices: [BLOCKS.len]ModelIndices = undefined;
         var vertex_buffer: []const Vertex = &.{};
-        var vertex_idx_and_texture_idx_buffer: []const FaceVertex = &.{};
+        var face_buffer: []const FaceVertex = &.{};
 
         for (Model.MODELS) |model| {
             const model_data = model.getData();
@@ -59,18 +59,18 @@ pub const Block = enum(u8) {
 
         for (BLOCKS_WITH_A_MODEL) |block| {
             const model = block.getModel();
-            const texture_schema = block.getTextureSchema();
+            const texture_scheme = block.getTextureScheme();
 
             var model_indices: ModelIndices = undefined;
 
             for (0..6) |face_idx| {
-                const vertex_idx_and_texture_idx = FaceVertex{
+                const face_vertex = FaceVertex{
                     .vertex_idx = model_to_vertex_indices[@intFromEnum(model)].faces[face_idx],
-                    .texture_idx = @intFromEnum(texture_schema.faces[face_idx]),
+                    .texture_idx = @intFromEnum(texture_scheme.faces[face_idx]),
                 };
 
-                model_indices.faces[face_idx] = @intCast(vertex_idx_and_texture_idx_buffer.len);
-                vertex_idx_and_texture_idx_buffer = vertex_idx_and_texture_idx_buffer ++ &[1]FaceVertex{vertex_idx_and_texture_idx};
+                model_indices.faces[face_idx] = @intCast(face_buffer.len);
+                face_buffer = face_buffer ++ &[1]FaceVertex{face_vertex};
             }
 
             block_to_model_indices[@intFromEnum(block)] = model_indices;
@@ -78,13 +78,13 @@ pub const Block = enum(u8) {
 
         break :expr .{
             .vertex_buffer = vertex_buffer,
-            .vertex_idx_and_texture_idx_buffer = vertex_idx_and_texture_idx_buffer,
+            .face_buffer = face_buffer,
             .block_to_model_indices = block_to_model_indices,
         };
     };
 
     pub const VERTEX_BUFFER = tmp.vertex_buffer;
-    pub const VERTEX_IDX_AND_TEXTURE_IDX_BUFFER = tmp.vertex_idx_and_texture_idx_buffer;
+    pub const FACE_BUFFER = tmp.face_buffer;
     const BLOCK_TO_MODEL_INDICES = tmp.block_to_model_indices;
 
     pub fn getModelIndices(self: Block) ModelIndices {
@@ -166,7 +166,7 @@ pub const Block = enum(u8) {
         };
     }
 
-    pub const Texture = enum {
+    pub const TextureIndex = enum {
         stone,
         grass_top,
         grass_side,
@@ -179,33 +179,17 @@ pub const Block = enum(u8) {
         ice,
         glass,
         glass_tinted,
-
-        pub const TEXTURES = std.enums.values(Texture);
-
-        const TEXTURE_TO_PATH = expr: {
-            var texture_to_path: [TEXTURES.len][:0]const u8 = undefined;
-
-            for (TEXTURES) |texture| {
-                texture_to_path[@intFromEnum(texture)] = "assets/textures/" ++ @tagName(texture) ++ ".png";
-            }
-
-            break :expr texture_to_path;
-        };
-
-        pub fn getPath(self: Texture) [:0]const u8 {
-            return TEXTURE_TO_PATH[@intFromEnum(self)];
-        }
     };
 
     pub const TextureScheme = struct {
-        faces: [6]Texture,
+        faces: [6]TextureIndex,
 
-        pub fn allSides(texture: Texture) TextureScheme {
-            return .{ .faces = @splat(texture) };
+        pub fn allSides(texture_index: TextureIndex) TextureScheme {
+            return .{ .faces = @splat(texture_index) };
         }
 
-        pub fn grass(top: Texture, bottom: Texture, sides: Texture) TextureScheme {
-            var faces: [6]Texture = @splat(sides);
+        pub fn grass(top: TextureIndex, bottom: TextureIndex, sides: TextureIndex) TextureScheme {
+            var faces: [6]TextureIndex = @splat(sides);
 
             faces[Side.top.idx()] = top;
             faces[Side.bottom.idx()] = bottom;
@@ -214,7 +198,7 @@ pub const Block = enum(u8) {
         }
     };
 
-    pub fn getTextureSchema(comptime self: Block) TextureScheme {
+    pub fn getTextureScheme(comptime self: Block) TextureScheme {
         return switch (self) {
             .stone => TextureScheme.allSides(.stone),
             .grass => TextureScheme.grass(.grass_top, .dirt, .grass_side),
@@ -337,7 +321,7 @@ pub const Block = enum(u8) {
         };
     };
 
-    pub const bounding_box: []const Vec3f = &.{
+    pub const BOUNDING_BOX_LINES_BUFFER: []const Vec3f = &.{
         .{ .x = 0, .y = 0, .z = 0 },
         .{ .x = 0, .y = 0, .z = 1 },
         .{ .x = 1, .y = 0, .z = 0 },

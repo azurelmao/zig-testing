@@ -2,31 +2,21 @@ const std = @import("std");
 const glfw = @import("glfw");
 const gl = @import("gl");
 const stbi = @import("zstbi");
-
+const callback = @import("callback.zig");
+const ui = @import("ui.zig");
 const World = @import("World.zig");
 const Chunk = @import("Chunk.zig");
 const Block = @import("block.zig").Block;
-const Side = @import("side.zig").Side;
-
-const ShaderProgram = @import("ShaderProgram.zig");
-const ShaderStorageBuffer = @import("buffer.zig").ShaderStorageBuffer;
-const ShaderStorageBufferUnmanaged = @import("buffer.zig").ShaderStorageBufferUnmanaged;
-const Vec3f = @import("vec3f.zig").Vec3f;
-const Matrix4x4f = @import("Matrix4x4f.zig");
 const Camera = @import("Camera.zig");
 const Screen = @import("Screen.zig");
-const TextureArray2D = @import("TextureArray2D.zig");
-const Texture2D = @import("Texture2D.zig");
 const ChunkMeshLayers = @import("ChunkMeshLayers.zig");
-const chunk_bounding_box = @import("chunk_bounding_box.zig");
-const callbacks = @import("callbacks.zig");
-const ui = @import("ui.zig");
+const ShaderPrograms = @import("ShaderPrograms.zig");
+const Textures = @import("Textures.zig");
+const ShaderStorageBuffers = @import("ShaderStorageBuffers.zig");
 
 pub const std_options: std.Options = .{
     .log_level = .info,
 };
-
-var procs: gl.ProcTable = undefined;
 
 fn onRaycast(allocator: std.mem.Allocator, world: *World, text_manager: *ui.TextManager, result: World.RaycastResult) !void {
     const world_pos = result.pos;
@@ -128,174 +118,166 @@ const Settings = struct {
     movement_speed: gl.float = 16.0,
 };
 
+const Game = struct {
+    const DEBUG_CONTEXT = true;
+
+    settings: Settings,
+    screen: Screen,
+    camera: Camera,
+    window: glfw.Window,
+    callback_user_data: callback.UserData,
+    shader_programs: ShaderPrograms,
+    textures: Textures,
+    shader_storage_buffers: ShaderStorageBuffers,
+    // uniform_buffers: UniformBuffers,
+    world: World,
+
+    fn init(allocator: std.mem.Allocator) !Game {
+        const settings = Settings{};
+        const screen = Screen{};
+        const camera = Camera.init(.new(0, 0, 0), 0, 0, screen.aspect_ratio);
+
+        try initGLFW();
+        const window = try initWindow(&screen);
+        const callback_user_data = callback.UserData{};
+
+        try initGL();
+        const shader_programs = try ShaderPrograms.init(allocator);
+
+        stbi.init(allocator);
+        const textures = try Textures.init();
+
+        const shader_storage_buffers = try ShaderStorageBuffers.init();
+
+        const world = try World.init(30);
+
+        return .{
+            .settings = settings,
+            .screen = screen,
+            .camera = camera,
+            .window = window,
+            .callback_user_data = callback_user_data,
+            .shader_programs = shader_programs,
+            .textures = textures,
+            .shader_storage_buffers = shader_storage_buffers,
+            .world = world,
+        };
+    }
+
+    fn initGLFW() !void {
+        glfw.setErrorCallback(callback.errorCallback);
+
+        if (!glfw.init(.{})) {
+            std.log.err("failed to initialize GLFW: {?s}", .{glfw.getErrorString()});
+            return error.GLFWInitFailed;
+        }
+    }
+
+    fn initGL() !void {
+        // My laptop's iGPU (Intel UHD Graphics 620) says it supports GL 4.6, but glfw fails to init these functions:
+        // - glGetnTexImage
+        // - glGetnUniformdv
+        // - glMultiDrawArraysIndirectCount
+        // - glMultiDrawElementsIndirectCount
+        const supports_gl46 = expr: {
+            const glGetString: @FieldType(gl.ProcTable, "GetString") = @ptrCast(glfw.getProcAddress("glGetString").?);
+            const version_str = glGetString(gl.VERSION).?;
+
+            break :expr version_str[0] == '4' and version_str[2] == '6';
+        };
+
+        const getProcAddress = struct {
+            fn getProcAddress(proc_name: [*:0]const u8) callconv(.C) ?glfw.GLProc {
+                if (glfw.getProcAddress(proc_name)) |proc_address| return proc_address;
+                std.log.err("failed to initialize proc: {?s}", .{proc_name});
+                return null;
+            }
+        }.getProcAddress;
+
+        if (!procs.init(getProcAddress) and !supports_gl46) return error.ProcInitFailed;
+
+        gl.makeProcTableCurrent(&procs);
+
+        var flags: gl.int = undefined;
+        gl.GetIntegerv(gl.CONTEXT_FLAGS, @ptrCast(&flags));
+        if (flags & gl.CONTEXT_FLAG_DEBUG_BIT > 0) {
+            gl.Enable(gl.DEBUG_OUTPUT);
+            gl.Enable(gl.DEBUG_OUTPUT_SYNCHRONOUS);
+            gl.DebugMessageCallback(callback.debugCallback, null);
+            gl.DebugMessageControl(gl.DONT_CARE, gl.DONT_CARE, gl.DONT_CARE, 0, null, gl.TRUE);
+        } else if (DEBUG_CONTEXT) {
+            std.log.err("failed to load OpenGL debug context", .{});
+            return error.DebugContextFailed;
+        }
+
+        // Without this, texture data is aligned to vec4s even when specifying data format to be RED
+        gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    }
+
+    fn initWindow(screen: *const Screen) !glfw.Window {
+        const window = glfw.Window.create(@intCast(screen.window_width), @intCast(screen.window_height), "Natura ex Deus", null, null, .{
+            .opengl_profile = .opengl_core_profile,
+            .context_version_major = 4,
+            .context_version_minor = 6,
+            .context_debug = DEBUG_CONTEXT,
+        }) orelse {
+            std.log.err("failed to create GLFW window: {?s}", .{glfw.getErrorString()});
+            return error.WindowCreationFailed;
+        };
+
+        glfw.makeContextCurrent(window);
+
+        window.setInputModeCursor(.disabled);
+        window.setCursorPos(screen.prev_cursor_x, screen.prev_cursor_y);
+        window.setCursorPosCallback(callback.cursorCallback);
+        window.setFramebufferSizeCallback(callback.framebufferSizeCallback);
+        window.setKeyCallback(callback.keyCallback);
+
+        return window;
+    }
+
+    fn setWindowUserPointer(self: *Game) void {
+        self.window.setUserPointer(@ptrCast(&self.callback_user_data));
+    }
+
+    fn deinit(self: *Game) void {
+        self.window.destroy();
+        gl.makeProcTableCurrent(null);
+        glfw.terminate();
+        stbi.deinit();
+    }
+};
+
+var procs: gl.ProcTable = undefined;
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    stbi.init(allocator);
+    var game = try Game.init(allocator);
+    defer game.deinit();
 
-    glfw.setErrorCallback(callbacks.errorCallback);
-    if (!glfw.init(.{})) {
-        std.log.err("failed to initialize GLFW: {?s}", .{glfw.getErrorString()});
-        return error.GLFWInitFailed;
-    }
-    defer glfw.terminate();
+    // Has to be outside init to not create a dangling ptr
+    game.setWindowUserPointer();
 
-    const settings = Settings{};
-    var screen = Screen{};
-    var camera = Camera.init(.new(0, 0, 0), 0, 0, screen.aspect_ratio);
-
-    const debug_context = true;
-
-    const window = glfw.Window.create(@intCast(screen.window_width), @intCast(screen.window_height), "Natura ex Deus", null, null, .{
-        .opengl_profile = .opengl_core_profile,
-        .context_version_major = 4,
-        .context_version_minor = 6,
-        .context_debug = debug_context,
-    }) orelse {
-        std.log.err("failed to create GLFW window: {?s}", .{glfw.getErrorString()});
-        return error.WindowCreationFailed;
-    };
-    defer window.destroy();
-
-    glfw.makeContextCurrent(window);
-
-    // My iGPU (Intel UHD Graphics 620) says it supports GL 4.6, but glfw fails to init these functions:
-    // - glGetnTexImage
-    // - glGetnUniformdv
-    // - glMultiDrawArraysIndirectCount
-    // - glMultiDrawElementsIndirectCount
-    const supports_gl46 = expr: {
-        const glGetString: @FieldType(gl.ProcTable, "GetString") = @ptrCast(glfw.getProcAddress("glGetString").?);
-        const version_str = glGetString(gl.VERSION).?;
-
-        break :expr version_str[0] == '4' and version_str[2] == '6';
-    };
-
-    if (!procs.init(glfw.getProcAddress) and !supports_gl46) return error.ProcInitFailed;
-
-    gl.makeProcTableCurrent(&procs);
-    defer gl.makeProcTableCurrent(null);
-
-    var flags: gl.int = undefined;
-    gl.GetIntegerv(gl.CONTEXT_FLAGS, @ptrCast(&flags));
-    if (flags & gl.CONTEXT_FLAG_DEBUG_BIT > 0) {
-        gl.Enable(gl.DEBUG_OUTPUT);
-        gl.Enable(gl.DEBUG_OUTPUT_SYNCHRONOUS);
-        gl.DebugMessageCallback(callbacks.debugCallback, null);
-        gl.DebugMessageControl(gl.DONT_CARE, gl.DONT_CARE, gl.DONT_CARE, 0, null, gl.TRUE);
-    } else if (debug_context) {
-        std.log.err("Failed to load OpenGL debug context", .{});
-    }
-
-    var window_user_data = callbacks.WindowUserData{};
-
-    window.setUserPointer(@ptrCast(&window_user_data));
-
-    window.setInputModeCursor(.disabled);
-    window.setCursorPos(screen.prev_cursor_x, screen.prev_cursor_y);
-    window.setCursorPosCallback(callbacks.cursorCallback);
-    window.setFramebufferSizeCallback(callbacks.framebufferSizeCallback);
-    window.setKeyCallback(callbacks.keyCallback);
-
-    var chunks_shader_program = try ShaderProgram.init(allocator, "assets/shaders/chunks_vs.glsl", "assets/shaders/chunks_fs.glsl");
-    chunks_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
-
-    var chunks_bb_shader_program = try ShaderProgram.init(allocator, "assets/shaders/chunks_bb_vs.glsl", "assets/shaders/chunks_bb_fs.glsl");
-    chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
-
-    var chunks_debug_shader_program = try ShaderProgram.init(allocator, "assets/shaders/chunks_debug_vs.glsl", "assets/shaders/chunks_debug_fs.glsl");
-    chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
-
-    var text_shader_program = try ShaderProgram.init(allocator, "assets/shaders/text_vs.glsl", "assets/shaders/text_fs.glsl");
-
-    var selected_block_shader_program = try ShaderProgram.init(allocator, "assets/shaders/selected_block_vs.glsl", "assets/shaders/selected_block_fs.glsl");
-    selected_block_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
-
-    var selected_side_shader_program = try ShaderProgram.init(allocator, "assets/shaders/selected_side_vs.glsl", "assets/shaders/selected_side_fs.glsl");
-    selected_side_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
-
-    var crosshair_shader_program = try ShaderProgram.init(allocator, "assets/shaders/crosshair_vs.glsl", "assets/shaders/crosshair_fs.glsl");
-    crosshair_shader_program.setUniform2f("uWindowSize", screen.window_width_f, screen.window_height_f);
-
-    gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1);
-
-    var block_images = std.ArrayList(stbi.Image).init(allocator);
-
-    for (Block.Texture.TEXTURES) |texture| {
-        const image = try stbi.Image.loadFromFile(texture.getPath(), 0);
-        try block_images.append(image);
-    }
-
-    const block_textures = try TextureArray2D.init(block_images.items, 16, 16, .{
-        .texture_format = .rgba8,
-        .data_format = .rgba,
-    });
-    block_textures.bind(0);
-
-    var font_image = try stbi.Image.loadFromFile("assets/textures/font.png", 0);
-    var glyph_images = try allocator.alloc(stbi.Image, ui.Glyph.len);
-
-    for (0..ui.Glyph.len) |glyph_idx| {
-        const base_x = glyph_idx * 6;
-
-        var glyph_image = try stbi.Image.createEmpty(6, 6, 1, .{});
-
-        var data_idx: usize = 0;
-        for (0..6) |y| {
-            for (0..6) |x_| {
-                const x = base_x + x_;
-                const image_idx = y * font_image.width + x;
-
-                glyph_image.data[data_idx] = font_image.data[image_idx];
-                data_idx += 1;
-            }
-        }
-
-        glyph_images[glyph_idx] = glyph_image;
-    }
-
-    const font_texture = try TextureArray2D.init(glyph_images, 6, 6, .{
-        .texture_format = .r8,
-        .data_format = .r,
-    });
-    font_texture.bind(1);
-
-    var crosshair_image = try stbi.Image.loadFromFile("assets/textures/crosshair.png", 1);
-
-    const crosshair_texture = Texture2D.init(crosshair_image, .{
-        .texture_format = .r8,
-        .data_format = .r,
-    });
-    crosshair_texture.bind(2);
-
-    var indirect_light_image = try stbi.Image.loadFromFile("assets/textures/indirect_light.png", 4);
-    var indirect_light_data: [16]Vec3f = undefined;
-    for (0..(indirect_light_image.data.len / 4)) |idx| {
-        const vec3 = Vec3f{
-            .x = @as(gl.float, @floatFromInt(indirect_light_image.data[idx * 4])) / 255.0,
-            .y = @as(gl.float, @floatFromInt(indirect_light_image.data[idx * 4 + 1])) / 255.0,
-            .z = @as(gl.float, @floatFromInt(indirect_light_image.data[idx * 4 + 2])) / 255.0,
-        };
-
-        indirect_light_data[idx] = vec3;
-    }
-
-    var indirect_light_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
-    indirect_light_buffer.initBufferAndBind(&indirect_light_data, 4);
+    game.shader_programs.chunks.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
+    game.shader_programs.chunks_bb.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
+    game.shader_programs.chunks_debug.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
+    game.shader_programs.selected_block.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
+    game.shader_programs.selected_side.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
+    game.shader_programs.crosshair.setUniform2f("uWindowSize", game.screen.window_width_f, game.screen.window_height_f);
 
     var debug_timer = try std.time.Timer.start();
 
     debug_timer.reset();
-    var world = try World.init(30);
-    try world.generate(allocator);
+    try game.world.generate(allocator);
 
     var debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Generating world done. {d} s", .{debug_time});
 
     debug_timer.reset();
-    try world.propagateLights(allocator);
+    try game.world.propagateLights(allocator);
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Indirect light propagation done. {d} s", .{debug_time});
@@ -336,29 +318,29 @@ pub fn main() !void {
         for (0..15) |z_| {
             const z: i16 = @intCast(z_);
 
-            try world.setBlockAndAffectLight(allocator, .{ .x = x, .y = 20, .z = z }, .bricks);
+            try game.world.setBlockAndAffectLight(allocator, .{ .x = x, .y = 20, .z = z }, .bricks);
         }
     }
 
     debug_timer.reset();
-    try world.propagateLights(allocator);
+    try game.world.propagateLights(allocator);
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Light propagation done. {d} s", .{debug_time});
 
-    var result = world.raycast(camera.position, camera.direction);
+    var result = game.world.raycast(game.camera.position, game.camera.direction);
     var draw_selected_side = false;
     {
         const selected_pos = result.pos.toVec3f();
-        selected_block_shader_program.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
-        selected_side_shader_program.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
+        game.shader_programs.selected_block.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
+        game.shader_programs.selected_side.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
 
         const side = result.side;
 
         if (side != .out_of_bounds and side != .inside) {
             if (result.block) |block| {
                 const model_idx = block.getModelIndices().faces[side.idx()];
-                selected_side_shader_program.setUniform1ui("uModelIdx", model_idx);
+                game.shader_programs.selected_side.setUniform1ui("uModelIdx", model_idx);
 
                 draw_selected_side = true;
             } else {
@@ -372,43 +354,29 @@ pub fn main() !void {
     var chunk_mesh_layers = ChunkMeshLayers.init();
 
     debug_timer.reset();
-    try chunk_mesh_layers.generate(allocator, &world);
+    try chunk_mesh_layers.generate(allocator, &game.world);
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Chunk mesh buffers done. {d} s", .{debug_time});
 
     debug_timer.reset();
-    var visible_num = chunk_mesh_layers.cull(&camera);
+    var visible_num = chunk_mesh_layers.cull(&game.camera);
 
     debug_time = @as(f64, @floatFromInt(debug_timer.lap())) / 1_000_000_000.0;
     std.log.info("Culling done. {d} s", .{debug_time});
 
-    var block_vertex_buffer = ShaderStorageBufferUnmanaged(Block.Vertex).init(gl.DYNAMIC_STORAGE_BIT);
-    block_vertex_buffer.initBufferAndBind(Block.VERTEX_BUFFER, 0);
-
-    var block_face_buffer = ShaderStorageBufferUnmanaged(Block.FaceVertex).init(gl.DYNAMIC_STORAGE_BIT);
-    block_face_buffer.initBufferAndBind(Block.VERTEX_IDX_AND_TEXTURE_IDX_BUFFER, 1);
-
-    chunk_mesh_layers.pos.initBufferAndBind(2);
+    chunk_mesh_layers.pos.uploadAndOrResize();
 
     inline for (0..Block.Layer.len) |layer_idx| {
         const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-        if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
-            chunk_mesh_layer.mesh.initBuffer();
+        if (chunk_mesh_layer.mesh.data.items.len > 0) {
+            chunk_mesh_layer.mesh.uploadAndOrResize();
         }
 
-        chunk_mesh_layer.command.initBufferAndBind(6 + layer_idx);
+        chunk_mesh_layer.command.uploadAndOrResize();
+        chunk_mesh_layer.command.bind(6 + layer_idx);
     }
-
-    var bounding_box_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
-    bounding_box_buffer.initBufferAndBind(chunk_bounding_box.vertices, 5);
-
-    var bounding_box_lines_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
-    bounding_box_lines_buffer.initBufferAndBind(chunk_bounding_box.lines, 11);
-
-    var selected_block_buffer = ShaderStorageBufferUnmanaged(Vec3f).init(gl.DYNAMIC_STORAGE_BIT);
-    selected_block_buffer.initBufferAndBind(Block.bounding_box, 13);
 
     var text_manager = ui.TextManager.init();
 
@@ -418,7 +386,7 @@ pub fn main() !void {
 
     var offscreen_texture_handle: gl.uint = undefined;
     gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&offscreen_texture_handle));
-    gl.TextureStorage2D(offscreen_texture_handle, 1, gl.RGBA8, screen.window_width, screen.window_height);
+    gl.TextureStorage2D(offscreen_texture_handle, 1, gl.RGBA8, game.screen.window_width, game.screen.window_height);
     gl.BindTextureUnit(3, offscreen_texture_handle);
 
     var offscreen_framebuffer_handle: gl.uint = undefined;
@@ -437,57 +405,57 @@ pub fn main() !void {
     var delta_time: gl.float = 1.0 / 60.0;
     var timer = try std.time.Timer.start();
 
-    while (!window.shouldClose()) {
-        const mouse_speed = settings.mouse_speed * delta_time;
-        const movement_speed = settings.movement_speed * delta_time;
+    while (!game.window.shouldClose()) {
+        const mouse_speed = game.settings.mouse_speed * delta_time;
+        const movement_speed = game.settings.movement_speed * delta_time;
 
         var calc_view_matrix = false;
         var calc_projection_matrix = false;
 
-        if (window.getKey(glfw.Key.s) == .press) {
-            camera.position.subtractInPlace(camera.horizontal_direction.multiplyScalar(movement_speed));
+        if (game.window.getKey(glfw.Key.s) == .press) {
+            game.camera.position.subtractInPlace(game.camera.horizontal_direction.multiplyScalar(movement_speed));
             calc_view_matrix = true;
         }
 
-        if (window.getKey(glfw.Key.w) == .press) {
-            camera.position.addInPlace(camera.horizontal_direction.multiplyScalar(movement_speed));
+        if (game.window.getKey(glfw.Key.w) == .press) {
+            game.camera.position.addInPlace(game.camera.horizontal_direction.multiplyScalar(movement_speed));
             calc_view_matrix = true;
         }
 
-        if (window.getKey(glfw.Key.left_shift) == .press) {
-            camera.position.subtractInPlace(Camera.up.multiplyScalar(movement_speed));
+        if (game.window.getKey(glfw.Key.left_shift) == .press) {
+            game.camera.position.subtractInPlace(Camera.up.multiplyScalar(movement_speed));
             calc_view_matrix = true;
         }
 
-        if (window.getKey(glfw.Key.space) == .press) {
-            camera.position.addInPlace(Camera.up.multiplyScalar(movement_speed));
+        if (game.window.getKey(glfw.Key.space) == .press) {
+            game.camera.position.addInPlace(Camera.up.multiplyScalar(movement_speed));
             calc_view_matrix = true;
         }
 
-        if (window.getKey(glfw.Key.a) == .press) {
-            camera.position.subtractInPlace(camera.right.multiplyScalar(movement_speed));
+        if (game.window.getKey(glfw.Key.a) == .press) {
+            game.camera.position.subtractInPlace(game.camera.right.multiplyScalar(movement_speed));
             calc_view_matrix = true;
         }
 
-        if (window.getKey(glfw.Key.d) == .press) {
-            camera.position.addInPlace(camera.right.multiplyScalar(movement_speed));
+        if (game.window.getKey(glfw.Key.d) == .press) {
+            game.camera.position.addInPlace(game.camera.right.multiplyScalar(movement_speed));
             calc_view_matrix = true;
         }
 
-        if (window_user_data.new_window_size) |new_window_size| {
-            screen.window_width = new_window_size.window_width;
-            screen.window_height = new_window_size.window_height;
-            screen.window_width_f = @floatFromInt(new_window_size.window_width);
-            screen.window_height_f = @floatFromInt(new_window_size.window_height);
+        if (game.callback_user_data.new_window_size) |new_window_size| {
+            game.screen.window_width = new_window_size.window_width;
+            game.screen.window_height = new_window_size.window_height;
+            game.screen.window_width_f = @floatFromInt(new_window_size.window_width);
+            game.screen.window_height_f = @floatFromInt(new_window_size.window_height);
 
-            screen.calcAspectRatio();
-            crosshair_shader_program.setUniform2f("uWindowSize", screen.window_width_f, screen.window_height_f);
+            game.screen.calcAspectRatio();
+            game.shader_programs.crosshair.setUniform2f("uWindowSize", game.screen.window_width_f, game.screen.window_height_f);
 
-            gl.Viewport(0, 0, screen.window_width, screen.window_height);
+            gl.Viewport(0, 0, game.screen.window_width, game.screen.window_height);
 
             gl.DeleteTextures(1, @ptrCast(&offscreen_texture_handle));
             gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&offscreen_texture_handle));
-            gl.TextureStorage2D(offscreen_texture_handle, 1, gl.RGBA8, screen.window_width, screen.window_height);
+            gl.TextureStorage2D(offscreen_texture_handle, 1, gl.RGBA8, game.screen.window_width, game.screen.window_height);
             gl.BindTextureUnit(3, offscreen_texture_handle);
 
             gl.DeleteFramebuffers(1, @ptrCast(&offscreen_framebuffer_handle));
@@ -497,48 +465,48 @@ pub fn main() !void {
             calc_projection_matrix = true;
         }
 
-        if (window_user_data.new_cursor_pos) |new_cursor_pos| {
-            const offset_x = (new_cursor_pos.cursor_x - screen.prev_cursor_x) * mouse_speed;
-            const offset_y = (screen.prev_cursor_y - new_cursor_pos.cursor_y) * mouse_speed;
+        if (game.callback_user_data.new_cursor_pos) |new_cursor_pos| {
+            const offset_x = (new_cursor_pos.cursor_x - game.screen.prev_cursor_x) * mouse_speed;
+            const offset_y = (game.screen.prev_cursor_y - new_cursor_pos.cursor_y) * mouse_speed;
 
-            screen.prev_cursor_x = new_cursor_pos.cursor_x;
-            screen.prev_cursor_y = new_cursor_pos.cursor_y;
+            game.screen.prev_cursor_x = new_cursor_pos.cursor_x;
+            game.screen.prev_cursor_y = new_cursor_pos.cursor_y;
 
-            camera.yaw += offset_x;
-            camera.pitch = std.math.clamp(camera.pitch + offset_y, -89.0, 89.0);
+            game.camera.yaw += offset_x;
+            game.camera.pitch = std.math.clamp(game.camera.pitch + offset_y, -89.0, 89.0);
 
-            camera.calcDirectionAndRight();
+            game.camera.calcDirectionAndRight();
 
             calc_view_matrix = true;
         }
 
         if (calc_view_matrix) {
-            camera.calcViewMatrix();
+            game.camera.calcViewMatrix();
 
-            chunks_shader_program.setUniform3f("uCameraPosition", camera.position.x, camera.position.y, camera.position.z);
+            game.shader_programs.chunks.setUniform3f("uCameraPosition", game.camera.position.x, game.camera.position.y, game.camera.position.z);
         }
 
         if (calc_projection_matrix) {
-            camera.calcProjectionMatrix(screen.aspect_ratio);
+            game.camera.calcProjectionMatrix(game.screen.aspect_ratio);
         }
 
         const calc_view_projection_matrix = calc_view_matrix or calc_projection_matrix;
         if (calc_view_projection_matrix) {
-            camera.calcViewProjectionMatrix();
-            camera.calcFrustumPlanes();
+            game.camera.calcViewProjectionMatrix();
+            game.camera.calcFrustumPlanes();
 
-            result = world.raycast(camera.position, camera.direction);
+            result = game.world.raycast(game.camera.position, game.camera.direction);
 
             const selected_pos = result.pos.toVec3f();
-            selected_block_shader_program.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
-            selected_side_shader_program.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
+            game.shader_programs.selected_block.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
+            game.shader_programs.selected_side.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
 
             const side = result.side;
 
             if (side != .out_of_bounds and side != .inside) {
                 if (result.block) |block| {
                     const model_idx = block.getModelIndices().faces[side.idx()];
-                    selected_side_shader_program.setUniform1ui("uModelIdx", model_idx);
+                    game.shader_programs.selected_side.setUniform1ui("uModelIdx", model_idx);
 
                     draw_selected_side = true;
                 } else {
@@ -548,34 +516,34 @@ pub fn main() !void {
                 draw_selected_side = false;
             }
 
-            chunks_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
-            chunks_bb_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
-            chunks_debug_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
-            selected_block_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
-            selected_side_shader_program.setUniformMatrix4f("uViewProjection", camera.view_projection_matrix);
+            game.shader_programs.chunks.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
+            game.shader_programs.chunks_bb.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
+            game.shader_programs.chunks_debug.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
+            game.shader_programs.selected_block.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
+            game.shader_programs.selected_side.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
         }
 
         if (calc_view_projection_matrix) {
-            visible_num = chunk_mesh_layers.cull(&camera);
+            visible_num = chunk_mesh_layers.cull(&game.camera);
             chunk_mesh_layers.uploadCommandBuffers();
         }
 
         gl.ClearColor(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-        chunks_shader_program.bind();
+        game.shader_programs.chunks.bind();
         inline for (0..Block.Layer.len) |layer_idx| {
             const chunk_mesh_layer = &chunk_mesh_layers.layers[layer_idx];
 
-            if (chunk_mesh_layer.mesh.buffer.items.len > 0) {
-                chunk_mesh_layer.mesh.bindBuffer(3);
-                chunk_mesh_layer.command.bindIndirectBuffer();
+            if (chunk_mesh_layer.mesh.data.items.len > 0) {
+                chunk_mesh_layer.mesh.bind(3);
+                chunk_mesh_layer.command.bindAsIndirectBuffer();
 
-                gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.buffer.items.len), 0);
+                gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(chunk_mesh_layer.command.data.items.len), 0);
             }
         }
 
-        chunks_bb_shader_program.bind();
+        game.shader_programs.chunks_bb.bind();
         {
             gl.Enable(gl.POLYGON_OFFSET_FILL);
             defer gl.Disable(gl.POLYGON_OFFSET_FILL);
@@ -590,13 +558,13 @@ pub fn main() !void {
             defer gl.ColorMask(gl.TRUE, gl.TRUE, gl.TRUE, gl.TRUE);
 
             gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
-            gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(chunk_mesh_layers.pos.buffer.items.len));
+            gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(chunk_mesh_layers.pos.data.items.len));
             gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
         }
 
-        gl.BlitNamedFramebuffer(0, offscreen_framebuffer_handle, 0, 0, screen.window_width, screen.window_height, 0, 0, screen.window_width, screen.window_height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+        gl.BlitNamedFramebuffer(0, offscreen_framebuffer_handle, 0, 0, game.screen.window_width, game.screen.window_height, 0, 0, game.screen.window_width, game.screen.window_height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
 
-        chunks_debug_shader_program.bind();
+        game.shader_programs.chunks_debug.bind();
         {
             gl.Enable(gl.POLYGON_OFFSET_LINE);
             defer gl.Disable(gl.POLYGON_OFFSET_LINE);
@@ -607,11 +575,11 @@ pub fn main() !void {
             gl.Enable(gl.LINE_SMOOTH);
             defer gl.Disable(gl.LINE_SMOOTH);
 
-            gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(chunk_mesh_layers.pos.buffer.items.len));
+            gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(chunk_mesh_layers.pos.data.items.len));
         }
 
         if (draw_selected_side) {
-            selected_side_shader_program.bind();
+            game.shader_programs.selected_side.bind();
             {
                 gl.Enable(gl.POLYGON_OFFSET_FILL);
                 defer gl.Disable(gl.POLYGON_OFFSET_FILL);
@@ -623,7 +591,7 @@ pub fn main() !void {
             }
         }
 
-        selected_block_shader_program.bind();
+        game.shader_programs.selected_block.bind();
         {
             gl.Enable(gl.POLYGON_OFFSET_LINE);
             defer gl.Disable(gl.POLYGON_OFFSET_LINE);
@@ -637,10 +605,10 @@ pub fn main() !void {
             gl.DepthFunc(gl.LEQUAL);
             defer gl.DepthFunc(gl.LESS);
 
-            gl.DrawArrays(gl.LINES, 0, Block.bounding_box.len);
+            gl.DrawArrays(gl.LINES, 0, Block.BOUNDING_BOX_LINES_BUFFER.len);
         }
 
-        crosshair_shader_program.bind();
+        game.shader_programs.crosshair.bind();
         gl.DrawArrays(gl.TRIANGLES, 0, 6);
 
         text_manager.clear();
@@ -654,17 +622,17 @@ pub fn main() !void {
         try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 6,
-            .text = try std.fmt.allocPrint(allocator, "visible: {}/{}", .{ visible_num, chunk_mesh_layers.pos.buffer.items.len * 6 }),
+            .text = try std.fmt.allocPrint(allocator, "visible: {}/{}", .{ visible_num, chunk_mesh_layers.pos.data.items.len * 6 }),
         });
 
-        const camera_chunk_pos = camera.position.toChunkPos();
+        const camera_chunk_pos = game.camera.position.toChunkPos();
         try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 12,
             .text = try std.fmt.allocPrint(allocator, "chunk: [x: {} y: {} z: {}]", .{ camera_chunk_pos.x, camera_chunk_pos.y, camera_chunk_pos.z }),
         });
 
-        const camera_world_pos = camera.position.toWorldPos();
+        const camera_world_pos = game.camera.position.toWorldPos();
         const camera_local_pos = camera_world_pos.toLocalPos();
         try text_manager.append(allocator, .{
             .pixel_x = 0,
@@ -681,40 +649,27 @@ pub fn main() !void {
         try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 30,
-            .text = try std.fmt.allocPrint(allocator, "camera: [x: {d:.6} y: {d:.6} z: {d:.6}]", .{ camera.position.x, camera.position.y, camera.position.z }),
+            .text = try std.fmt.allocPrint(allocator, "camera: [x: {d:.6} y: {d:.6} z: {d:.6}]", .{ game.camera.position.x, game.camera.position.y, game.camera.position.z }),
         });
 
         try text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = 36,
-            .text = try std.fmt.allocPrint(allocator, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(camera.yaw, 360.0) - 180.0, camera.pitch }),
+            .text = try std.fmt.allocPrint(allocator, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(game.camera.yaw, 360.0) - 180.0, game.camera.pitch }),
         });
 
-        try onRaycast(allocator, &world, &text_manager, result);
+        try onRaycast(allocator, &game.world, &text_manager, result);
 
-        try text_manager.buildVertices(allocator, screen.window_width, screen.window_height, settings.ui_scale);
-        text_manager.text_vertices.resizeBufferAndBind(12);
+        try text_manager.buildVertices(allocator, game.screen.window_width, game.screen.window_height, game.settings.ui_scale);
+        text_manager.text_vertices.uploadAndOrResize();
+        text_manager.text_vertices.bind(12);
 
-        text_shader_program.bind();
-        gl.DrawArrays(gl.TRIANGLES, 0, @intCast(text_manager.text_vertices.buffer.items.len));
+        game.shader_programs.text.bind();
+        gl.DrawArrays(gl.TRIANGLES, 0, @intCast(text_manager.text_vertices.data.items.len));
 
         delta_time = @floatCast(@as(f64, @floatFromInt(timer.lap())) / 1_000_000_000.0);
 
-        window.swapBuffers();
+        game.window.swapBuffers();
         glfw.pollEvents();
     }
-
-    for (block_images.items) |*image| {
-        image.deinit();
-    }
-
-    for (glyph_images) |*image| {
-        image.deinit();
-    }
-
-    indirect_light_image.deinit();
-    font_image.deinit();
-    crosshair_image.deinit();
-
-    stbi.deinit();
 }
