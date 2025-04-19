@@ -5,7 +5,7 @@ const Chunk = @import("Chunk.zig");
 const World = @import("World.zig");
 const Vec3f = @import("vec3f.zig").Vec3f;
 const Camera = @import("Camera.zig");
-const ShaderStorageBufferWithArrayList = @import("buffer.zig").ShaderStorageBufferWithArrayList;
+const ShaderStorageBufferWithArrayList = @import("shader_storage_buffer.zig").ShaderStorageBufferWithArrayList;
 const ChunkMesh = @import("ChunkMesh.zig");
 
 const WorldMesh = @This();

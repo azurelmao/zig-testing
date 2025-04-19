@@ -30,16 +30,6 @@ layout (binding = 4, std430) readonly buffer ssbo4 {
     vec3 sIndirectLight[];
 };
 
-uniform mat4 uViewProjection;
-
-out vec2 pTextureUV;
-flat out uint pTextureIdx;
-
-flat out float pNormalLight;
-flat out vec3 pLight;
-
-out vec3 pVertexPosition;
-
 vec3 unpackLocalPosition(uint data) {
     float x = bitfieldExtract(data, 0, 5);
     float y = bitfieldExtract(data, 5, 5);
@@ -97,6 +87,18 @@ const float[6] normalLight = float[](
     0.8,
     0.8
 );
+
+layout (binding = 0, std140) uniform ubo0 {
+    mat4 uViewProjection;
+    vec3 uSelectedBlockPosition;
+};
+
+out vec2 pTextureUV;
+flat out uint pTextureIdx;
+flat out float pNormalLight;
+flat out vec3 pLight;
+
+out vec3 pVertexPosition;
 
 void main() {
     LocalPosAndModelIdx perQuadData = sLocalPosAndModelIdx[gl_VertexID / 6];

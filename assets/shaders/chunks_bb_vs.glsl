@@ -8,7 +8,10 @@ layout (binding = 5, std430) readonly buffer ssbo5 {
     vec3 sBoundingBox[];
 };
 
-uniform mat4 uViewProjection;
+layout (binding = 0, std140) uniform ubo0 {
+    mat4 uViewProjection;
+    vec3 uSelectedBlockPosition;
+};
 
 flat out uint pDrawCommandId;
 

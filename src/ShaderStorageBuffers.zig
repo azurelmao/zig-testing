@@ -2,7 +2,7 @@ const gl = @import("gl");
 const stbi = @import("zstbi");
 const assets = @import("assets.zig");
 const ChunkMesh = @import("ChunkMesh.zig");
-const ShaderStorageBuffer = @import("buffer.zig").ShaderStorageBuffer;
+const ShaderStorageBuffer = @import("shader_storage_buffer.zig").ShaderStorageBuffer;
 const Vec3f = @import("vec3f.zig").Vec3f;
 const Block = @import("block.zig").Block;
 

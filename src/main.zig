@@ -10,6 +10,7 @@ const Block = @import("block.zig").Block;
 const Camera = @import("Camera.zig");
 const Screen = @import("Screen.zig");
 const WorldMesh = @import("WorldMesh.zig");
+const UniformBuffer = @import("UniformBuffer.zig");
 const ShaderPrograms = @import("ShaderPrograms.zig");
 const Textures = @import("Textures.zig");
 const ShaderStorageBuffers = @import("ShaderStorageBuffers.zig");
@@ -127,7 +128,7 @@ const Game = struct {
     camera: Camera,
     window: glfw.Window,
     callback_user_data: callback.UserData,
-    // uniform_buffers: UniformBuffers,
+    uniform_buffer: UniformBuffer,
     shader_programs: ShaderPrograms,
     textures: Textures,
     shader_storage_buffers: ShaderStorageBuffers,
@@ -142,20 +143,24 @@ const Game = struct {
         const screen = Screen{};
         const camera = Camera.init(.new(0, 0, 0), 0, 0, screen.aspect_ratio);
 
+        const world = try World.init(30);
+        const selected_block = world.raycast(camera.position, camera.direction);
+
         try initGLFW();
         const window = try initWindow(&screen);
         const callback_user_data = callback.UserData{};
 
         try initGL();
+        const uniform_buffer = UniformBuffer.init(0, .{
+            .view_projection_matrix = camera.view_projection_matrix,
+            .selected_block_pos = selected_block.pos.toVec3f(),
+        });
         const shader_programs = try ShaderPrograms.init(allocator);
 
         stbi.init(allocator);
         const textures = try Textures.init();
         const shader_storage_buffers = try ShaderStorageBuffers.init();
         const offscreen_framebuffer = try Framebuffer.init(3, screen.window_width, screen.window_height);
-
-        const world = try World.init(30);
-        const selected_block = world.raycast(camera.position, camera.direction);
 
         const world_mesh = WorldMesh.init();
 
@@ -165,6 +170,7 @@ const Game = struct {
             .camera = camera,
             .window = window,
             .callback_user_data = callback_user_data,
+            .uniform_buffer = uniform_buffer,
             .shader_programs = shader_programs,
             .textures = textures,
             .shader_storage_buffers = shader_storage_buffers,
@@ -351,9 +357,8 @@ const Game = struct {
 
             self.selected_block = self.world.raycast(self.camera.position, self.camera.direction);
 
-            const selected_pos = self.selected_block.pos.toVec3f();
-            self.shader_programs.selected_block.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
-            self.shader_programs.selected_side.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
+            const selected_block_pos = self.selected_block.pos.toVec3f();
+            self.uniform_buffer.uploadSelectedBlockPos(selected_block_pos);
 
             const side = self.selected_block.side;
 
@@ -364,11 +369,7 @@ const Game = struct {
                 }
             }
 
-            self.shader_programs.chunks.setUniformMatrix4f("uViewProjection", self.camera.view_projection_matrix);
-            self.shader_programs.chunks_bb.setUniformMatrix4f("uViewProjection", self.camera.view_projection_matrix);
-            self.shader_programs.chunks_debug.setUniformMatrix4f("uViewProjection", self.camera.view_projection_matrix);
-            self.shader_programs.selected_block.setUniformMatrix4f("uViewProjection", self.camera.view_projection_matrix);
-            self.shader_programs.selected_side.setUniformMatrix4f("uViewProjection", self.camera.view_projection_matrix);
+            self.uniform_buffer.uploadViewProjectionMatrix(self.camera.view_projection_matrix);
         }
     }
 
@@ -393,11 +394,7 @@ pub fn main() !void {
     // Has to be outside init to not create a dangling ptr
     game.setWindowUserPointer();
 
-    game.shader_programs.chunks.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
-    game.shader_programs.chunks_bb.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
-    game.shader_programs.chunks_debug.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
-    game.shader_programs.selected_block.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
-    game.shader_programs.selected_side.setUniformMatrix4f("uViewProjection", game.camera.view_projection_matrix);
+    game.uniform_buffer.uploadViewProjectionMatrix(game.camera.view_projection_matrix);
     game.shader_programs.crosshair.setUniform2f("uWindowSize", game.screen.window_width_f, game.screen.window_height_f);
 
     try game.world.generate(allocator);
@@ -406,9 +403,8 @@ pub fn main() !void {
 
     game.selected_block = game.world.raycast(game.camera.position, game.camera.direction);
     {
-        const selected_pos = game.selected_block.pos.toVec3f();
-        game.shader_programs.selected_block.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
-        game.shader_programs.selected_side.setUniform3f("uBlockPosition", selected_pos.x, selected_pos.y, selected_pos.z);
+        const selected_block_pos = game.selected_block.pos.toVec3f();
+        game.uniform_buffer.uploadSelectedBlockPos(selected_block_pos);
 
         const side = game.selected_block.side;
 

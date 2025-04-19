@@ -3,11 +3,11 @@ const gl = @import("gl");
 
 pub fn ShaderStorageBuffer(comptime T: type) type {
     return struct {
+        const Self = @This();
+
         handle: gl.uint,
         len: usize,
         flags: gl.bitfield,
-
-        const Self = @This();
 
         pub fn init(len: usize, flags: gl.bitfield) Self {
             var handle: gl.uint = undefined;
@@ -117,10 +117,10 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
 
 pub fn ShaderStorageBufferWithArrayList(comptime T: type) type {
     return struct {
+        const Self = @This();
+
         data: std.ArrayListUnmanaged(T),
         ssbo: ShaderStorageBuffer(T),
-
-        const Self = @This();
 
         pub fn init(len: usize, flags: gl.bitfield) Self {
             return .{
