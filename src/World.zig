@@ -105,21 +105,21 @@ pub fn init(seed: i32) !World {
     };
 }
 
-pub fn getChunk(self: *World, pos: Chunk.Pos) !*Chunk {
+pub fn getChunk(self: World, pos: Chunk.Pos) !*Chunk {
     return self.chunks.getPtr(pos) orelse error.ChunkNotFound;
 }
 
-pub fn getChunkOrNull(self: *World, pos: Chunk.Pos) ?*Chunk {
+pub fn getChunkOrNull(self: World, pos: Chunk.Pos) ?*Chunk {
     return self.chunks.getPtr(pos);
 }
 
-pub fn getBlock(self: *World, pos: Pos) !Block {
+pub fn getBlock(self: World, pos: Pos) !Block {
     const chunk = try self.getChunk(pos.toChunkPos());
 
     return chunk.getBlock(pos.toLocalPos());
 }
 
-pub fn getBlockOrNull(self: *World, pos: Pos) ?Block {
+pub fn getBlockOrNull(self: World, pos: Pos) ?Block {
     const chunk = self.getChunkOrNull(pos.toChunkPos()) orelse return null;
 
     return chunk.getBlock(pos.toLocalPos());
@@ -164,7 +164,7 @@ pub const RaycastResult = struct {
     block: ?Block,
 };
 
-pub fn raycast(self: *World, origin: Vec3f, direction: Vec3f) RaycastResult {
+pub fn raycast(self: World, origin: Vec3f, direction: Vec3f) RaycastResult {
     var moving_position = origin.floor();
 
     const step = Vec3f.new(std.math.sign(direction.x), std.math.sign(direction.y), std.math.sign(direction.z));

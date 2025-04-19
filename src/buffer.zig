@@ -57,11 +57,11 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
             return self;
         }
 
-        pub fn bind(self: *const Self, index: gl.uint) void {
+        pub fn bind(self: Self, index: gl.uint) void {
             gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, index, self.handle);
         }
 
-        pub fn bindAsIndirectBuffer(self: *const Self) void {
+        pub fn bindAsIndirectBuffer(self: Self) void {
             gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, self.handle);
         }
 
@@ -77,7 +77,7 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
             );
         }
 
-        pub fn upload(self: *const Self, data: []const T) !void {
+        pub fn upload(self: Self, data: []const T) !void {
             if (data.len > self.len) return error.DataTooLarge;
 
             gl.NamedBufferSubData(
@@ -109,7 +109,7 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
             }
         }
 
-        pub fn label(self: *const Self, name: [:0]const u8) void {
+        pub fn label(self: Self, name: [:0]const u8) void {
             gl.ObjectLabel(gl.BUFFER, self.handle, -1, name);
         }
     };
@@ -136,11 +136,11 @@ pub fn ShaderStorageBufferWithArrayList(comptime T: type) type {
             };
         }
 
-        pub fn bind(self: *const Self, index: gl.uint) void {
+        pub fn bind(self: Self, index: gl.uint) void {
             self.ssbo.bind(index);
         }
 
-        pub fn bindAsIndirectBuffer(self: *const Self) void {
+        pub fn bindAsIndirectBuffer(self: Self) void {
             self.ssbo.bindAsIndirectBuffer();
         }
 
@@ -148,7 +148,7 @@ pub fn ShaderStorageBufferWithArrayList(comptime T: type) type {
             self.ssbo.resize(len);
         }
 
-        pub fn upload(self: *const Self) !void {
+        pub fn upload(self: Self) !void {
             self.ssbo.upload(self.data.items);
         }
 

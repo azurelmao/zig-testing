@@ -155,3 +155,7 @@ pub fn setUniformMatrix4f(self: ShaderProgram, uniform: []const u8, matrix: Matr
 pub fn bind(self: ShaderProgram) void {
     gl.UseProgram(self.handle);
 }
+
+pub fn label(self: ShaderProgram, name: [:0]const u8) void {
+    gl.ObjectLabel(gl.PROGRAM, self.handle, -1, name);
+}

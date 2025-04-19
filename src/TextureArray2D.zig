@@ -74,3 +74,7 @@ pub fn init(unit: gl.uint, images: []const stbi.Image, width: gl.sizei, height: 
 
     return .{ .handle = handle };
 }
+
+pub fn label(self: TextureArray2D, name: [:0]const u8) void {
+    gl.ObjectLabel(gl.TEXTURE, self.handle, -1, name);
+}

@@ -63,3 +63,7 @@ pub fn init(unit: gl.uint, image: stbi.Image, options: Options) Texture2D {
 
     return .{ .handle = handle };
 }
+
+pub fn label(self: Texture2D, name: [:0]const u8) void {
+    gl.ObjectLabel(gl.TEXTURE, self.handle, -1, name);
+}
