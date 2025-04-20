@@ -1,6 +1,6 @@
 const std = @import("std");
 const gl = @import("gl");
-const Matrix4x4f = @import("Matrix4x4f.zig");
+const Matrix4x4f = @import("matrix4x4f.zig").Matrix4x4f;
 
 const ShaderProgram = @This();
 

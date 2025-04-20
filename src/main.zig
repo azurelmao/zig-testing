@@ -155,7 +155,8 @@ const Game = struct {
             .view_projection_matrix = camera.view_projection_matrix,
             .selected_block_pos = selected_block.pos.toVec3f(),
         });
-        const shader_programs = try ShaderPrograms.init(allocator);
+
+        const shader_programs = try ShaderPrograms.init(allocator, selected_block, screen);
 
         stbi.init(allocator);
         const textures = try Textures.init();
@@ -394,27 +395,8 @@ pub fn main() !void {
     // Has to be outside init to not create a dangling ptr
     game.setWindowUserPointer();
 
-    game.uniform_buffer.uploadViewProjectionMatrix(game.camera.view_projection_matrix);
-    game.shader_programs.crosshair.setUniform2f("uWindowSize", game.screen.window_width_f, game.screen.window_height_f);
-
     try game.world.generate(allocator);
     try game.world.propagateLights(allocator);
-    try game.world.propagateLights(allocator);
-
-    game.selected_block = game.world.raycast(game.camera.position, game.camera.direction);
-    {
-        const selected_block_pos = game.selected_block.pos.toVec3f();
-        game.uniform_buffer.uploadSelectedBlockPos(selected_block_pos);
-
-        const side = game.selected_block.side;
-
-        if (side != .out_of_bounds and side != .inside) {
-            if (game.selected_block.block) |block| {
-                const model_idx = block.getModelIndices().faces[side.idx()];
-                game.shader_programs.selected_side.setUniform1ui("uModelIdx", model_idx);
-            }
-        }
-    }
 
     try game.world_mesh.generate(allocator, &game.world);
 

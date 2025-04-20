@@ -1,5 +1,7 @@
 const std = @import("std");
 const assets = @import("assets.zig");
+const World = @import("World.zig");
+const Screen = @import("Screen.zig");
 const ShaderProgram = @import("ShaderProgram.zig");
 
 const ShaderPrograms = @This();
@@ -12,7 +14,7 @@ selected_side: ShaderProgram,
 crosshair: ShaderProgram,
 text: ShaderProgram,
 
-pub fn init(allocator: std.mem.Allocator) !ShaderPrograms {
+pub fn init(allocator: std.mem.Allocator, raycast_result: World.RaycastResult, screen: Screen) !ShaderPrograms {
     const chunks = try ShaderProgram.init(allocator, assets.vertexShaderPath("chunks"), assets.fragmentShaderPath("chunks"));
     chunks.label("Chunks Shader Program");
 
@@ -28,8 +30,17 @@ pub fn init(allocator: std.mem.Allocator) !ShaderPrograms {
     const selected_side = try ShaderProgram.init(allocator, assets.vertexShaderPath("selected_side"), assets.fragmentShaderPath("selected_side"));
     selected_side.label("Selected Side Shader Program");
 
+    if (raycast_result.side != .out_of_bounds and raycast_result.side != .inside) {
+        if (raycast_result.block) |block| {
+            const model_idx = block.getModelIndices().faces[raycast_result.side.idx()];
+            selected_side.setUniform1ui("uModelIdx", model_idx);
+        }
+    }
+
     const crosshair = try ShaderProgram.init(allocator, assets.vertexShaderPath("crosshair"), assets.fragmentShaderPath("crosshair"));
     crosshair.label("Crosshair Shader Program");
+
+    crosshair.setUniform2f("uWindowSize", screen.window_width_f, screen.window_height_f);
 
     const text = try ShaderProgram.init(allocator, assets.vertexShaderPath("text"), assets.fragmentShaderPath("text"));
     text.label("Text Shader Program");

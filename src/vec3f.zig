@@ -3,11 +3,11 @@ const gl = @import("gl");
 const Chunk = @import("Chunk.zig");
 const World = @import("World.zig");
 
-pub const Vec3f = packed struct(u128) {
+pub const Vec3f = extern struct {
     x: gl.float,
     y: gl.float,
     z: gl.float,
-    _: gl.float = 0,
+    _: gl.float = undefined,
 
     pub fn new(x: gl.float, y: gl.float, z: gl.float) Vec3f {
         return .{

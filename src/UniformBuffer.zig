@@ -1,12 +1,12 @@
 const gl = @import("gl");
 const Vec3f = @import("vec3f.zig").Vec3f;
-const Matrix4x4f = @import("Matrix4x4f.zig");
+const Matrix4x4f = @import("matrix4x4f.zig").Matrix4x4f;
 
 const UniformBuffer = @This();
 
 handle: gl.uint,
 
-const Data = struct {
+const Data = extern struct {
     view_projection_matrix: Matrix4x4f,
     selected_block_pos: Vec3f,
 };
