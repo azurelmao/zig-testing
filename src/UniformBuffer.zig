@@ -11,10 +11,10 @@ const Data = extern struct {
     selected_block_pos: Vec3f,
 };
 
-pub fn init(index: gl.uint, data: Data) UniformBuffer {
+pub fn init(index: gl.uint) UniformBuffer {
     var handle: gl.uint = undefined;
     gl.CreateBuffers(1, @ptrCast(&handle));
-    gl.NamedBufferStorage(handle, @sizeOf(Data), @ptrCast(&data), gl.DYNAMIC_STORAGE_BIT);
+    gl.NamedBufferStorage(handle, @sizeOf(Data), null, gl.DYNAMIC_STORAGE_BIT);
     gl.BindBufferBase(gl.UNIFORM_BUFFER, index, handle);
 
     return .{

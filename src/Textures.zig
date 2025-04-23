@@ -1,7 +1,7 @@
 const std = @import("std");
 const stbi = @import("zstbi");
 const assets = @import("assets.zig");
-const ui = @import("ui.zig");
+const Glyph = @import("glyph.zig").Glyph;
 const Texture2D = @import("Texture2D.zig");
 const TextureArray2D = @import("TextureArray2D.zig");
 const Block = @import("block.zig").Block;
@@ -49,9 +49,9 @@ fn initFontTextures() !TextureArray2D {
     var font_image = try stbi.Image.loadFromFile(assets.texturePath("font"), 1);
     defer font_image.deinit();
 
-    var glyph_images: [ui.Glyph.len]stbi.Image = undefined;
+    var glyph_images: [Glyph.len]stbi.Image = undefined;
 
-    inline for (0..ui.Glyph.len) |glyph_idx| {
+    inline for (0..Glyph.len) |glyph_idx| {
         const base_x = glyph_idx * 6;
 
         var glyph_image = try stbi.Image.createEmpty(6, 6, 1, .{});

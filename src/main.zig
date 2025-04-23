@@ -3,7 +3,6 @@ const glfw = @import("glfw");
 const gl = @import("gl");
 const stbi = @import("zstbi");
 const callback = @import("callback.zig");
-const ui = @import("ui.zig");
 const World = @import("World.zig");
 const Chunk = @import("Chunk.zig");
 const Block = @import("block.zig").Block;
@@ -15,104 +14,11 @@ const ShaderPrograms = @import("ShaderPrograms.zig");
 const Textures = @import("Textures.zig");
 const ShaderStorageBuffers = @import("ShaderStorageBuffers.zig");
 const Framebuffer = @import("Framebuffer.zig");
+const TextManager = @import("TextManager.zig");
 
 pub const std_options: std.Options = .{
     .log_level = .info,
 };
-
-fn onRaycast(allocator: std.mem.Allocator, world: *World, text_manager: *ui.TextManager, result: World.RaycastResult) !void {
-    const world_pos = result.pos;
-    const side = result.side;
-
-    switch (side) {
-        else => {
-            try text_manager.append(allocator, .{
-                .pixel_x = 0,
-                .pixel_y = 48,
-                .text = try std.fmt.allocPrint(allocator, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
-                    world_pos.x,
-                    world_pos.y,
-                    world_pos.z,
-                    @tagName(side),
-                }),
-            });
-
-            try text_manager.append(allocator, .{
-                .pixel_x = 0,
-                .pixel_y = 54,
-                .text = try std.fmt.allocPrint(allocator, "block: {s}", .{
-                    if (result.block) |block| @tagName(block) else "null",
-                }),
-            });
-
-            if (world.getLight(world_pos.add(World.Pos.Offsets[@intFromEnum(side)]))) |light| {
-                try text_manager.append(allocator, .{
-                    .pixel_x = 0,
-                    .pixel_y = 60,
-                    .text = try std.fmt.allocPrint(allocator, "light: [r: {} g: {} b: {} i: {}]", .{
-                        light.red,
-                        light.green,
-                        light.blue,
-                        light.indirect,
-                    }),
-                });
-            } else |_| {
-                try text_manager.append(allocator, .{
-                    .pixel_x = 0,
-                    .pixel_y = 60,
-                    .text = try std.fmt.allocPrint(allocator, "light: out_of_bounds", .{}),
-                });
-            }
-        },
-
-        .inside => {
-            const light = try world.getLight(world_pos);
-
-            try text_manager.append(allocator, .{
-                .pixel_x = 0,
-                .pixel_y = 48,
-                .text = try std.fmt.allocPrint(allocator, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
-                    world_pos.x,
-                    world_pos.y,
-                    world_pos.z,
-                    @tagName(side),
-                }),
-            });
-
-            try text_manager.append(allocator, .{
-                .pixel_x = 0,
-                .pixel_y = 54,
-                .text = try std.fmt.allocPrint(allocator, "block: {s}", .{
-                    if (result.block) |block| @tagName(block) else "null",
-                }),
-            });
-
-            try text_manager.append(allocator, .{
-                .pixel_x = 0,
-                .pixel_y = 60,
-                .text = try std.fmt.allocPrint(allocator, "light: [r: {} g: {} b: {} i: {}]", .{
-                    light.red,
-                    light.green,
-                    light.blue,
-                    light.indirect,
-                }),
-            });
-        },
-
-        .out_of_bounds => {
-            try text_manager.append(allocator, .{
-                .pixel_x = 0,
-                .pixel_y = 48,
-                .text = try std.fmt.allocPrint(allocator, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
-                    world_pos.x,
-                    world_pos.y,
-                    world_pos.z,
-                    @tagName(side),
-                }),
-            });
-        },
-    }
-}
 
 const Settings = struct {
     ui_scale: gl.sizei = 2,
@@ -121,6 +27,7 @@ const Settings = struct {
 };
 
 const Game = struct {
+    const TITLE = "NaturaEx";
     const DEBUG_CONTEXT = true;
 
     settings: Settings,
@@ -133,6 +40,7 @@ const Game = struct {
     textures: Textures,
     shader_storage_buffers: ShaderStorageBuffers,
     offscreen_framebuffer: Framebuffer,
+    text_manager: TextManager,
     world: World,
     world_mesh: WorldMesh,
     selected_block: World.RaycastResult,
@@ -151,10 +59,9 @@ const Game = struct {
         const callback_user_data = callback.UserData{};
 
         try initGL();
-        const uniform_buffer = UniformBuffer.init(0, .{
-            .view_projection_matrix = camera.view_projection_matrix,
-            .selected_block_pos = selected_block.pos.toVec3f(),
-        });
+        var uniform_buffer = UniformBuffer.init(0);
+        uniform_buffer.uploadSelectedBlockPos(selected_block.pos.toVec3f());
+        uniform_buffer.uploadViewProjectionMatrix(camera.view_projection_matrix);
 
         const shader_programs = try ShaderPrograms.init(allocator, selected_block, screen);
 
@@ -162,6 +69,7 @@ const Game = struct {
         const textures = try Textures.init();
         const shader_storage_buffers = try ShaderStorageBuffers.init();
         const offscreen_framebuffer = try Framebuffer.init(3, screen.window_width, screen.window_height);
+        const text_manager = TextManager.init();
 
         const world_mesh = WorldMesh.init();
 
@@ -176,6 +84,7 @@ const Game = struct {
             .textures = textures,
             .shader_storage_buffers = shader_storage_buffers,
             .offscreen_framebuffer = offscreen_framebuffer,
+            .text_manager = text_manager,
             .world = world,
             .world_mesh = world_mesh,
             .selected_block = selected_block,
@@ -244,7 +153,7 @@ const Game = struct {
     }
 
     fn initWindow(screen: *const Screen) !glfw.Window {
-        const window = glfw.Window.create(@intCast(screen.window_width), @intCast(screen.window_height), "Natura ex Deus", null, null, .{
+        const window = glfw.Window.create(@intCast(screen.window_width), @intCast(screen.window_height), TITLE, null, null, .{
             .opengl_profile = .opengl_core_profile,
             .context_version_major = 4,
             .context_version_minor = 6,
@@ -374,6 +283,260 @@ const Game = struct {
         }
     }
 
+    fn appendRaycastText(self: *Game, allocator: std.mem.Allocator, line: *i32) !void {
+        const world_pos = self.selected_block.pos;
+        const side = self.selected_block.side;
+
+        switch (side) {
+            else => {
+                try self.text_manager.append(allocator, .{
+                    .pixel_x = 0,
+                    .pixel_y = line.* * 6,
+                    .text = try std.fmt.allocPrint(allocator, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
+                        world_pos.x,
+                        world_pos.y,
+                        world_pos.z,
+                        @tagName(side),
+                    }),
+                });
+                line.* += 1;
+
+                try self.text_manager.append(allocator, .{
+                    .pixel_x = 0,
+                    .pixel_y = line.* * 6,
+                    .text = try std.fmt.allocPrint(allocator, "block: {s}", .{
+                        if (self.selected_block.block) |block| @tagName(block) else "null",
+                    }),
+                });
+                line.* += 1;
+
+                if (self.world.getLight(world_pos.add(World.Pos.Offsets[@intFromEnum(side)]))) |light| {
+                    try self.text_manager.append(allocator, .{
+                        .pixel_x = 0,
+                        .pixel_y = line.* * 6,
+                        .text = try std.fmt.allocPrint(allocator, "light: [r: {} g: {} b: {} i: {}]", .{
+                            light.red,
+                            light.green,
+                            light.blue,
+                            light.indirect,
+                        }),
+                    });
+                    line.* += 1;
+                } else |_| {
+                    try self.text_manager.append(allocator, .{
+                        .pixel_x = 0,
+                        .pixel_y = line.* * 6,
+                        .text = try std.fmt.allocPrint(allocator, "light: out_of_bounds", .{}),
+                    });
+                    line.* += 1;
+                }
+            },
+
+            .inside => {
+                const light = try self.world.getLight(world_pos);
+
+                try self.text_manager.append(allocator, .{
+                    .pixel_x = 0,
+                    .pixel_y = line.* * 6,
+                    .text = try std.fmt.allocPrint(allocator, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
+                        world_pos.x,
+                        world_pos.y,
+                        world_pos.z,
+                        @tagName(side),
+                    }),
+                });
+                line.* += 1;
+
+                try self.text_manager.append(allocator, .{
+                    .pixel_x = 0,
+                    .pixel_y = line.* * 6,
+                    .text = try std.fmt.allocPrint(allocator, "block: {s}", .{
+                        if (self.selected_block.block) |block| @tagName(block) else "null",
+                    }),
+                });
+                line.* += 1;
+
+                try self.text_manager.append(allocator, .{
+                    .pixel_x = 0,
+                    .pixel_y = line.* * 6,
+                    .text = try std.fmt.allocPrint(allocator, "light: [r: {} g: {} b: {} i: {}]", .{
+                        light.red,
+                        light.green,
+                        light.blue,
+                        light.indirect,
+                    }),
+                });
+                line.* += 1;
+            },
+
+            .out_of_bounds => {
+                try self.text_manager.append(allocator, .{
+                    .pixel_x = 0,
+                    .pixel_y = line.* * 6,
+                    .text = try std.fmt.allocPrint(allocator, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
+                        world_pos.x,
+                        world_pos.y,
+                        world_pos.z,
+                        @tagName(side),
+                    }),
+                });
+                line.* += 1;
+            },
+        }
+    }
+
+    fn appendText(self: *Game, allocator: std.mem.Allocator) !void {
+        self.text_manager.clear();
+
+        var line: i32 = 0;
+
+        try self.text_manager.append(allocator, .{
+            .pixel_x = 0,
+            .pixel_y = line * 6,
+            .text = TITLE,
+        });
+        line += 1;
+
+        try self.text_manager.append(allocator, .{
+            .pixel_x = 0,
+            .pixel_y = line * 6,
+            .text = try std.fmt.allocPrint(allocator, "visible: {}/{}", .{ self.visible_chunk_meshes, self.world_mesh.pos.data.items.len * 6 }),
+        });
+        line += 1;
+
+        const camera_world_pos = self.camera.position.toWorldPos();
+        const camera_local_pos = camera_world_pos.toLocalPos();
+        const camera_chunk_pos = camera_world_pos.toChunkPos();
+
+        try self.text_manager.append(allocator, .{
+            .pixel_x = 0,
+            .pixel_y = line * 6,
+            .text = try std.fmt.allocPrint(allocator, "chunk: [x: {} y: {} z: {}]", .{ camera_chunk_pos.x, camera_chunk_pos.y, camera_chunk_pos.z }),
+        });
+        line += 1;
+
+        try self.text_manager.append(allocator, .{
+            .pixel_x = 0,
+            .pixel_y = line * 6,
+            .text = try std.fmt.allocPrint(allocator, "local: [x: {} y: {} z: {}]", .{ camera_local_pos.x, camera_local_pos.y, camera_local_pos.z }),
+        });
+        line += 1;
+
+        try self.text_manager.append(allocator, .{
+            .pixel_x = 0,
+            .pixel_y = line * 6,
+            .text = try std.fmt.allocPrint(allocator, "world: [x: {} y: {} z: {}]", .{ camera_world_pos.x, camera_world_pos.y, camera_world_pos.z }),
+        });
+        line += 1;
+
+        try self.text_manager.append(allocator, .{
+            .pixel_x = 0,
+            .pixel_y = line * 6,
+            .text = try std.fmt.allocPrint(allocator, "camera: [x: {d:.6} y: {d:.6} z: {d:.6}]", .{ self.camera.position.x, self.camera.position.y, self.camera.position.z }),
+        });
+        line += 1;
+
+        try self.text_manager.append(allocator, .{
+            .pixel_x = 0,
+            .pixel_y = line * 6,
+            .text = try std.fmt.allocPrint(allocator, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(self.camera.yaw, 360.0) - 180.0, self.camera.pitch }),
+        });
+        line += 1;
+
+        try self.appendRaycastText(allocator, &line);
+        try self.text_manager.build(allocator, self.screen.window_width, self.screen.window_height, self.settings.ui_scale);
+    }
+
+    fn render(self: *Game) void {
+        gl.ClearColor(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
+        gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        self.shader_programs.chunks.bind();
+        inline for (0..Block.Layer.len) |layer_idx| {
+            const world_mesh_layer = &self.world_mesh.layers[layer_idx];
+
+            if (world_mesh_layer.mesh.data.items.len > 0) {
+                world_mesh_layer.mesh.bind(3);
+                world_mesh_layer.command.bindAsIndirectBuffer();
+
+                gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(world_mesh_layer.command.data.items.len), 0);
+            }
+        }
+
+        self.shader_programs.chunks_bb.bind();
+        {
+            gl.Enable(gl.POLYGON_OFFSET_FILL);
+            defer gl.Disable(gl.POLYGON_OFFSET_FILL);
+
+            gl.PolygonOffset(1.0, 1.0);
+            defer gl.PolygonOffset(0.0, 0.0);
+
+            gl.DepthMask(gl.FALSE);
+            defer gl.DepthMask(gl.TRUE);
+
+            gl.ColorMask(gl.FALSE, gl.FALSE, gl.FALSE, gl.FALSE);
+            defer gl.ColorMask(gl.TRUE, gl.TRUE, gl.TRUE, gl.TRUE);
+
+            gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
+            gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(self.world_mesh.pos.data.items.len));
+            gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
+        }
+
+        gl.BlitNamedFramebuffer(0, self.offscreen_framebuffer.framebuffer_handle, 0, 0, self.screen.window_width, self.screen.window_height, 0, 0, self.screen.window_width, self.screen.window_height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+
+        self.shader_programs.chunks_debug.bind();
+        {
+            gl.Enable(gl.POLYGON_OFFSET_LINE);
+            defer gl.Disable(gl.POLYGON_OFFSET_LINE);
+
+            gl.PolygonOffset(-1.0, 1.0);
+            defer gl.PolygonOffset(0.0, 0.0);
+
+            gl.Enable(gl.LINE_SMOOTH);
+            defer gl.Disable(gl.LINE_SMOOTH);
+
+            gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(self.world_mesh.pos.data.items.len));
+        }
+
+        if (self.selected_block.side != .out_of_bounds and self.selected_block.side != .inside) {
+            if (self.selected_block.block) |_| {
+                self.shader_programs.selected_side.bind();
+                {
+                    gl.Enable(gl.POLYGON_OFFSET_FILL);
+                    defer gl.Disable(gl.POLYGON_OFFSET_FILL);
+
+                    gl.PolygonOffset(-1.0, 1.0);
+                    defer gl.PolygonOffset(0.0, 0.0);
+
+                    gl.DrawArrays(gl.TRIANGLES, 0, 6);
+                }
+            }
+        }
+
+        self.shader_programs.selected_block.bind();
+        {
+            gl.Enable(gl.POLYGON_OFFSET_LINE);
+            defer gl.Disable(gl.POLYGON_OFFSET_LINE);
+
+            gl.PolygonOffset(-2.0, 1.0);
+            defer gl.PolygonOffset(0.0, 0.0);
+
+            gl.Enable(gl.LINE_SMOOTH);
+            defer gl.Disable(gl.LINE_SMOOTH);
+
+            gl.DepthFunc(gl.LEQUAL);
+            defer gl.DepthFunc(gl.LESS);
+
+            gl.DrawArrays(gl.LINES, 0, Block.BOUNDING_BOX_LINES_BUFFER.len);
+        }
+
+        self.shader_programs.crosshair.bind();
+        gl.DrawArrays(gl.TRIANGLES, 0, 6);
+
+        self.shader_programs.text.bind();
+        gl.DrawArrays(gl.TRIANGLES, 0, @intCast(self.text_manager.vertices.data.items.len));
+    }
+
     fn deinit(self: *Game) void {
         self.window.destroy();
         gl.makeProcTableCurrent(null);
@@ -414,154 +577,14 @@ pub fn main() !void {
         world_mesh_layer.command.bind(6 + layer_idx);
     }
 
-    var text_manager = ui.TextManager.init();
-
     var delta_time: gl.float = 1.0 / 60.0;
     var timer = try std.time.Timer.start();
 
     while (!game.window.shouldClose()) {
         try game.handleInput(delta_time);
+        try game.appendText(allocator);
 
-        gl.ClearColor(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
-        gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-        game.shader_programs.chunks.bind();
-        inline for (0..Block.Layer.len) |layer_idx| {
-            const world_mesh_layer = &game.world_mesh.layers[layer_idx];
-
-            if (world_mesh_layer.mesh.data.items.len > 0) {
-                world_mesh_layer.mesh.bind(3);
-                world_mesh_layer.command.bindAsIndirectBuffer();
-
-                gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(world_mesh_layer.command.data.items.len), 0);
-            }
-        }
-
-        game.shader_programs.chunks_bb.bind();
-        {
-            gl.Enable(gl.POLYGON_OFFSET_FILL);
-            defer gl.Disable(gl.POLYGON_OFFSET_FILL);
-
-            gl.PolygonOffset(1.0, 1.0);
-            defer gl.PolygonOffset(0.0, 0.0);
-
-            gl.DepthMask(gl.FALSE);
-            defer gl.DepthMask(gl.TRUE);
-
-            gl.ColorMask(gl.FALSE, gl.FALSE, gl.FALSE, gl.FALSE);
-            defer gl.ColorMask(gl.TRUE, gl.TRUE, gl.TRUE, gl.TRUE);
-
-            gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
-            gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(game.world_mesh.pos.data.items.len));
-            gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
-        }
-
-        gl.BlitNamedFramebuffer(0, game.offscreen_framebuffer.framebuffer_handle, 0, 0, game.screen.window_width, game.screen.window_height, 0, 0, game.screen.window_width, game.screen.window_height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
-
-        game.shader_programs.chunks_debug.bind();
-        {
-            gl.Enable(gl.POLYGON_OFFSET_LINE);
-            defer gl.Disable(gl.POLYGON_OFFSET_LINE);
-
-            gl.PolygonOffset(-1.0, 1.0);
-            defer gl.PolygonOffset(0.0, 0.0);
-
-            gl.Enable(gl.LINE_SMOOTH);
-            defer gl.Disable(gl.LINE_SMOOTH);
-
-            gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(game.world_mesh.pos.data.items.len));
-        }
-
-        if (game.selected_block.side != .out_of_bounds and game.selected_block.side != .inside) {
-            if (game.selected_block.block) |_| {
-                game.shader_programs.selected_side.bind();
-                {
-                    gl.Enable(gl.POLYGON_OFFSET_FILL);
-                    defer gl.Disable(gl.POLYGON_OFFSET_FILL);
-
-                    gl.PolygonOffset(-1.0, 1.0);
-                    defer gl.PolygonOffset(0.0, 0.0);
-
-                    gl.DrawArrays(gl.TRIANGLES, 0, 6);
-                }
-            }
-        }
-
-        game.shader_programs.selected_block.bind();
-        {
-            gl.Enable(gl.POLYGON_OFFSET_LINE);
-            defer gl.Disable(gl.POLYGON_OFFSET_LINE);
-
-            gl.PolygonOffset(-2.0, 1.0);
-            defer gl.PolygonOffset(0.0, 0.0);
-
-            gl.Enable(gl.LINE_SMOOTH);
-            defer gl.Disable(gl.LINE_SMOOTH);
-
-            gl.DepthFunc(gl.LEQUAL);
-            defer gl.DepthFunc(gl.LESS);
-
-            gl.DrawArrays(gl.LINES, 0, Block.BOUNDING_BOX_LINES_BUFFER.len);
-        }
-
-        game.shader_programs.crosshair.bind();
-        gl.DrawArrays(gl.TRIANGLES, 0, 6);
-
-        text_manager.clear();
-
-        try text_manager.append(allocator, .{
-            .pixel_x = 0,
-            .pixel_y = 0,
-            .text = "Natura ex Deus",
-        });
-
-        try text_manager.append(allocator, .{
-            .pixel_x = 0,
-            .pixel_y = 6,
-            .text = try std.fmt.allocPrint(allocator, "visible: {}/{}", .{ game.visible_chunk_meshes, game.world_mesh.pos.data.items.len * 6 }),
-        });
-
-        const camera_chunk_pos = game.camera.position.toChunkPos();
-        try text_manager.append(allocator, .{
-            .pixel_x = 0,
-            .pixel_y = 12,
-            .text = try std.fmt.allocPrint(allocator, "chunk: [x: {} y: {} z: {}]", .{ camera_chunk_pos.x, camera_chunk_pos.y, camera_chunk_pos.z }),
-        });
-
-        const camera_world_pos = game.camera.position.toWorldPos();
-        const camera_local_pos = camera_world_pos.toLocalPos();
-        try text_manager.append(allocator, .{
-            .pixel_x = 0,
-            .pixel_y = 18,
-            .text = try std.fmt.allocPrint(allocator, "local: [x: {} y: {} z: {}]", .{ camera_local_pos.x, camera_local_pos.y, camera_local_pos.z }),
-        });
-
-        try text_manager.append(allocator, .{
-            .pixel_x = 0,
-            .pixel_y = 24,
-            .text = try std.fmt.allocPrint(allocator, "world: [x: {} y: {} z: {}]", .{ camera_world_pos.x, camera_world_pos.y, camera_world_pos.z }),
-        });
-
-        try text_manager.append(allocator, .{
-            .pixel_x = 0,
-            .pixel_y = 30,
-            .text = try std.fmt.allocPrint(allocator, "camera: [x: {d:.6} y: {d:.6} z: {d:.6}]", .{ game.camera.position.x, game.camera.position.y, game.camera.position.z }),
-        });
-
-        try text_manager.append(allocator, .{
-            .pixel_x = 0,
-            .pixel_y = 36,
-            .text = try std.fmt.allocPrint(allocator, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(game.camera.yaw, 360.0) - 180.0, game.camera.pitch }),
-        });
-
-        try onRaycast(allocator, &game.world, &text_manager, game.selected_block);
-
-        try text_manager.buildVertices(allocator, game.screen.window_width, game.screen.window_height, game.settings.ui_scale);
-        text_manager.text_vertices.uploadAndOrResize();
-        text_manager.text_vertices.bind(12);
-
-        game.shader_programs.text.bind();
-        gl.DrawArrays(gl.TRIANGLES, 0, @intCast(text_manager.text_vertices.data.items.len));
+        game.render();
 
         delta_time = @floatCast(@as(f64, @floatFromInt(timer.lap())) / 1_000_000_000.0);
 
