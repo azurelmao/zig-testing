@@ -4,7 +4,7 @@ const assets = @import("assets.zig");
 const Glyph = @import("glyph.zig").Glyph;
 const Texture2D = @import("Texture2D.zig");
 const TextureArray2D = @import("TextureArray2D.zig");
-const Block = @import("block.zig").Block;
+const BlockTextureKind = @import("block.zig").BlockTextureKind;
 
 const Textures = @This();
 
@@ -25,10 +25,10 @@ pub fn init() !Textures {
 }
 
 fn initBlockTextures() !TextureArray2D {
-    const TEXTURE_INDICES = comptime std.enums.values(Block.TextureIndex);
-    var block_images: [TEXTURE_INDICES.len]stbi.Image = undefined;
+    const block_texture_kinds = comptime std.enums.values(BlockTextureKind);
+    var block_images: [block_texture_kinds.len]stbi.Image = undefined;
 
-    inline for (TEXTURE_INDICES) |texture_index| {
+    inline for (block_texture_kinds) |texture_index| {
         const image = try stbi.Image.loadFromFile(assets.texturePath(@tagName(texture_index)), 4);
         block_images[@intFromEnum(texture_index)] = image;
     }

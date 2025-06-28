@@ -6,6 +6,8 @@ const callback = @import("callback.zig");
 const World = @import("World.zig");
 const Chunk = @import("Chunk.zig");
 const Block = @import("block.zig").Block;
+const BlockLayer = @import("block.zig").BlockLayer;
+const BlockModel = @import("block.zig").BlockModel;
 const Camera = @import("Camera.zig");
 const Screen = @import("Screen.zig");
 const WorldMesh = @import("WorldMesh.zig");
@@ -27,14 +29,14 @@ const Settings = struct {
 };
 
 const Game = struct {
-    const TITLE = "NaturaEx";
+    const TITLE = "PolyCosm";
     const DEBUG_CONTEXT = true;
 
     settings: Settings,
     screen: Screen,
     camera: Camera,
     window: glfw.Window,
-    callback_user_data: callback.UserData,
+    callback_user_data: *callback.UserData,
     uniform_buffer: UniformBuffer,
     shader_programs: ShaderPrograms,
     textures: Textures,
@@ -51,12 +53,15 @@ const Game = struct {
         const screen = Screen{};
         const camera = Camera.init(.new(0, 0, 0), 0, 0, screen.aspect_ratio);
 
-        const world = try World.init(30);
+        const world = try World.init(allocator, 30);
         const selected_block = world.raycast(camera.position, camera.direction);
 
         try initGLFW();
         const window = try initWindow(&screen);
-        const callback_user_data = callback.UserData{};
+
+        const callback_user_data = try allocator.create(callback.UserData);
+        callback_user_data.* = .default;
+        window.setUserPointer(@ptrCast(callback_user_data));
 
         try initGL();
         var uniform_buffer = UniformBuffer.init(0);
@@ -174,10 +179,6 @@ const Game = struct {
         return window;
     }
 
-    fn setWindowUserPointer(self: *Game) void {
-        self.window.setUserPointer(@ptrCast(&self.callback_user_data));
-    }
-
     fn handleInput(self: *Game, delta_time: gl.float) !void {
         const mouse_speed = self.settings.mouse_speed * delta_time;
         const movement_speed = self.settings.movement_speed * delta_time;
@@ -216,6 +217,8 @@ const Game = struct {
         }
 
         if (self.callback_user_data.new_window_size) |new_window_size| {
+            defer self.callback_user_data.new_window_size = null;
+
             self.screen.window_width = new_window_size.window_width;
             self.screen.window_height = new_window_size.window_height;
             self.screen.window_width_f = @floatFromInt(new_window_size.window_width);
@@ -233,6 +236,8 @@ const Game = struct {
         }
 
         if (self.callback_user_data.new_cursor_pos) |new_cursor_pos| {
+            defer self.callback_user_data.new_cursor_pos = null;
+
             const offset_x = (new_cursor_pos.cursor_x - self.screen.prev_cursor_x) * mouse_speed;
             const offset_y = (self.screen.prev_cursor_y - new_cursor_pos.cursor_y) * mouse_speed;
 
@@ -274,7 +279,7 @@ const Game = struct {
 
             if (side != .out_of_bounds and side != .inside) {
                 if (self.selected_block.block) |block| {
-                    const model_idx = block.getModelIndices().faces[side.idx()];
+                    const model_idx = block.kind.getModelIndices().faces[side.idx()];
                     self.shader_programs.selected_side.setUniform1ui("uModelIdx", model_idx);
                 }
             }
@@ -283,15 +288,17 @@ const Game = struct {
         }
     }
 
-    fn appendRaycastText(self: *Game, allocator: std.mem.Allocator, line: *i32) !void {
+    fn appendRaycastText(self: *Game, allocator: std.mem.Allocator, original_line: i32) !i32 {
         const world_pos = self.selected_block.pos;
         const side = self.selected_block.side;
+
+        var line = original_line;
 
         switch (side) {
             else => {
                 try self.text_manager.append(allocator, .{
                     .pixel_x = 0,
-                    .pixel_y = line.* * 6,
+                    .pixel_y = line * 6,
                     .text = try std.fmt.allocPrint(allocator, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
                         world_pos.x,
                         world_pos.y,
@@ -299,21 +306,21 @@ const Game = struct {
                         @tagName(side),
                     }),
                 });
-                line.* += 1;
+                line += 1;
 
                 try self.text_manager.append(allocator, .{
                     .pixel_x = 0,
-                    .pixel_y = line.* * 6,
+                    .pixel_y = line * 6,
                     .text = try std.fmt.allocPrint(allocator, "block: {s}", .{
-                        if (self.selected_block.block) |block| @tagName(block) else "null",
+                        if (self.selected_block.block) |block| @tagName(block.kind) else "null",
                     }),
                 });
-                line.* += 1;
+                line += 1;
 
-                if (self.world.getLight(world_pos.add(World.Pos.Offsets[@intFromEnum(side)]))) |light| {
+                if (self.world.getLight(world_pos.add(World.Pos.Offsets[side.idx()]))) |light| {
                     try self.text_manager.append(allocator, .{
                         .pixel_x = 0,
-                        .pixel_y = line.* * 6,
+                        .pixel_y = line * 6,
                         .text = try std.fmt.allocPrint(allocator, "light: [r: {} g: {} b: {} i: {}]", .{
                             light.red,
                             light.green,
@@ -321,14 +328,14 @@ const Game = struct {
                             light.indirect,
                         }),
                     });
-                    line.* += 1;
+                    line += 1;
                 } else |_| {
                     try self.text_manager.append(allocator, .{
                         .pixel_x = 0,
-                        .pixel_y = line.* * 6,
+                        .pixel_y = line * 6,
                         .text = try std.fmt.allocPrint(allocator, "light: out_of_bounds", .{}),
                     });
-                    line.* += 1;
+                    line += 1;
                 }
             },
 
@@ -337,7 +344,7 @@ const Game = struct {
 
                 try self.text_manager.append(allocator, .{
                     .pixel_x = 0,
-                    .pixel_y = line.* * 6,
+                    .pixel_y = line * 6,
                     .text = try std.fmt.allocPrint(allocator, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
                         world_pos.x,
                         world_pos.y,
@@ -345,20 +352,20 @@ const Game = struct {
                         @tagName(side),
                     }),
                 });
-                line.* += 1;
+                line += 1;
 
                 try self.text_manager.append(allocator, .{
                     .pixel_x = 0,
-                    .pixel_y = line.* * 6,
+                    .pixel_y = line * 6,
                     .text = try std.fmt.allocPrint(allocator, "block: {s}", .{
-                        if (self.selected_block.block) |block| @tagName(block) else "null",
+                        if (self.selected_block.block) |block| @tagName(block.kind) else "null",
                     }),
                 });
-                line.* += 1;
+                line += 1;
 
                 try self.text_manager.append(allocator, .{
                     .pixel_x = 0,
-                    .pixel_y = line.* * 6,
+                    .pixel_y = line * 6,
                     .text = try std.fmt.allocPrint(allocator, "light: [r: {} g: {} b: {} i: {}]", .{
                         light.red,
                         light.green,
@@ -366,13 +373,13 @@ const Game = struct {
                         light.indirect,
                     }),
                 });
-                line.* += 1;
+                line += 1;
             },
 
             .out_of_bounds => {
                 try self.text_manager.append(allocator, .{
                     .pixel_x = 0,
-                    .pixel_y = line.* * 6,
+                    .pixel_y = line * 6,
                     .text = try std.fmt.allocPrint(allocator, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
                         world_pos.x,
                         world_pos.y,
@@ -380,9 +387,11 @@ const Game = struct {
                         @tagName(side),
                     }),
                 });
-                line.* += 1;
+                line += 1;
             },
         }
+
+        return line;
     }
 
     fn appendText(self: *Game, allocator: std.mem.Allocator) !void {
@@ -439,11 +448,11 @@ const Game = struct {
         try self.text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = line * 6,
-            .text = try std.fmt.allocPrint(allocator, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(self.camera.yaw, 360.0) - 180.0, self.camera.pitch }),
+            .text = try std.fmt.allocPrint(allocator, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(self.camera.yaw, 360.0), self.camera.pitch }),
         });
         line += 1;
 
-        try self.appendRaycastText(allocator, &line);
+        line = try self.appendRaycastText(allocator, line);
         try self.text_manager.build(allocator, self.screen.window_width, self.screen.window_height, self.settings.ui_scale);
     }
 
@@ -452,7 +461,7 @@ const Game = struct {
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         self.shader_programs.chunks.bind();
-        inline for (0..Block.Layer.len) |layer_idx| {
+        inline for (0..BlockLayer.len) |layer_idx| {
             const world_mesh_layer = &self.world_mesh.layers[layer_idx];
 
             if (world_mesh_layer.mesh.data.items.len > 0) {
@@ -527,7 +536,7 @@ const Game = struct {
             gl.DepthFunc(gl.LEQUAL);
             defer gl.DepthFunc(gl.LESS);
 
-            gl.DrawArrays(gl.LINES, 0, Block.BOUNDING_BOX_LINES_BUFFER.len);
+            gl.DrawArrays(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len);
         }
 
         self.shader_programs.crosshair.bind();
@@ -555,9 +564,6 @@ pub fn main() !void {
     var game = try Game.init(allocator);
     defer game.deinit();
 
-    // Has to be outside init to not create a dangling ptr
-    game.setWindowUserPointer();
-
     try game.world.generate(allocator);
     try game.world.propagateLights(allocator);
 
@@ -566,7 +572,7 @@ pub fn main() !void {
     game.visible_chunk_meshes = game.world_mesh.cull(&game.camera);
     game.world_mesh.pos.uploadAndOrResize();
 
-    inline for (0..Block.Layer.len) |layer_idx| {
+    inline for (0..BlockLayer.len) |layer_idx| {
         const world_mesh_layer = &game.world_mesh.layers[layer_idx];
 
         if (world_mesh_layer.mesh.data.items.len > 0) {

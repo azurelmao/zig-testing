@@ -32,7 +32,7 @@ pub fn init(allocator: std.mem.Allocator, raycast_result: World.RaycastResult, s
 
     if (raycast_result.side != .out_of_bounds and raycast_result.side != .inside) {
         if (raycast_result.block) |block| {
-            const model_idx = block.getModelIndices().faces[raycast_result.side.idx()];
+            const model_idx = block.kind.getModelIndices().faces[raycast_result.side.idx()];
             selected_side.setUniform1ui("uModelIdx", model_idx);
         }
     }

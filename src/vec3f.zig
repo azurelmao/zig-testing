@@ -26,9 +26,9 @@ pub const Vec3f = extern struct {
     }
 
     pub fn toChunkPos(self: Vec3f) Chunk.Pos {
-        const x = @as(i11, @intFromFloat(@floor(self.x))) >> Chunk.BitSize;
-        const y = @as(i11, @intFromFloat(@floor(self.y))) >> Chunk.BitSize;
-        const z = @as(i11, @intFromFloat(@floor(self.z))) >> Chunk.BitSize;
+        const x = @as(i11, @intFromFloat(@floor(self.x))) >> Chunk.BIT_SIZE;
+        const y = @as(i11, @intFromFloat(@floor(self.y))) >> Chunk.BIT_SIZE;
+        const z = @as(i11, @intFromFloat(@floor(self.z))) >> Chunk.BIT_SIZE;
 
         return .{
             .x = x,

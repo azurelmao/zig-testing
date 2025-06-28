@@ -1,4 +1,4 @@
 .zig-cache/
 .idea/
+.vscode/
 zig-out/
-.uscope/

@@ -45,7 +45,7 @@ pub fn init(position: Vec3f, yaw: gl.float, pitch: gl.float, aspect_ratio: gl.fl
 
     const fov_x: gl.float = 90.0;
     const near: gl.float = 0.1;
-    const far: gl.float = 32 * Chunk.Size * std.math.sqrt(3.0);
+    const far: gl.float = 32 * Chunk.SIZE * std.math.sqrt(3.0);
 
     const view_matrix = Matrix4x4f.lookToward(position, direction, up);
     const projection_matrix = Matrix4x4f.perspective(fov_x, aspect_ratio, near, far);

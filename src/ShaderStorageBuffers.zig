@@ -4,22 +4,23 @@ const assets = @import("assets.zig");
 const ChunkMesh = @import("ChunkMesh.zig");
 const ShaderStorageBuffer = @import("shader_storage_buffer.zig").ShaderStorageBuffer;
 const Vec3f = @import("vec3f.zig").Vec3f;
-const Block = @import("block.zig").Block;
+const BlockKind = @import("block.zig").BlockKind;
+const BlockModel = @import("block.zig").BlockModel;
 
 const ShaderStorageBuffers = @This();
 
-block_vertex: ShaderStorageBuffer(Block.Vertex),
-block_face: ShaderStorageBuffer(Block.FaceVertex),
+block_vertex: ShaderStorageBuffer(BlockModel.Vertex),
+block_face: ShaderStorageBuffer(BlockModel.FaceVertex),
 indirect_light: ShaderStorageBuffer(Vec3f),
 chunk_bounding_box: ShaderStorageBuffer(Vec3f),
 chunk_bounding_box_lines: ShaderStorageBuffer(Vec3f),
 selected_block: ShaderStorageBuffer(Vec3f),
 
 pub fn init() !ShaderStorageBuffers {
-    const block_vertex = ShaderStorageBuffer(Block.Vertex).initFromSliceAndBind(0, Block.VERTEX_BUFFER, gl.DYNAMIC_STORAGE_BIT);
+    const block_vertex = ShaderStorageBuffer(BlockModel.Vertex).initFromSliceAndBind(0, BlockModel.VERTEX_BUFFER, gl.DYNAMIC_STORAGE_BIT);
     block_vertex.label("Block Vertex Buffer");
 
-    const block_face = ShaderStorageBuffer(Block.FaceVertex).initFromSliceAndBind(1, Block.FACE_BUFFER, gl.DYNAMIC_STORAGE_BIT);
+    const block_face = ShaderStorageBuffer(BlockModel.FaceVertex).initFromSliceAndBind(1, BlockModel.FACE_BUFFER, gl.DYNAMIC_STORAGE_BIT);
     block_face.label("Block Face Buffer");
 
     const indirect_light = try initIndirectLightBuffer();
@@ -31,7 +32,7 @@ pub fn init() !ShaderStorageBuffers {
     const chunk_bounding_box_lines = ShaderStorageBuffer(Vec3f).initFromSliceAndBind(11, ChunkMesh.BOUNDING_BOX_LINES_BUFFER, gl.DYNAMIC_STORAGE_BIT);
     chunk_bounding_box_lines.label("Chunk Bounding Box Lines Buffer");
 
-    const selected_block = ShaderStorageBuffer(Vec3f).initFromSliceAndBind(13, Block.BOUNDING_BOX_LINES_BUFFER, gl.DYNAMIC_STORAGE_BIT);
+    const selected_block = ShaderStorageBuffer(Vec3f).initFromSliceAndBind(13, BlockModel.BOUNDING_BOX_LINES_BUFFER, gl.DYNAMIC_STORAGE_BIT);
     selected_block.label("Selected Block Buffer");
 
     return .{

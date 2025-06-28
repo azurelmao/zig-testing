@@ -1,6 +1,6 @@
 const std = @import("std");
 const gl = @import("gl");
-const Block = @import("block.zig").Block;
+const BlockLayer = @import("block.zig").BlockLayer;
 const Chunk = @import("Chunk.zig");
 const World = @import("World.zig");
 const Vec3f = @import("vec3f.zig").Vec3f;
@@ -10,12 +10,12 @@ const ChunkMesh = @import("ChunkMesh.zig");
 
 const WorldMesh = @This();
 
-layers: [Block.Layer.len]WorldMeshLayer,
+layers: [BlockLayer.len]WorldMeshLayer,
 pos: ShaderStorageBufferWithArrayList(Vec3f),
 
 pub const WorldMeshLayer = struct {
     len: std.ArrayListUnmanaged(usize),
-    mesh: ShaderStorageBufferWithArrayList(ChunkMesh.BlockVertex),
+    mesh: ShaderStorageBufferWithArrayList(ChunkMesh.Vertex),
     command: ShaderStorageBufferWithArrayList(DrawArraysIndirectCommand),
 
     pub fn init() WorldMeshLayer {
@@ -35,9 +35,9 @@ const DrawArraysIndirectCommand = packed struct {
 };
 
 pub fn init() WorldMesh {
-    var layers: [Block.Layer.len]WorldMeshLayer = undefined;
+    var layers: [BlockLayer.len]WorldMeshLayer = undefined;
 
-    inline for (0..Block.Layer.len) |i| {
+    inline for (0..BlockLayer.len) |i| {
         layers[i] = .init();
     }
 
@@ -48,7 +48,7 @@ pub fn init() WorldMesh {
 }
 
 pub fn uploadCommandBuffers(self: *WorldMesh) void {
-    inline for (0..Block.Layer.len) |layer_idx| {
+    inline for (0..BlockLayer.len) |layer_idx| {
         const world_mesh_layer = &self.layers[layer_idx];
         world_mesh_layer.command.uploadAndOrResize();
     }
@@ -58,7 +58,7 @@ pub fn clearCommandBuffers(self: *WorldMesh) void {
     for (0..self.pos.data.items.len) |chunk_mesh_idx_| {
         const chunk_mesh_idx = chunk_mesh_idx_ * 6;
 
-        inline for (0..Block.Layer.len) |layer_idx| {
+        inline for (0..BlockLayer.len) |layer_idx| {
             const world_mesh_layer = &self.layers[layer_idx];
 
             inline for (0..6) |face_idx| {
@@ -72,7 +72,7 @@ pub fn resetCommandBuffers(self: *WorldMesh) void {
     for (0..self.pos.data.items.len) |chunk_mesh_idx_| {
         const chunk_mesh_idx = chunk_mesh_idx_ * 6;
 
-        inline for (0..Block.Layer.len) |layer_idx| {
+        inline for (0..BlockLayer.len) |layer_idx| {
             const world_mesh_layer = &self.layers[layer_idx];
 
             inline for (0..6) |face_idx| {
@@ -101,10 +101,10 @@ pub fn generate(self: *WorldMesh, allocator: std.mem.Allocator, world: *World) !
 
         try self.pos.data.append(allocator, chunk_pos.toVec3f());
 
-        if (chunk.num_of_air != Chunk.Volume) {
+        if (chunk.num_of_air != Chunk.VOLUME) {
             try chunk_mesh.generate(chunk, &neighbor_chunks);
 
-            inline for (0..Block.Layer.len) |layer_idx| {
+            inline for (0..BlockLayer.len) |layer_idx| {
                 const world_mesh_layer = &self.layers[layer_idx];
                 const single_chunk_mesh_layer = &chunk_mesh.layers[layer_idx];
 
@@ -127,7 +127,7 @@ pub fn generate(self: *WorldMesh, allocator: std.mem.Allocator, world: *World) !
                 }
             }
         } else {
-            inline for (0..Block.Layer.len) |layer_idx| {
+            inline for (0..BlockLayer.len) |layer_idx| {
                 const world_mesh_layer = &self.layers[layer_idx];
 
                 try world_mesh_layer.len.appendNTimes(allocator, 0, 6);
@@ -159,7 +159,7 @@ pub fn cull(self: *WorldMesh, camera: *const Camera) u32 {
         const chunk_mesh_idx = chunk_mesh_idx_ * 6;
 
         if (chunk_pos.equal(camera_chunk_pos)) {
-            inline for (0..Block.Layer.len) |layer_idx| {
+            inline for (0..BlockLayer.len) |layer_idx| {
                 const world_mesh_layer = &self.layers[layer_idx];
 
                 inline for (0..6) |face_idx| {
@@ -174,15 +174,15 @@ pub fn cull(self: *WorldMesh, camera: *const Camera) u32 {
             continue;
         }
 
-        const point = chunk_mesh_pos.addScalar(Chunk.Center).subtract(camera.position);
-        if ((point.dot(camera.direction) < -Chunk.Radius) or
-            (point.dot(left_nrm) < -Chunk.Radius) or
-            (point.dot(right_nrm) < -Chunk.Radius) or
-            (point.dot(bottom_nrm) < -Chunk.Radius) or
-            (point.dot(top_nrm) < -Chunk.Radius) or
-            (point.dot(camera.direction.negate()) < -(camera.far + Chunk.Radius)))
+        const point = chunk_mesh_pos.addScalar(Chunk.CENTER).subtract(camera.position);
+        if ((point.dot(camera.direction) < -Chunk.RADIUS) or
+            (point.dot(left_nrm) < -Chunk.RADIUS) or
+            (point.dot(right_nrm) < -Chunk.RADIUS) or
+            (point.dot(bottom_nrm) < -Chunk.RADIUS) or
+            (point.dot(top_nrm) < -Chunk.RADIUS) or
+            (point.dot(camera.direction.negate()) < -(camera.far + Chunk.RADIUS)))
         {
-            inline for (0..Block.Layer.len) |layer_idx| {
+            inline for (0..BlockLayer.len) |layer_idx| {
                 const world_mesh_layer = &self.layers[layer_idx];
 
                 inline for (0..6) |face_idx| {
@@ -197,7 +197,7 @@ pub fn cull(self: *WorldMesh, camera: *const Camera) u32 {
         const diff = camera_chunk_pos.subtract(chunk_pos);
 
         if (diff.x < 0) {
-            inline for (0..Block.Layer.len) |layer_idx| {
+            inline for (0..BlockLayer.len) |layer_idx| {
                 const world_mesh_layer = &self.layers[layer_idx];
 
                 if (world_mesh_layer.len.items[chunk_mesh_idx] > 0) {
@@ -210,7 +210,7 @@ pub fn cull(self: *WorldMesh, camera: *const Camera) u32 {
                 world_mesh_layer.command.data.items[chunk_mesh_idx + 1].base_instance = 0;
             }
         } else if (diff.x != 0) {
-            inline for (0..Block.Layer.len) |layer_idx| {
+            inline for (0..BlockLayer.len) |layer_idx| {
                 const world_mesh_layer = &self.layers[layer_idx];
 
                 world_mesh_layer.command.data.items[chunk_mesh_idx].instance_count = 0;
@@ -223,7 +223,7 @@ pub fn cull(self: *WorldMesh, camera: *const Camera) u32 {
                 }
             }
         } else {
-            inline for (0..Block.Layer.len) |layer_idx| {
+            inline for (0..BlockLayer.len) |layer_idx| {
                 const world_mesh_layer = &self.layers[layer_idx];
 
                 if (world_mesh_layer.len.items[chunk_mesh_idx] > 0) {
@@ -241,7 +241,7 @@ pub fn cull(self: *WorldMesh, camera: *const Camera) u32 {
         }
 
         if (diff.y < 0) {
-            inline for (0..Block.Layer.len) |layer_idx| {
+            inline for (0..BlockLayer.len) |layer_idx| {
                 const world_mesh_layer = &self.layers[layer_idx];
 
                 if (world_mesh_layer.len.items[chunk_mesh_idx + 2] > 0) {
@@ -254,7 +254,7 @@ pub fn cull(self: *WorldMesh, camera: *const Camera) u32 {
                 world_mesh_layer.command.data.items[chunk_mesh_idx + 3].base_instance = 0;
             }
         } else if (diff.y != 0) {
-            inline for (0..Block.Layer.len) |layer_idx| {
+            inline for (0..BlockLayer.len) |layer_idx| {
                 const world_mesh_layer = &self.layers[layer_idx];
 
                 world_mesh_layer.command.data.items[chunk_mesh_idx + 2].instance_count = 0;
@@ -267,7 +267,7 @@ pub fn cull(self: *WorldMesh, camera: *const Camera) u32 {
                 }
             }
         } else {
-            inline for (0..Block.Layer.len) |layer_idx| {
+            inline for (0..BlockLayer.len) |layer_idx| {
                 const world_mesh_layer = &self.layers[layer_idx];
 
                 if (world_mesh_layer.len.items[chunk_mesh_idx + 2] > 0) {
@@ -285,7 +285,7 @@ pub fn cull(self: *WorldMesh, camera: *const Camera) u32 {
         }
 
         if (diff.z < 0) {
-            inline for (0..Block.Layer.len) |layer_idx| {
+            inline for (0..BlockLayer.len) |layer_idx| {
                 const world_mesh_layer = &self.layers[layer_idx];
 
                 if (world_mesh_layer.len.items[chunk_mesh_idx + 4] > 0) {
@@ -298,7 +298,7 @@ pub fn cull(self: *WorldMesh, camera: *const Camera) u32 {
                 world_mesh_layer.command.data.items[chunk_mesh_idx + 5].base_instance = 0;
             }
         } else if (diff.z > 0) {
-            inline for (0..Block.Layer.len) |layer_idx| {
+            inline for (0..BlockLayer.len) |layer_idx| {
                 const world_mesh_layer = &self.layers[layer_idx];
 
                 world_mesh_layer.command.data.items[chunk_mesh_idx + 4].instance_count = 0;
@@ -311,7 +311,7 @@ pub fn cull(self: *WorldMesh, camera: *const Camera) u32 {
                 }
             }
         } else {
-            inline for (0..Block.Layer.len) |layer_idx| {
+            inline for (0..BlockLayer.len) |layer_idx| {
                 const world_mesh_layer = &self.layers[layer_idx];
 
                 if (world_mesh_layer.len.items[chunk_mesh_idx + 4] > 0) {
