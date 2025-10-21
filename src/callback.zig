@@ -12,13 +12,21 @@ const NewCursorPos = struct {
     cursor_y: gl.float,
 };
 
+const NewKeyAction = struct {
+    key: glfw.Key,
+    action: glfw.Action,
+    mods: glfw.Mods,
+};
+
 pub const UserData = struct {
     new_window_size: ?NewWindowSize,
     new_cursor_pos: ?NewCursorPos,
+    new_key_action: ?NewKeyAction,
 
     pub const default: UserData = .{
         .new_window_size = null,
         .new_cursor_pos = null,
+        .new_key_action = null,
     };
 };
 
@@ -28,14 +36,12 @@ pub fn errorCallback(error_code: glfw.ErrorCode, description: [:0]const u8) void
 
 pub fn keyCallback(window: glfw.Window, key: glfw.Key, scancode: i32, action: glfw.Action, mods: glfw.Mods) void {
     _ = scancode;
-    _ = mods;
 
-    switch (key) {
-        .escape => if (action == .press) {
-            window.setShouldClose(true);
-        },
-        else => {},
-    }
+    window.getUserPointer(UserData).?.new_key_action = .{
+        .key = key,
+        .action = action,
+        .mods = mods,
+    };
 }
 
 pub fn cursorCallback(window: glfw.Window, cursor_x: f64, cursor_y: f64) void {

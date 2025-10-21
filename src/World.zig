@@ -18,12 +18,11 @@ seed: i32,
 chunks: Chunks,
 chunks_which_need_to_add_lights: ChunkPosQueue,
 chunks_which_need_to_remove_lights: ChunkPosQueue,
-block_extended_data_store: *BlockExtendedDataStore,
-block_context: Block.Context,
+block_extended_data_store: BlockExtendedDataStore,
 
 pub const WIDTH = 1;
 pub const HEIGHT = 8;
-pub const VOLUME = WIDTH * HEIGHT * 4;
+pub const VOLUME = (WIDTH * 2) * (WIDTH * 2) * HEIGHT;
 pub const ABOVE_HEIGHT = 2;
 pub const BELOW_HEIGHT = ABOVE_HEIGHT - HEIGHT;
 pub const BOTTOM_OF_THE_WORLD = BELOW_HEIGHT * Chunk.SIZE;
@@ -101,17 +100,12 @@ pub const Pos = struct {
     }
 };
 
-pub fn init(allocator: std.mem.Allocator, seed: i32) !World {
+pub fn init(seed: i32) !World {
     const prng = std.Random.DefaultPrng.init(expr: {
         var prng_seed: u64 = undefined;
         try std.posix.getrandom(std.mem.asBytes(&prng_seed));
         break :expr prng_seed;
     });
-
-    const block_extended_data_store = try allocator.create(BlockExtendedDataStore);
-    block_extended_data_store.* = .empty;
-
-    const block_context: Block.Context = .init(block_extended_data_store);
 
     return .{
         .prng = prng,
@@ -119,8 +113,7 @@ pub fn init(allocator: std.mem.Allocator, seed: i32) !World {
         .chunks = .empty,
         .chunks_which_need_to_add_lights = .empty,
         .chunks_which_need_to_remove_lights = .empty,
-        .block_extended_data_store = block_extended_data_store,
-        .block_context = block_context,
+        .block_extended_data_store = .empty,
     };
 }
 
@@ -144,10 +137,10 @@ pub fn getBlockOrNull(self: World, pos: Pos) ?Block {
     return chunk.getBlock(pos.toLocalPos());
 }
 
-pub fn setBlock(self: *World, pos: Pos, block: Block) !void {
+pub fn setBlock(self: *World, allocator: std.mem.Allocator, pos: Pos, block: Block) !void {
     const chunk = try self.getChunk(pos.toChunkPos());
 
-    chunk.setBlock(pos.toLocalPos(), block);
+    try chunk.setBlock(allocator, pos.toLocalPos(), block);
 }
 
 pub fn setBlockAndAffectLight(self: *World, allocator: std.mem.Allocator, pos: Pos, block: Block) !void {
@@ -348,13 +341,15 @@ pub fn generate(self: *World, allocator: std.mem.Allocator) !void {
                 const chunk_z = @as(i11, @intCast(chunk_z_)) - WIDTH;
                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
 
-                var chunk = try Chunk.init(allocator, self.block_context, chunk_pos);
+                var chunk = try Chunk.init(allocator, chunk_pos);
 
                 if (chunk_y >= min_chunk_height and chunk_y <= max_chunk_height) {
                     try generateNoise2D(allocator, &chunk, height_map);
-                } else if (chunk_y <= min_chunk_height) {
-                    try generateNoise3D(allocator, &chunk, &cave_gen);
+                } else if (chunk_y < min_chunk_height) {
+                    try generateFillWithStone(allocator, &chunk);
                 }
+
+                try generateNoise3D(allocator, &chunk, &cave_gen, self.prng.random());
 
                 try self.chunks.put(allocator, chunk.pos, chunk);
             }
@@ -454,10 +449,37 @@ pub fn generateNoise2D(allocator: std.mem.Allocator, chunk: *Chunk, height_map: 
     }
 }
 
-pub fn generateNoise3D(allocator: std.mem.Allocator, chunk: *Chunk, gen: *const znoise.FnlGenerator) !void {
+pub fn generateFillWithStone(allocator: std.mem.Allocator, chunk: *Chunk) !void {
     for (0..Chunk.SIZE) |x_| {
+        const x: u5 = @intCast(x_);
+
         for (0..Chunk.SIZE) |z_| {
-            const x: u5 = @intCast(x_);
+            const z: u5 = @intCast(z_);
+
+            for (0..Chunk.SIZE) |y_| {
+                const y: u5 = @intCast(y_);
+                const local_pos: Chunk.LocalPos = .{ .x = x, .y = y, .z = z };
+
+                try chunk.setBlock(allocator, local_pos, .initNone(.stone));
+            }
+        }
+    }
+}
+
+pub fn caveThreshold(height: f32) f32 {
+    const xmin = BOTTOM_OF_THE_WORLD;
+    const xmax = 128;
+
+    const ymax: f32 = 1.0;
+
+    return (-ymax / (xmin - xmax)) * (height - xmax) + ymax;
+}
+
+pub fn generateNoise3D(allocator: std.mem.Allocator, chunk: *Chunk, gen: *const znoise.FnlGenerator, random: std.Random) !void {
+    for (0..Chunk.SIZE) |x_| {
+        const x: u5 = @intCast(x_);
+
+        for (0..Chunk.SIZE) |z_| {
             const z: u5 = @intCast(z_);
 
             for (0..Chunk.SIZE) |y_| {
@@ -467,10 +489,9 @@ pub fn generateNoise3D(allocator: std.mem.Allocator, chunk: *Chunk, gen: *const 
                 const noise_pos = world_pos.toVec3f();
 
                 const density = gen.noise3(noise_pos.x, noise_pos.y, noise_pos.z);
+                const threshold = caveThreshold(noise_pos.y);
 
-                if (density > 0.0) {
-                    try chunk.setBlock(allocator, local_pos, .initNone(.stone));
-                } else {
+                if (density < -threshold) {
                     if (world_pos.y == BOTTOM_OF_THE_WORLD) {
                         try chunk.setBlock(allocator, local_pos, .initNone(.bedrock));
                     } else if (world_pos.y == BOTTOM_OF_THE_WORLD + 1) {
@@ -483,6 +504,18 @@ pub fn generateNoise3D(allocator: std.mem.Allocator, chunk: *Chunk, gen: *const 
                             .light = .{ .red = 15, .green = 6, .blue = 1, .indirect = 0 },
                             .pos = light_pos,
                         });
+                    } else {
+                        const prev_block = chunk.getBlock(local_pos);
+                        if (prev_block.kind == .stone or prev_block.kind == .grass) {
+                            try chunk.setBlock(allocator, local_pos, .initNone(.air));
+
+                            if (random.uintAtMost(u32, 1000) == 0) {
+                                try chunk.light_addition_queue.writeItem(.{
+                                    .light = .{ .red = random.uintAtMost(u4, 15), .green = random.uintAtMost(u4, 15), .blue = random.uintAtMost(u4, 15), .indirect = 0 },
+                                    .pos = world_pos,
+                                });
+                            }
+                        }
                     }
                 }
             }

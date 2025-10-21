@@ -44,14 +44,14 @@ pub fn build(b: *std.Build) void {
     // Modules can depend on one another using the `std.Build.Module.addImport` function.
     // This is what allows Zig source code to use `@import("foo")` where 'foo' is not a
     // file path. In this case, we set up `exe_mod` to import `lib_mod`.
-    // exe_mod.addImport("testing_lib", lib_mod);
+    // exe_mod.addImport("polycosm_lib", lib_mod);
 
     // Now, we will create a static library based on the module we created above.
     // This creates a `std.Build.Step.Compile`, which is the build step responsible
     // for actually invoking the compiler.
     // const lib = b.addLibrary(.{
     //     .linkage = .static,
-    //     .name = "testing",
+    //     .name = "polycosm",
     //     .root_module = lib_mod,
     // });
 
@@ -63,7 +63,7 @@ pub fn build(b: *std.Build) void {
     // This creates another `std.Build.Step.Compile`, but this one builds an executable
     // rather than a static library.
     const exe = b.addExecutable(.{
-        .name = "testing",
+        .name = "polycosm",
         .root_module = exe_mod,
     });
 
@@ -91,10 +91,39 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("znoise", znoise.module("root"));
     exe.linkLibrary(znoise.artifact("FastNoiseLite"));
 
-    // const vulkan = b.dependency("vulkan-zig", .{
-    //     .registry = b.path("vk.xml"),
-    // }).module("vulkan-zig");
-    // exe.root_module.addImport("vulkan-zig", vulkan);
+    // const vulkan = b.dependency("vulkan_zig", .{
+    //     .registry = vulkan_headers.path("registry/vk.xml"),
+    // });
+    // exe.root_module.addImport("vulkan", vulkan.module("vulkan-zig"));
+
+    const vulkan_headers = b.dependency("vulkan_headers", .{});
+    const vma = b.dependency("vma", .{});
+
+    const vma_lib = b.addStaticLibrary(.{
+        .name = "vma",
+        .target = target,
+        .optimize = optimize,
+        .use_llvm = true,
+        .use_lld = true,
+    });
+    vma_lib.linkLibC();
+    vma_lib.linkLibCpp();
+    vma_lib.addIncludePath(vulkan_headers.path("include"));
+    vma_lib.addIncludePath(vma.path("include"));
+    vma_lib.addCSourceFile(.{
+        .file = b.path("src/c/vk_mem_alloc.cpp"),
+    });
+
+    const translate_step = b.addTranslateC(.{
+        .root_source_file = vma.path("include/vk_mem_alloc.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    translate_step.addIncludePath(vulkan_headers.path("include"));
+
+    const vma_module = translate_step.addModule("vma");
+    exe.root_module.addImport("vma", vma_module);
+    exe.linkLibrary(vma_lib);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -124,7 +153,7 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    // Creates a step for unit testing. This only builds the test `cutable
+    // Creates a step for unit polycosm. This only builds the test `cutable
     // but does not run it.
     // const lib_unit_tests = b.addTest(.{
     //     .root_module = lib_mod,

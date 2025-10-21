@@ -80,8 +80,8 @@ pub const BlockKind = enum {
             .water, .ice => .{ .translucent = .{
                 .red = 1,
                 .green = 1,
-                .blue = 1,
-                .indirect = 1,
+                .blue = 0,
+                .indirect = 0,
             } },
 
             .glass_tinted => .{ .translucent = .{
@@ -144,11 +144,11 @@ pub const BlockExtendedDataStore = struct {
         .array = .empty,
     };
 
-    pub fn append(self: *BlockExtendedDataStore, allocator: std.mem.Allocator, data: BlockExtendedData) !BlockData {
+    pub fn append(self: *BlockExtendedDataStore, allocator: std.mem.Allocator, data: BlockExtendedData) !usize {
         try self.array.append(allocator, data);
         const index = self.array.items.len - 1;
 
-        return .{ .extended = index };
+        return index;
     }
 
     pub fn get(self: BlockExtendedDataStore, index: usize) BlockExtendedData {
@@ -164,7 +164,7 @@ const BlockDataKind = enum {
 
 pub const BlockData = packed union {
     none: void,
-    /// Is an index to the extended data store
+    /// Index to the extended data store
     extended: usize,
     redstone_lamp: RedstoneLampData,
 
@@ -194,29 +194,36 @@ pub const Block = struct {
     }
 
     pub const Context = struct {
-        block_extended_data_store: *const BlockExtendedDataStore,
-
-        pub fn init(block_extended_data_store: *const BlockExtendedDataStore) Context {
-            return .{ .block_extended_data_store = block_extended_data_store };
-        }
-
         pub fn hash(ctx: Context, key: Block) u64 {
+            _ = ctx;
             @setEvalBranchQuota(10_000);
 
+            var hasher: std.hash.Wyhash = .init(0);
+
             switch (key.kind.blockDataKind()) {
-                .none => return std.hash.RapidHash.hash(0, std.mem.asBytes(&key)),
+                .none => {
+                    hasher.update(std.mem.asBytes(&BlockDataKind.none));
+                    hasher.update(std.mem.asBytes(&key.kind));
+                },
                 .extended => {
-                    const data = ctx.block_extended_data_store.get(key.data.extended);
-                    return std.hash.RapidHash.hash(0, std.mem.asBytes(&.{ key.kind, data }));
+                    hasher.update(std.mem.asBytes(&BlockDataKind.extended));
+                    hasher.update(std.mem.asBytes(&key.kind));
+                    hasher.update(std.mem.asBytes(&key.data.extended));
                 },
                 inline else => |tag| {
+                    hasher.update(std.mem.asBytes(&tag));
+                    hasher.update(std.mem.asBytes(&key.kind));
+
                     const data = @field(key.data, @tagName(tag));
-                    return std.hash.RapidHash.hash(0, std.mem.asBytes(&.{ key.kind, data }));
+                    hasher.update(std.mem.asBytes(&data));
                 },
             }
+
+            return hasher.final();
         }
 
         pub fn eql(ctx: Context, key1: Block, key2: Block) bool {
+            _ = ctx;
             @setEvalBranchQuota(10_000);
 
             if (key1.kind != key2.kind) return false;
@@ -224,9 +231,9 @@ pub const Block = struct {
             switch (key1.kind.blockDataKind()) {
                 .none => return true,
                 .extended => {
-                    const data1 = ctx.block_extended_data_store.get(key1.data.extended);
-                    const data2 = ctx.block_extended_data_store.get(key2.data.extended);
-                    return std.meta.eql(data1, data2);
+                    const data1 = key1.data.extended;
+                    const data2 = key2.data.extended;
+                    return data1 == data2;
                 },
                 inline else => |tag| {
                     const data1 = @field(key1.data, @tagName(tag));

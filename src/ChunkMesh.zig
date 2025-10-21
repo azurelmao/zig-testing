@@ -5,22 +5,17 @@ const Chunk = @import("Chunk.zig");
 const LocalPos = Chunk.LocalPos;
 const Light = @import("light.zig").Light;
 const BlockLayer = @import("block.zig").BlockLayer;
+const Side = @import("side.zig").Side;
 
 const ChunkMesh = @This();
 
 layers: [BlockLayer.len]ChunkMeshLayer,
 
-const ChunkMeshLayer = struct {
-    faces: [6]std.ArrayList(Vertex),
+pub const ChunkMeshLayer = struct {
+    faces: [6]std.ArrayListUnmanaged(Vertex),
 
-    pub fn init(allocator: std.mem.Allocator) ChunkMeshLayer {
-        var faces: [6]std.ArrayList(Vertex) = undefined;
-
-        for (0..6) |face_idx| {
-            faces[face_idx] = .init(allocator);
-        }
-
-        return .{ .faces = faces };
+    pub fn init() ChunkMeshLayer {
+        return .{ .faces = @splat(.empty) };
     }
 };
 
@@ -30,29 +25,24 @@ pub const Vertex = packed struct(u64) {
     z: u5,
     model_idx: u17,
     light: Light,
-    _: u16 = 0,
+    indirect_light_color: u1,
+    _: u15 = 0,
 };
 
-pub fn init(allocator: std.mem.Allocator) ChunkMesh {
-    var layers: [BlockLayer.len]ChunkMeshLayer = undefined;
-
-    inline for (0..BlockLayer.len) |layer_idx| {
-        layers[layer_idx] = .init(allocator);
-    }
-
-    return .{ .layers = layers };
+pub fn init() ChunkMesh {
+    return .{ .layers = @splat(.init()) };
 }
 
 pub const NeighborChunks = struct {
     chunks: [6]?*Chunk,
 
-    const inEDGE = .{
-        inWestEDGE,
-        inEastEDGE,
-        inBottomEDGE,
-        inTopEDGE,
-        inNorthEDGE,
-        inSouthEDGE,
+    const inEdge = .{
+        inWestEdge,
+        inEastEdge,
+        inBottomEdge,
+        inTopEdge,
+        inNorthEdge,
+        inSouthEdge,
     };
 
     const getPos = .{
@@ -73,27 +63,27 @@ pub const NeighborChunks = struct {
         getSouthNeighborPos,
     };
 
-    fn inWestEDGE(pos: LocalPos) bool {
+    fn inWestEdge(pos: LocalPos) bool {
         return pos.x == 0;
     }
 
-    fn inEastEDGE(pos: LocalPos) bool {
+    fn inEastEdge(pos: LocalPos) bool {
         return pos.x == Chunk.EDGE;
     }
 
-    fn inBottomEDGE(pos: LocalPos) bool {
+    fn inBottomEdge(pos: LocalPos) bool {
         return pos.y == 0;
     }
 
-    fn inTopEDGE(pos: LocalPos) bool {
+    fn inTopEdge(pos: LocalPos) bool {
         return pos.y == Chunk.EDGE;
     }
 
-    fn inNorthEDGE(pos: LocalPos) bool {
+    fn inNorthEdge(pos: LocalPos) bool {
         return pos.z == 0;
     }
 
-    fn inSouthEDGE(pos: LocalPos) bool {
+    fn inSouthEdge(pos: LocalPos) bool {
         return pos.z == Chunk.EDGE;
     }
 
@@ -170,7 +160,7 @@ pub const NeighborChunks = struct {
     }
 };
 
-pub fn generate(chunk_mesh: *ChunkMesh, chunk: *Chunk, neighbor_chunks: *const NeighborChunks) !void {
+pub fn generate(chunk_mesh: *ChunkMesh, allocator: std.mem.Allocator, chunk: *Chunk, neighbor_chunks: *const NeighborChunks) !void {
     var chunk_mesh_layer: *ChunkMeshLayer = undefined;
 
     for (0..Chunk.SIZE) |x| {
@@ -187,35 +177,41 @@ pub fn generate(chunk_mesh: *ChunkMesh, chunk: *Chunk, neighbor_chunks: *const N
 
                 const model_indices = block.kind.getModelIndices();
 
-                inline for (0..6) |face_idx| {
-                    if (NeighborChunks.inEDGE[face_idx](pos)) {
-                        if (neighbor_chunks.chunks[face_idx]) |neighbor_chunk| {
-                            const neighbor_pos = NeighborChunks.getNeighborPos[face_idx](pos);
+                inline for (Side.values) |side| {
+                    const side_idx = side.idx();
+
+                    if (NeighborChunks.inEdge[side_idx](pos)) {
+                        if (neighbor_chunks.chunks[side_idx]) |neighbor_chunk| {
+                            const neighbor_pos = NeighborChunks.getNeighborPos[side_idx](pos);
                             const neighbor_block = neighbor_chunk.getBlock(neighbor_pos);
-                            const neighbor_light = neighbor_chunk.getLight(neighbor_pos);
 
                             if (neighbor_block.kind.isNotSolid() and neighbor_block.kind != block.kind) {
-                                try chunk_mesh_layer.faces[face_idx].append(.{
+                                const neighbor_light = neighbor_chunk.getLight(neighbor_pos);
+
+                                try chunk_mesh_layer.faces[side_idx].append(allocator, .{
                                     .x = pos.x,
                                     .y = pos.y,
                                     .z = pos.z,
-                                    .model_idx = model_indices.faces[face_idx],
+                                    .model_idx = model_indices.faces[side_idx],
                                     .light = neighbor_light,
+                                    .indirect_light_color = if (neighbor_block.kind == .water) 1 else 0,
                                 });
                             }
                         }
                     } else {
-                        const neighbor_pos = NeighborChunks.getPos[face_idx](pos);
+                        const neighbor_pos = NeighborChunks.getPos[side_idx](pos);
                         const neighbor_block = chunk.getBlock(neighbor_pos);
-                        const neighbor_light = chunk.getLight(neighbor_pos);
 
                         if (neighbor_block.kind.isNotSolid() and neighbor_block.kind != block.kind) {
-                            try chunk_mesh_layer.faces[face_idx].append(.{
+                            const neighbor_light = chunk.getLight(neighbor_pos);
+
+                            try chunk_mesh_layer.faces[side_idx].append(allocator, .{
                                 .x = pos.x,
                                 .y = pos.y,
                                 .z = pos.z,
-                                .model_idx = model_indices.faces[face_idx],
+                                .model_idx = model_indices.faces[side_idx],
                                 .light = neighbor_light,
+                                .indirect_light_color = if (neighbor_block.kind == .water) 1 else 0,
                             });
                         }
                     }

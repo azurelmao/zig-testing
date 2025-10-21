@@ -1,5 +1,5 @@
 .{
-    .fingerprint = 0xe8f35a064c75371a,
+    .fingerprint = 0x6271dc4a2230c9cb,
 
     // This is the default name used by packages depending on this one. For
     // example, when a user runs `zig fetch --save <url>`, this field is used
@@ -8,7 +8,7 @@
     //
     // It is redundant to include "zig" in this name because it is already
     // within the Zig package namespace.
-    .name = .testing,
+    .name = .polycosm,
 
     // This is a [Semantic Version](https://semver.org/).
     // In a future version of Zig it will be used for package deduplication.
@@ -33,10 +33,6 @@
             .url = "git+https://github.com/castholm/zigglgen#1c901bef6d312ef1814b8fce3c5a9e9e8e61ac2d",
             .hash = "zigglgen-0.3.0-AAAAAOHwLQCdigGIMr7hXZ2imhL6dT2JtWzYQ83x85UB",
         },
-        // .@"vulkan-zig" = .{
-        //     .url = "https://github.com/Snektron/vulkan-zig/archive/bb470f16dabd8195155ba9e3714dc62d7ad69add.tar.gz",
-        //     .hash = "12205f4e25c7102242d99dfc4f022a9c667bf4c5058b3919364f89fd882b6845d721",
-        // },
         .zstbi = .{
             .url = "git+https://github.com/zig-gamedev/zstbi#2517d3f77cc18ef735a9b4847666bc03d9afbce0",
             .hash = "zstbi-0.10.0-AAAAAIeWBwAjYAA2nV_HHNSMH0MfGyKNwsc2vvk439AZ",
@@ -44,6 +40,18 @@
         .znoise = .{
             .url = "git+https://github.com/zig-gamedev/znoise#b6e7a24c9bfa4bae63521664e191a728b5b18805",
             .hash = "znoise-0.3.0-dev-AAAAAMOjAQCOFsgDZuKi-L0_HGdrCb9HwVf00PDWRAVV",
+        },
+        // .vulkan_zig = .{
+        //     .url = "https://github.com/Snektron/vulkan-zig/archive/bb470f16dabd8195155ba9e3714dc62d7ad69add.tar.gz",
+        //     .hash = "12205f4e25c7102242d99dfc4f022a9c667bf4c5058b3919364f89fd882b6845d721",
+        // },
+        .vulkan_headers = .{
+            .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.3.283.tar.gz",
+            .hash = "N-V-__8AAAkkoQGn5z1yoNVrwqZfnYmZp8AZ5CJgoHRMQI0c",
+        },
+        .vma = .{
+            .url = "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/archive/e1bdbca9baf4d682fb6066b380f4aa4a7bdbb58a.tar.gz",
+            .hash = "N-V-__8AAHCvOgDoVv6p36uCYiChFV3SZ6Yh36X-oPl2b596",
         },
     },
     .paths = .{

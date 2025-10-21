@@ -18,7 +18,6 @@ pub const EDGE = SIZE - 1;
 
 pos: Pos,
 
-block_context: Block.Context,
 block_to_index: std.HashMapUnmanaged(Block, u15, Block.Context, 80),
 index_to_block: std.AutoHashMapUnmanaged(u15, Block),
 blocks: []u8,
@@ -99,13 +98,12 @@ pub const LocalPos = packed struct(u15) {
     }
 };
 
-pub fn init(allocator: std.mem.Allocator, block_context: Block.Context, pos: Pos) !Chunk {
+pub fn init(allocator: std.mem.Allocator, pos: Pos) !Chunk {
     var block_to_index = std.HashMapUnmanaged(Block, u15, Block.Context, 80).empty;
-    try block_to_index.putContext(
+    try block_to_index.put(
         allocator,
         .init(.air, .{ .none = {} }),
         0,
-        block_context,
     );
 
     var index_to_block = std.AutoHashMapUnmanaged(u15, Block).empty;
@@ -129,7 +127,6 @@ pub fn init(allocator: std.mem.Allocator, block_context: Block.Context, pos: Pos
     return .{
         .pos = pos,
 
-        .block_context = block_context,
         .block_to_index = block_to_index,
         .index_to_block = index_to_block,
         .blocks = &.{},
@@ -174,7 +171,7 @@ pub fn setBlock(self: *Chunk, allocator: std.mem.Allocator, pos: LocalPos, block
     const z: usize = @intCast(pos.z);
     const idx = x * SIZE + z;
 
-    if (!self.block_to_index.containsContext(block, self.block_context)) {
+    if (!self.block_to_index.contains(block)) {
         var prev_count = self.block_to_index.count();
 
         if (prev_count >= VOLUME - 1) {
@@ -184,7 +181,7 @@ pub fn setBlock(self: *Chunk, allocator: std.mem.Allocator, pos: LocalPos, block
 
         const block_index: u15 = @intCast(prev_count);
 
-        try self.block_to_index.putContext(allocator, block, block_index, self.block_context);
+        try self.block_to_index.put(allocator, block, block_index);
         try self.index_to_block.put(allocator, block_index, block);
 
         const count = prev_count + 1;
@@ -225,7 +222,7 @@ pub fn setBlock(self: *Chunk, allocator: std.mem.Allocator, pos: LocalPos, block
         }
     }
 
-    const block_index = self.block_to_index.getContext(block, self.block_context).?;
+    const block_index = self.block_to_index.get(block).?;
 
     switch (self.index_bit_size) {
         0 => {},

@@ -53,7 +53,7 @@ vec3 unpackBlockLight(uint data) {
 }
 
 uint unpackIndirectLightIdx(uint data) {
-    uint indirectLightIdx = bitfieldExtract(data, 12, 4);
+    uint indirectLightIdx = bitfieldExtract(data, 12, 5);
 
     return indirectLightIdx;
 }

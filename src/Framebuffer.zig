@@ -42,6 +42,11 @@ pub fn resize(self: *Framebuffer, width: gl.sizei, height: gl.sizei) !void {
     }
 }
 
+pub fn resizeAndBind(self: *Framebuffer, width: gl.sizei, height: gl.sizei, unit: gl.uint) !void {
+    try self.resize(width, height);
+    self.bind(unit);
+}
+
 pub fn bind(self: Framebuffer, unit: gl.uint) void {
     gl.BindTextureUnit(unit, self.texture_handle);
 }

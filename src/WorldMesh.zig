@@ -1,5 +1,6 @@
 const std = @import("std");
 const gl = @import("gl");
+const vma = @import("vma.zig");
 const BlockLayer = @import("block.zig").BlockLayer;
 const Chunk = @import("Chunk.zig");
 const World = @import("World.zig");
@@ -7,32 +8,12 @@ const Vec3f = @import("vec3f.zig").Vec3f;
 const Camera = @import("Camera.zig");
 const ShaderStorageBufferWithArrayList = @import("shader_storage_buffer.zig").ShaderStorageBufferWithArrayList;
 const ChunkMesh = @import("ChunkMesh.zig");
+const ChunkMeshLayer = ChunkMesh.ChunkMeshLayer;
 
 const WorldMesh = @This();
 
 layers: [BlockLayer.len]WorldMeshLayer,
 pos: ShaderStorageBufferWithArrayList(Vec3f),
-
-pub const WorldMeshLayer = struct {
-    len: std.ArrayListUnmanaged(usize),
-    mesh: ShaderStorageBufferWithArrayList(ChunkMesh.Vertex),
-    command: ShaderStorageBufferWithArrayList(DrawArraysIndirectCommand),
-
-    pub fn init() WorldMeshLayer {
-        return .{
-            .len = .empty,
-            .mesh = .init(World.VOLUME * 1000, gl.DYNAMIC_STORAGE_BIT),
-            .command = .init(World.VOLUME, gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT),
-        };
-    }
-};
-
-const DrawArraysIndirectCommand = packed struct {
-    count: gl.uint,
-    instance_count: gl.uint,
-    first_vertex: gl.uint,
-    base_instance: gl.uint,
-};
 
 pub fn init() WorldMesh {
     var layers: [BlockLayer.len]WorldMeshLayer = undefined;
@@ -46,6 +27,91 @@ pub fn init() WorldMesh {
         .pos = .initAndBind(2, World.VOLUME, gl.DYNAMIC_STORAGE_BIT),
     };
 }
+
+const WorldMeshLayer = struct {
+    virtual_block_size: usize,
+    virtual_block: vma.VirtualBlock,
+    chunk_pos_to_virtual_alloc: std.AutoHashMapUnmanaged(Chunk.Pos, vma.VirtualAllocation),
+    mesh: ShaderStorageBufferWithArrayList(ChunkMesh.Vertex),
+    command: ShaderStorageBufferWithArrayList(DrawArraysIndirectCommand),
+
+    const INITIAL_MESH_SIZE = World.VOLUME * 1000;
+
+    pub fn init() !WorldMeshLayer {
+        return .{
+            .virtual_block_size = INITIAL_MESH_SIZE,
+            .virtual_block = try .init(.{ .size = INITIAL_MESH_SIZE }),
+            .chunk_pos_to_virtual_alloc = .empty,
+            .mesh = .init(INITIAL_MESH_SIZE, gl.DYNAMIC_STORAGE_BIT),
+            .command = .init(World.VOLUME, gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT),
+        };
+    }
+
+    pub fn suballoc(self: *WorldMeshLayer, allocator: std.mem.Allocator, chunk_mesh_layer: *ChunkMeshLayer) !void {
+        var total_allocation_size: usize = 0;
+        for (chunk_mesh_layer.faces) |*chunk_mesh_face| {
+            total_allocation_size += chunk_mesh_face.items.len;
+        }
+
+        const allocation = self.virtual_block.alloc(.{ .size = @intCast(total_allocation_size) }) catch self.resizeMesh(allocator, total_allocation_size);
+
+        self.chunk_pos_to_virtual_alloc.append(allocator, allocation);
+
+        for (chunk_mesh_layer.faces) |*chunk_mesh_face| {
+            const chunk_mesh_face_len = chunk_mesh_face.items.len;
+
+            const command: DrawArraysIndirectCommand = .{
+                .first_vertex = @intCast(self.mesh.data.items.len * 6),
+                .count = @intCast(chunk_mesh_face_len * 6),
+                .instance_count = if (chunk_mesh_face_len > 0) 1 else 0,
+                .base_instance = if (chunk_mesh_face_len > 0) 1 else 0,
+            };
+
+            try self.mesh.data.appendSlice(allocator, chunk_mesh_face.items);
+
+            self.command.data.append(allocator, command);
+        }
+    }
+
+    pub fn resizeMesh(self: *WorldMeshLayer, allocator: std.mem.Allocator, total_allocation_size: usize) void {
+        const new_block_size = self.virtual_block_size + total_allocation_size * 5;
+        const new_block: vma.VirtualBlock = .init(.{ .size = new_block_size });
+        const new_mesh_data = try allocator.alloc(ChunkMesh.Vertex, new_block_size);
+
+        var new_offset: usize = 0;
+        var iter = self.chunk_pos_to_virtual_alloc.valueIterator();
+        for (iter.next()) |virtual_allocation| {
+            const old_allocation_info = self.virtual_block.allocInfo(virtual_allocation);
+
+            const old_offset = old_allocation_info.offset;
+            const old_end = old_offset + old_allocation_info.size;
+
+            const new_end = new_offset + old_allocation_info.size;
+            @memcpy(new_mesh_data[new_offset..new_end], self.mesh.data.items[old_offset..old_end]);
+
+            new_block.alloc(.{ .size = old_allocation_info.size });
+
+            new_offset = new_end;
+        }
+
+        self.mesh.data.deinit(allocator);
+        self.mesh.data = .fromOwnedSlice(new_mesh_data);
+        self.virtual_block_size = new_block_size;
+        self.virtual_block = new_block;
+    }
+
+    pub fn free(self: *WorldMeshLayer, chunk_pos: Chunk.Pos) !void {
+        self.virtual_block.free(self.chunk_pos_to_virtual_alloc.get(chunk_pos));
+        self.chunk_pos_to_virtual_alloc.remove(chunk_pos);
+    }
+};
+
+const DrawArraysIndirectCommand = extern struct {
+    count: gl.uint,
+    instance_count: gl.uint,
+    first_vertex: gl.uint,
+    base_instance: gl.uint,
+};
 
 pub fn uploadCommandBuffers(self: *WorldMesh) void {
     inline for (0..BlockLayer.len) |layer_idx| {
@@ -88,58 +154,19 @@ pub fn generate(self: *WorldMesh, allocator: std.mem.Allocator, world: *World) !
     var chunk_iter = world.chunks.valueIterator();
     while (chunk_iter.next()) |chunk| {
         const chunk_pos = chunk.pos;
-
-        const neighbor_chunks: ChunkMesh.NeighborChunks = expr: {
-            var chunks: [6]?*Chunk = undefined;
-
-            for (0..6) |face_idx| {
-                chunks[face_idx] = world.getChunkOrNull(chunk_pos.add(Chunk.Pos.Offsets[face_idx]));
-            }
-
-            break :expr .{ .chunks = chunks };
-        };
+        const neighbor_chunks = world.getNeighborChunks(chunk_pos);
 
         try self.pos.data.append(allocator, chunk_pos.toVec3f());
 
         if (chunk.num_of_air != Chunk.VOLUME) {
-            try chunk_mesh.generate(chunk, &neighbor_chunks);
+            try chunk_mesh.generate(allocator, chunk, &neighbor_chunks);
 
-            inline for (0..BlockLayer.len) |layer_idx| {
-                const world_mesh_layer = &self.layers[layer_idx];
-                const single_chunk_mesh_layer = &chunk_mesh.layers[layer_idx];
+            for (self.layers, chunk_mesh.layers) |*world_mesh_layer, *chunk_mesh_layer| {
+                try world_mesh_layer.suballoc(allocator, chunk_mesh_layer);
 
-                inline for (0..6) |face_idx| {
-                    const single_chunk_mesh_face = &single_chunk_mesh_layer.faces[face_idx];
-                    const len: gl.uint = @intCast(single_chunk_mesh_face.items.len);
-
-                    try world_mesh_layer.len.append(allocator, len);
-
-                    const command = DrawArraysIndirectCommand{
-                        .first_vertex = @intCast(world_mesh_layer.mesh.data.items.len * 6),
-                        .count = @intCast(len * 6),
-                        .instance_count = if (len > 0) 1 else 0,
-                        .base_instance = if (len > 0) 1 else 0,
-                    };
-
-                    try world_mesh_layer.command.data.append(allocator, command);
-                    try world_mesh_layer.mesh.data.appendSlice(allocator, single_chunk_mesh_face.items);
-                    single_chunk_mesh_face.clearRetainingCapacity();
+                for (chunk_mesh_layer.faces) |*chunk_mesh_face| {
+                    chunk_mesh_face.clearRetainingCapacity();
                 }
-            }
-        } else {
-            inline for (0..BlockLayer.len) |layer_idx| {
-                const world_mesh_layer = &self.layers[layer_idx];
-
-                try world_mesh_layer.len.appendNTimes(allocator, 0, 6);
-
-                const command = DrawArraysIndirectCommand{
-                    .first_vertex = @intCast(world_mesh_layer.mesh.data.items.len * 6),
-                    .count = 0,
-                    .instance_count = 0,
-                    .base_instance = 0,
-                };
-
-                try world_mesh_layer.command.data.appendNTimes(allocator, command, 6);
             }
         }
     }

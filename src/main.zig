@@ -18,6 +18,8 @@ const ShaderStorageBuffers = @import("ShaderStorageBuffers.zig");
 const Framebuffer = @import("Framebuffer.zig");
 const TextManager = @import("TextManager.zig");
 
+const c = @import("vma");
+
 pub const std_options: std.Options = .{
     .log_level = .info,
 };
@@ -26,6 +28,7 @@ const Settings = struct {
     ui_scale: gl.sizei = 2,
     mouse_speed: gl.float = 10.0,
     movement_speed: gl.float = 16.0,
+    chunk_borders: bool = true,
 };
 
 const Game = struct {
@@ -49,11 +52,11 @@ const Game = struct {
     visible_chunk_meshes: usize,
 
     fn init(allocator: std.mem.Allocator) !Game {
-        const settings = Settings{};
-        const screen = Screen{};
-        const camera = Camera.init(.new(0, 0, 0), 0, 0, screen.aspect_ratio);
+        const settings: Settings = .{};
+        const screen: Screen = .{};
+        const camera: Camera = .init(.new(0, 0, 0), 0, 0, screen.aspect_ratio);
 
-        const world = try World.init(allocator, 30);
+        const world: World = try .init(30);
         const selected_block = world.raycast(camera.position, camera.direction);
 
         try initGLFW();
@@ -64,19 +67,19 @@ const Game = struct {
         window.setUserPointer(@ptrCast(callback_user_data));
 
         try initGL();
-        var uniform_buffer = UniformBuffer.init(0);
+        var uniform_buffer: UniformBuffer = .init(0);
         uniform_buffer.uploadSelectedBlockPos(selected_block.pos.toVec3f());
         uniform_buffer.uploadViewProjectionMatrix(camera.view_projection_matrix);
 
-        const shader_programs = try ShaderPrograms.init(allocator, selected_block, screen);
+        const shader_programs: ShaderPrograms = try .init(allocator, selected_block, screen);
 
         stbi.init(allocator);
-        const textures = try Textures.init();
-        const shader_storage_buffers = try ShaderStorageBuffers.init();
-        const offscreen_framebuffer = try Framebuffer.init(3, screen.window_width, screen.window_height);
-        const text_manager = TextManager.init();
+        const textures: Textures = try .init();
+        const shader_storage_buffers: ShaderStorageBuffers = try .init();
+        const offscreen_framebuffer: Framebuffer = try .init(3, screen.window_width, screen.window_height);
+        const text_manager: TextManager = .init();
 
-        const world_mesh = WorldMesh.init();
+        const world_mesh: WorldMesh = .init();
 
         return .{
             .settings = settings,
@@ -186,6 +189,16 @@ const Game = struct {
         var calc_view_matrix = false;
         var calc_projection_matrix = false;
 
+        if (self.callback_user_data.new_key_action) |new_key_action| {
+            if (new_key_action.action == .press) switch (new_key_action.key) {
+                .escape => self.window.setShouldClose(true),
+                .F4 => self.settings.chunk_borders = !self.settings.chunk_borders,
+                else => {},
+            };
+
+            self.callback_user_data.new_key_action = null;
+        }
+
         if (self.window.getKey(glfw.Key.s) == .press) {
             self.camera.position.subtractInPlace(self.camera.horizontal_direction.multiplyScalar(movement_speed));
             calc_view_matrix = true;
@@ -229,8 +242,7 @@ const Game = struct {
 
             gl.Viewport(0, 0, self.screen.window_width, self.screen.window_height);
 
-            try self.offscreen_framebuffer.resize(self.screen.window_width, self.screen.window_height);
-            self.offscreen_framebuffer.bind(3);
+            try self.offscreen_framebuffer.resizeAndBind(self.screen.window_width, self.screen.window_height, 3);
 
             calc_projection_matrix = true;
         }
@@ -493,18 +505,20 @@ const Game = struct {
 
         gl.BlitNamedFramebuffer(0, self.offscreen_framebuffer.framebuffer_handle, 0, 0, self.screen.window_width, self.screen.window_height, 0, 0, self.screen.window_width, self.screen.window_height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
 
-        self.shader_programs.chunks_debug.bind();
-        {
-            gl.Enable(gl.POLYGON_OFFSET_LINE);
-            defer gl.Disable(gl.POLYGON_OFFSET_LINE);
+        if (self.settings.chunk_borders) {
+            self.shader_programs.chunks_debug.bind();
+            {
+                gl.Enable(gl.POLYGON_OFFSET_LINE);
+                defer gl.Disable(gl.POLYGON_OFFSET_LINE);
 
-            gl.PolygonOffset(-1.0, 1.0);
-            defer gl.PolygonOffset(0.0, 0.0);
+                gl.PolygonOffset(-1.0, 1.0);
+                defer gl.PolygonOffset(0.0, 0.0);
 
-            gl.Enable(gl.LINE_SMOOTH);
-            defer gl.Disable(gl.LINE_SMOOTH);
+                gl.Enable(gl.LINE_SMOOTH);
+                defer gl.Disable(gl.LINE_SMOOTH);
 
-            gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(self.world_mesh.pos.data.items.len));
+                gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(self.world_mesh.pos.data.items.len));
+            }
         }
 
         if (self.selected_block.side != .out_of_bounds and self.selected_block.side != .inside) {
@@ -554,17 +568,96 @@ const Game = struct {
     }
 };
 
+// pub fn RegionManager(comptime T: type) type {
+//     return struct {
+//         buffer: []T,
+//         regions: std.ArrayListUnmanaged(Region),
+
+//         const Self = @This();
+
+//         pub fn init(allocator: std.mem.Allocator, len: usize) !Self {
+//             const buffer = try allocator.alloc(T, len);
+
+//             var regions: std.ArrayListUnmanaged(Region) = try .empty;
+//             regions.append(allocator, .{
+//                 .offset = 0,
+//                 .len = len,
+//                 .free = true,
+//             });
+
+//             return .{
+//                 .buffer = buffer,
+//                 .regions = regions,
+//             };
+//         }
+
+//         pub fn create(self: *Self, allocator: std.mem.Allocator, data: []const T) !void {
+//             for (self.regions.items) |*region| {
+//                 if (region.free and region.len >= data.len) {
+//                     const len_left = region.len - data.len;
+
+//                     region.free = false;
+//                     region.len = data.len;
+
+//                     if (len_left != 0) {
+//                         self.regions.append(allocator, .{
+//                             .offset = data.len,
+//                             .len = len_left,
+//                             .free = true,
+//                         });
+//                     }
+
+//                     @memcpy(self.buffer[0..data.len], data[0..]);
+
+//                     return;
+//                 }
+//             }
+
+//             // out of regions, have to realloc buffer, will also defragmentize
+//             const new_buffer = try allocator.alloc(T, self.buffer.len + data.len);
+
+//             var last_free_region_index: usize = 0;
+//             var last_region_len: usize = 0;
+//             for (self.regions.items, 0..) |region, index| {
+//                 if (region.free) {
+//                     last_free_region_index = index;
+//                 } else {
+//                     const last_free_region = self.regions.items[last_free_region_index];
+
+//                     self.regions.items[last_free_region_index] = .{
+//                         .offset = last_free_region.offset,
+//                         .len = region.len,
+//                         .free = false,
+//                     };
+
+//                     last_region_len = 
+//                 }
+//             }
+//         }
+
+//         const Region = struct {
+//             offset: usize,
+//             len: usize,
+//             free: bool,
+//         };
+//     };
+// }
+
 var procs: gl.ProcTable = undefined;
 
 pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var game = try Game.init(allocator);
+    var game: Game = try .init(allocator);
     defer game.deinit();
 
     try game.world.generate(allocator);
+
+    const index = try game.world.block_extended_data_store.append(allocator, .initChest(@splat(0)));
+    try game.world.setBlock(allocator, .{ .x = 0, .y = 2, .z = 0 }, .initExtended(.chest, index));
+
     try game.world.propagateLights(allocator);
 
     try game.world_mesh.generate(allocator, &game.world);
@@ -584,7 +677,7 @@ pub fn main() !void {
     }
 
     var delta_time: gl.float = 1.0 / 60.0;
-    var timer = try std.time.Timer.start();
+    var timer: std.time.Timer = try .start();
 
     while (!game.window.shouldClose()) {
         try game.handleInput(delta_time);
