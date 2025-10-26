@@ -9,19 +9,15 @@ const BlockModel = @import("block.zig").BlockModel;
 
 const ShaderStorageBuffers = @This();
 
-block_vertex: ShaderStorageBuffer(BlockModel.Vertex),
-block_face: ShaderStorageBuffer(BlockModel.FaceVertex),
+block_per_vertex: ShaderStorageBuffer(BlockModel.PerVertexData),
 indirect_light: ShaderStorageBuffer(Vec3f),
 chunk_bounding_box: ShaderStorageBuffer(Vec3f),
 chunk_bounding_box_lines: ShaderStorageBuffer(Vec3f),
 selected_block: ShaderStorageBuffer(Vec3f),
 
 pub fn init() !ShaderStorageBuffers {
-    const block_vertex: ShaderStorageBuffer(BlockModel.Vertex) = .initFromSliceAndBind(0, BlockModel.VERTEX_BUFFER, gl.DYNAMIC_STORAGE_BIT);
-    block_vertex.label("Block Vertex Buffer");
-
-    const block_face: ShaderStorageBuffer(BlockModel.FaceVertex) = .initFromSliceAndBind(1, BlockModel.FACE_BUFFER, gl.DYNAMIC_STORAGE_BIT);
-    block_face.label("Block Face Buffer");
+    const block_per_vertex: ShaderStorageBuffer(BlockModel.PerVertexData) = .initFromSliceAndBind(0, BlockModel.PER_VERTEX_BUFFER, gl.DYNAMIC_STORAGE_BIT);
+    block_per_vertex.label("Block PerVertex Buffer");
 
     const indirect_light = try initIndirectLightBuffer();
     indirect_light.label("Indirect Light Buffer");
@@ -36,8 +32,7 @@ pub fn init() !ShaderStorageBuffers {
     selected_block.label("Selected Block Buffer");
 
     return .{
-        .block_vertex = block_vertex,
-        .block_face = block_face,
+        .block_per_vertex = block_per_vertex,
         .indirect_light = indirect_light,
         .chunk_bounding_box = chunk_bounding_box,
         .chunk_bounding_box_lines = chunk_bounding_box_lines,
@@ -68,5 +63,5 @@ fn initIndirectLightBuffer() !ShaderStorageBuffer(Vec3f) {
         }
     }
 
-    return .initFromSliceAndBind(4, &indirect_light_data, gl.DYNAMIC_STORAGE_BIT);
+    return .initFromSliceAndBind(3, &indirect_light_data, gl.DYNAMIC_STORAGE_BIT);
 }

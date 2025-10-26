@@ -7,6 +7,7 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
 
         handle: gl.uint,
         len: usize,
+        capacity: usize,
         flags: gl.bitfield,
 
         pub fn init(len: usize, flags: gl.bitfield) Self {
@@ -21,7 +22,8 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
 
             return .{
                 .handle = handle,
-                .len = len,
+                .len = 0,
+                .capacity = len,
                 .flags = flags,
             };
         }
@@ -46,6 +48,7 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
             return .{
                 .handle = handle,
                 .len = data.len,
+                .capacity = data.len,
                 .flags = flags,
             };
         }
@@ -65,20 +68,25 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
             gl.BindBuffer(gl.DRAW_INDIRECT_BUFFER, self.handle);
         }
 
-        pub fn resize(self: *Self, len: usize) void {
+        pub fn resize(self: *Self, len: usize, extra_capacity: usize) void {
             gl.DeleteBuffers(1, @ptrCast(&self.handle));
 
             gl.CreateBuffers(1, @ptrCast(&self.handle));
+
+            self.len = len;
+            self.capacity = len + extra_capacity;
+
             gl.NamedBufferStorage(
                 self.handle,
-                @intCast(@sizeOf(T) * len),
+                @intCast(@sizeOf(T) * self.capacity),
                 null,
                 self.flags,
             );
         }
 
-        pub fn upload(self: Self, data: []const T) !void {
-            if (data.len > self.len) return error.DataTooLarge;
+        pub fn upload(self: *Self, data: []const T) !void {
+            if (data.len > self.len and data.len <= self.capacity) self.len = data.len;
+            if (data.len > self.capacity) return error.DataTooLarge;
 
             gl.NamedBufferSubData(
                 self.handle,
@@ -86,27 +94,6 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
                 @intCast(@sizeOf(T) * data.len),
                 @ptrCast(data.ptr),
             );
-        }
-
-        pub fn uploadAndOrResize(self: *Self, data: []const T) void {
-            if (data.len > self.len) {
-                gl.DeleteBuffers(1, @ptrCast(&self.handle));
-
-                gl.CreateBuffers(1, @ptrCast(&self.handle));
-                gl.NamedBufferStorage(
-                    self.handle,
-                    @intCast(@sizeOf(T) * data.len),
-                    @ptrCast(data.ptr),
-                    self.flags,
-                );
-            } else {
-                gl.NamedBufferSubData(
-                    self.handle,
-                    0,
-                    @intCast(@sizeOf(T) * data.len),
-                    @ptrCast(data.ptr),
-                );
-            }
         }
 
         pub fn label(self: Self, name: [:0]const u8) void {
@@ -134,26 +121,6 @@ pub fn ShaderStorageBufferWithArrayList(comptime T: type) type {
                 .data = .empty,
                 .ssbo = .initAndBind(index, len, flags),
             };
-        }
-
-        pub fn bind(self: Self, index: gl.uint) void {
-            self.ssbo.bind(index);
-        }
-
-        pub fn bindAsIndirectBuffer(self: Self) void {
-            self.ssbo.bindAsIndirectBuffer();
-        }
-
-        pub fn resize(self: *Self, len: usize) void {
-            self.ssbo.resize(len);
-        }
-
-        pub fn upload(self: Self) !void {
-            self.ssbo.upload(self.data.items);
-        }
-
-        pub fn uploadAndOrResize(self: *Self) void {
-            self.ssbo.uploadAndOrResize(self.data.items);
         }
     };
 }

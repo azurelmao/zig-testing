@@ -1,32 +1,23 @@
 #version 460 core
 
 layout (binding = 0, std430) readonly buffer ssbo0 {
-    uint sVertex[];
+    uint sPerVertex[];
 };
 
-struct VertexIdxAndTextureIdx {
-    uint vertexIdx;
-    uint data;
-};
-
-layout (binding = 1, std430) readonly buffer ssbo1 {
-    VertexIdxAndTextureIdx sVertexIdxAndTextureIdx[];
-};
-
-layout (binding = 2, std430) readonly buffer ssbo2 {
-    vec3 sChunkPos[];
-};
-
-struct LocalPosAndModelIdx {
+struct PerFaceData {
     uint data1;
     uint data2;
 };
 
-layout (binding = 3, std430) readonly buffer ssbo3 {
-    LocalPosAndModelIdx sLocalPosAndModelIdx[];
+layout (binding = 1, std430) readonly buffer ssbo1 {
+    PerFaceData sPerFace[];
 };
 
-layout (binding = 4, std430) readonly buffer ssbo4 {
+layout (binding = 2, std430) readonly buffer ssbo2 {
+    vec3 sChunkMeshPos[];
+};
+
+layout (binding = 3, std430) readonly buffer ssbo3 {
     vec3 sIndirectLight[];
 };
 
@@ -58,8 +49,14 @@ uint unpackIndirectLightIdx(uint data) {
     return indirectLightIdx;
 }
 
+uint unpackNormal(uint data) {
+    uint normal = bitfieldExtract(data, 17, 3);
+
+    return normal;
+}
+
 uint unpackTextureIdx(uint data) {
-    uint textureIdx = bitfieldExtract(data, 32, 11);
+    uint textureIdx = bitfieldExtract(data, 20, 11);
 
     return textureIdx;
 }
@@ -101,25 +98,25 @@ flat out vec3 pLight;
 out vec3 pVertexPosition;
 
 void main() {
-    LocalPosAndModelIdx perQuadData = sLocalPosAndModelIdx[gl_VertexID / 6];
+    PerFaceData perFaceData = sPerFace[gl_VertexID / 6];
     
-    vec3 localPosition = unpackLocalPosition(perQuadData.data1);
-    uint modelIdx = unpackModelIdx(perQuadData.data1);
-    vec3 blockLight = unpackBlockLight(perQuadData.data2);
-    uint indirectLightIdx = unpackIndirectLightIdx(perQuadData.data2);
+    vec3 localPosition = unpackLocalPosition(perFaceData.data1);
+    uint modelIdx = unpackModelIdx(perFaceData.data1);
+    vec3 blockLight = unpackBlockLight(perFaceData.data2);
+    uint indirectLightIdx = unpackIndirectLightIdx(perFaceData.data2);
+    uint normal = unpackNormal(perFaceData.data2);
+    uint textureIdx = unpackTextureIdx(perFaceData.data2);
 
-    VertexIdxAndTextureIdx perModelData = sVertexIdxAndTextureIdx[modelIdx];
-    uint vertexIdx = perModelData.vertexIdx;
-    uint textureIdx = unpackTextureIdx(perModelData.data);
+    uint vertexIdx = (modelIdx * 36) + (normal * 6) + (gl_VertexID % 6);
 
-    uint perVertexData = sVertex[vertexIdx + (gl_VertexID % 6)];
+    uint perVertexData = sPerVertex[vertexIdx];
     vec3 modelPosition = unpackModelPosition(perVertexData);
     vec2 textureUV = unpackTextureUV(perVertexData);
     
     pTextureUV = textureUV;
     pTextureIdx = textureIdx;
 
-    pNormalLight = normalLight[gl_DrawID % 6];
+    pNormalLight = normalLight[normal];
     vec3 indirectLight = sIndirectLight[indirectLightIdx];
 
     pLight = vec3(
@@ -128,7 +125,7 @@ void main() {
         max(blockLight.b, indirectLight.b)
     );
 
-    vec4 worldPosition = vec4(modelPosition + localPosition + sChunkPos[gl_DrawID / 6], 1.0);
+    vec4 worldPosition = vec4(modelPosition + localPosition + sChunkMeshPos[gl_DrawID], 1.0);
 
     pVertexPosition = worldPosition.xyz;
     gl_Position = uViewProjection * worldPosition;

@@ -30,8 +30,8 @@ pub const BlockKind = enum {
         };
     }
 
-    pub fn getModelIndices(self: BlockKind) BlockModel.ModelIndices {
-        return BlockModel.BLOCK_KIND_TO_MODEL_INDICES[self.idx()];
+    pub fn getModelIdx(self: BlockKind) BlockModel.Index {
+        return BlockModel.BLOCK_KIND_TO_MODEL_IDX[self.idx()];
     }
 
     pub fn isInteractable(self: BlockKind) bool {
@@ -109,7 +109,7 @@ pub const BlockKind = enum {
             .glass => .allSides(.glass),
             .chest => .allSides(.chest),
             .redstone_lamp => .allSides(.redstone_lamp_active),
-            else => @compileError(std.fmt.comptimePrint("Block kind \"{s}\" is missing a texture scheme", .{@tagName(self)})),
+            else => std.debug.panic("Block kind \"{s}\" is missing a texture scheme", .{@tagName(self)}),
         };
     }
 
@@ -259,7 +259,7 @@ pub const BlockLayer = enum {
     }
 };
 
-pub const BlockTextureKind = enum {
+pub const BlockTextureKind = enum(u11) {
     stone,
     grass_top,
     grass_side,
@@ -276,7 +276,7 @@ pub const BlockTextureKind = enum {
     redstone_lamp_active,
     redstone_lamp_inactive,
 
-    pub inline fn idx(self: BlockTextureKind) usize {
+    pub inline fn idx(self: BlockTextureKind) u11 {
         return @intFromEnum(self);
     }
 };
@@ -301,7 +301,7 @@ pub const BlockTextureScheme = struct {
 pub const BlockModelKind = enum {
     square,
 
-    pub fn getData(comptime self: BlockModelKind) BlockModel {
+    pub fn getModel(comptime self: BlockModelKind) BlockModel {
         return switch (self) {
             .square => .square,
         };
@@ -313,9 +313,9 @@ pub const BlockModelKind = enum {
 };
 
 pub const BlockModel = struct {
-    faces: [6][]const Vertex,
+    faces: [6][]const PerVertexData,
 
-    pub const Vertex = packed struct(u32) {
+    pub const PerVertexData = packed struct(u32) {
         x: u5,
         y: u5,
         z: u5,
@@ -324,71 +324,40 @@ pub const BlockModel = struct {
         _: u7 = 0,
     };
 
-    pub const FaceVertex = packed struct(u64) {
-        vertex_idx: u32,
-        texture_idx: u11,
-        _: u21 = 0,
-    };
-
-    pub const VertexIndices = struct {
-        faces: [6]u32,
-    };
-
-    pub const ModelIndices = struct {
-        faces: [6]u11,
-    };
+    const Index = u17;
 
     const tmp = expr: {
-        const block_models = std.enums.values(BlockModelKind);
+        const block_model_kinds = std.enums.values(BlockModelKind);
         const block_kinds = std.enums.values(BlockKind);
 
-        var model_kind_to_vertex_indices: [block_models.len]VertexIndices = undefined;
-        var block_kind_to_model_indices: [block_kinds.len]ModelIndices = undefined;
-        var vertex_buffer: []const BlockModel.Vertex = &.{};
-        var face_buffer: []const BlockModel.FaceVertex = &.{};
+        var per_vertex_buffer: []const PerVertexData = &.{};
+        var block_model_kind_to_model_idx: [block_model_kinds.len]Index = undefined;
 
-        for (block_models) |model| {
-            const model_data = model.getData();
+        for (block_model_kinds) |block_model_kind| {
+            const block_model = block_model_kind.getModel();
+            const model_idx = per_vertex_buffer.len;
 
-            var vertex_indices: VertexIndices = undefined;
-
-            for (0..6) |face_idx| {
-                vertex_indices.faces[face_idx] = @intCast(vertex_buffer.len);
-                vertex_buffer = vertex_buffer ++ model_data.faces[face_idx];
+            for (block_model.faces) |block_model_face| {
+                per_vertex_buffer = per_vertex_buffer ++ block_model_face;
             }
 
-            model_kind_to_vertex_indices[model.idx()] = vertex_indices;
+            block_model_kind_to_model_idx[block_model_kind.idx()] = model_idx;
         }
 
-        for (block_kinds) |block_kind| {
-            const model = block_kind.getModel() orelse continue;
-            const texture_scheme = block_kind.getTextureScheme();
+        var block_kind_to_model_idx: [block_kinds.len]Index = undefined;
 
-            var model_indices: ModelIndices = undefined;
-
-            for (0..6) |face_idx| {
-                const face_vertex = BlockModel.FaceVertex{
-                    .vertex_idx = model_kind_to_vertex_indices[model.idx()].faces[face_idx],
-                    .texture_idx = texture_scheme.faces[face_idx].idx(),
-                };
-
-                model_indices.faces[face_idx] = @intCast(face_buffer.len);
-                face_buffer = face_buffer ++ &[1]BlockModel.FaceVertex{face_vertex};
-            }
-
-            block_kind_to_model_indices[block_kind.idx()] = model_indices;
-        }
+        for (block_kinds) |block_kind| if (block_kind.getModel()) |block_model_kind| {
+            block_kind_to_model_idx[block_kind.idx()] = block_model_kind_to_model_idx[block_model_kind.idx()];
+        };
 
         break :expr .{
-            .vertex_buffer = vertex_buffer,
-            .face_buffer = face_buffer,
-            .block_kind_to_model_indices = block_kind_to_model_indices,
+            .per_vertex_buffer = per_vertex_buffer,
+            .block_kind_to_model_idx = block_kind_to_model_idx,
         };
     };
 
-    pub const VERTEX_BUFFER = tmp.vertex_buffer;
-    pub const FACE_BUFFER = tmp.face_buffer;
-    const BLOCK_KIND_TO_MODEL_INDICES = tmp.block_kind_to_model_indices;
+    pub const PER_VERTEX_BUFFER = tmp.per_vertex_buffer;
+    const BLOCK_KIND_TO_MODEL_IDX = tmp.block_kind_to_model_idx;
 
     pub const BOUNDING_BOX_LINES_BUFFER: []const Vec3f = &.{
         .{ .x = 0, .y = 0, .z = 0 },
@@ -426,7 +395,7 @@ pub const BlockModel = struct {
     };
 
     const square = expr: {
-        var faces: [6][]const Vertex = undefined;
+        var faces: [6][]const PerVertexData = undefined;
 
         faces[Side.west.idx()] = &.{
             .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 0 },

@@ -21,7 +21,7 @@ const TextManager = @import("TextManager.zig");
 const c = @import("vma");
 
 pub const std_options: std.Options = .{
-    .log_level = .info,
+    .log_level = .debug,
 };
 
 const Settings = struct {
@@ -44,12 +44,11 @@ const Game = struct {
     shader_programs: ShaderPrograms,
     textures: Textures,
     shader_storage_buffers: ShaderStorageBuffers,
-    offscreen_framebuffer: Framebuffer,
+    // offscreen_framebuffer: Framebuffer,
     text_manager: TextManager,
     world: World,
     world_mesh: WorldMesh,
     selected_block: World.RaycastResult,
-    visible_chunk_meshes: usize,
 
     fn init(allocator: std.mem.Allocator) !Game {
         const settings: Settings = .{};
@@ -76,7 +75,7 @@ const Game = struct {
         stbi.init(allocator);
         const textures: Textures = try .init();
         const shader_storage_buffers: ShaderStorageBuffers = try .init();
-        const offscreen_framebuffer: Framebuffer = try .init(3, screen.window_width, screen.window_height);
+        // const offscreen_framebuffer: Framebuffer = try .init(3, screen.window_width, screen.window_height);
         const text_manager: TextManager = .init();
 
         const world_mesh: WorldMesh = .init();
@@ -91,12 +90,11 @@ const Game = struct {
             .shader_programs = shader_programs,
             .textures = textures,
             .shader_storage_buffers = shader_storage_buffers,
-            .offscreen_framebuffer = offscreen_framebuffer,
+            // .offscreen_framebuffer = offscreen_framebuffer,
             .text_manager = text_manager,
             .world = world,
             .world_mesh = world_mesh,
             .selected_block = selected_block,
-            .visible_chunk_meshes = 0,
         };
     }
 
@@ -182,7 +180,7 @@ const Game = struct {
         return window;
     }
 
-    fn handleInput(self: *Game, delta_time: gl.float) !void {
+    fn handleInput(self: *Game, allocator: std.mem.Allocator, delta_time: gl.float) !void {
         const mouse_speed = self.settings.mouse_speed * delta_time;
         const movement_speed = self.settings.movement_speed * delta_time;
 
@@ -242,7 +240,7 @@ const Game = struct {
 
             gl.Viewport(0, 0, self.screen.window_width, self.screen.window_height);
 
-            try self.offscreen_framebuffer.resizeAndBind(self.screen.window_width, self.screen.window_height, 3);
+            // try self.offscreen_framebuffer.resizeAndBind(self.screen.window_width, self.screen.window_height, 3);
 
             calc_projection_matrix = true;
         }
@@ -279,8 +277,9 @@ const Game = struct {
             self.camera.calcViewProjectionMatrix();
             self.camera.calcFrustumPlanes();
 
-            self.visible_chunk_meshes = self.world_mesh.cull(&self.camera);
-            self.world_mesh.uploadCommandBuffers();
+            try self.world_mesh.generateVisibleChunkMeshes(allocator, &self.world, &self.camera);
+            try self.world_mesh.generateCommands(allocator);
+            self.world_mesh.uploadCommands();
 
             self.selected_block = self.world.raycast(self.camera.position, self.camera.direction);
 
@@ -291,8 +290,8 @@ const Game = struct {
 
             if (side != .out_of_bounds and side != .inside) {
                 if (self.selected_block.block) |block| {
-                    const model_idx = block.kind.getModelIndices().faces[side.idx()];
-                    self.shader_programs.selected_side.setUniform1ui("uModelIdx", model_idx);
+                    const face_idx = block.kind.getModelIdx() + side.idx();
+                    self.shader_programs.selected_side.setUniform1ui("uFaceIdx", @intCast(face_idx));
                 }
             }
 
@@ -421,7 +420,7 @@ const Game = struct {
         try self.text_manager.append(allocator, .{
             .pixel_x = 0,
             .pixel_y = line * 6,
-            .text = try std.fmt.allocPrint(allocator, "visible: {}/{}", .{ self.visible_chunk_meshes, self.world_mesh.pos.data.items.len * 6 }),
+            .text = try std.fmt.allocPrint(allocator, "visible: {}", .{self.world_mesh.visible_chunk_meshes.items.len}),
         });
         line += 1;
 
@@ -473,91 +472,90 @@ const Game = struct {
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         self.shader_programs.chunks.bind();
-        inline for (0..BlockLayer.len) |layer_idx| {
-            const world_mesh_layer = &self.world_mesh.layers[layer_idx];
+        for (&self.world_mesh.layers) |*world_mesh_layer| {
+            if (world_mesh_layer.command.data.items.len == 0) continue;
 
-            if (world_mesh_layer.mesh.data.items.len > 0) {
-                world_mesh_layer.mesh.bind(3);
-                world_mesh_layer.command.bindAsIndirectBuffer();
+            world_mesh_layer.mesh.ssbo.bind(1);
+            world_mesh_layer.chunk_mesh_pos.ssbo.bind(2);
+            world_mesh_layer.command.ssbo.bindAsIndirectBuffer();
 
-                gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(world_mesh_layer.command.data.items.len), 0);
-            }
+            gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(world_mesh_layer.command.data.items.len), 0);
         }
 
-        self.shader_programs.chunks_bb.bind();
-        {
-            gl.Enable(gl.POLYGON_OFFSET_FILL);
-            defer gl.Disable(gl.POLYGON_OFFSET_FILL);
+        // self.shader_programs.chunks_bb.bind();
+        // {
+        //     gl.Enable(gl.POLYGON_OFFSET_FILL);
+        //     defer gl.Disable(gl.POLYGON_OFFSET_FILL);
 
-            gl.PolygonOffset(1.0, 1.0);
-            defer gl.PolygonOffset(0.0, 0.0);
+        //     gl.PolygonOffset(1.0, 1.0);
+        //     defer gl.PolygonOffset(0.0, 0.0);
 
-            gl.DepthMask(gl.FALSE);
-            defer gl.DepthMask(gl.TRUE);
+        //     gl.DepthMask(gl.FALSE);
+        //     defer gl.DepthMask(gl.TRUE);
 
-            gl.ColorMask(gl.FALSE, gl.FALSE, gl.FALSE, gl.FALSE);
-            defer gl.ColorMask(gl.TRUE, gl.TRUE, gl.TRUE, gl.TRUE);
+        //     gl.ColorMask(gl.FALSE, gl.FALSE, gl.FALSE, gl.FALSE);
+        //     defer gl.ColorMask(gl.TRUE, gl.TRUE, gl.TRUE, gl.TRUE);
 
-            gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
-            gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(self.world_mesh.pos.data.items.len));
-            gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
-        }
+        //     gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
+        //     gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(self.world_mesh.pos.data.items.len));
+        //     gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
+        // }
 
-        gl.BlitNamedFramebuffer(0, self.offscreen_framebuffer.framebuffer_handle, 0, 0, self.screen.window_width, self.screen.window_height, 0, 0, self.screen.window_width, self.screen.window_height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+        // gl.BlitNamedFramebuffer(0, self.offscreen_framebuffer.framebuffer_handle, 0, 0, self.screen.window_width, self.screen.window_height, 0, 0, self.screen.window_width, self.screen.window_height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
 
-        if (self.settings.chunk_borders) {
-            self.shader_programs.chunks_debug.bind();
-            {
-                gl.Enable(gl.POLYGON_OFFSET_LINE);
-                defer gl.Disable(gl.POLYGON_OFFSET_LINE);
+        // if (self.settings.chunk_borders) {
+        //     self.shader_programs.chunks_debug.bind();
+        //     {
+        //         gl.Enable(gl.POLYGON_OFFSET_LINE);
+        //         defer gl.Disable(gl.POLYGON_OFFSET_LINE);
 
-                gl.PolygonOffset(-1.0, 1.0);
-                defer gl.PolygonOffset(0.0, 0.0);
+        //         gl.PolygonOffset(-1.0, 1.0);
+        //         defer gl.PolygonOffset(0.0, 0.0);
 
-                gl.Enable(gl.LINE_SMOOTH);
-                defer gl.Disable(gl.LINE_SMOOTH);
+        //         gl.Enable(gl.LINE_SMOOTH);
+        //         defer gl.Disable(gl.LINE_SMOOTH);
 
-                gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(self.world_mesh.pos.data.items.len));
-            }
-        }
+        //         gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(self.world_mesh.pos.data.items.len));
+        //     }
+        // }
 
-        if (self.selected_block.side != .out_of_bounds and self.selected_block.side != .inside) {
-            if (self.selected_block.block) |_| {
-                self.shader_programs.selected_side.bind();
-                {
-                    gl.Enable(gl.POLYGON_OFFSET_FILL);
-                    defer gl.Disable(gl.POLYGON_OFFSET_FILL);
+        // if (self.selected_block.side != .out_of_bounds and self.selected_block.side != .inside) {
+        //     if (self.selected_block.block) |_| {
+        //         self.shader_programs.selected_side.bind();
+        //         {
+        //             gl.Enable(gl.POLYGON_OFFSET_FILL);
+        //             defer gl.Disable(gl.POLYGON_OFFSET_FILL);
 
-                    gl.PolygonOffset(-1.0, 1.0);
-                    defer gl.PolygonOffset(0.0, 0.0);
+        //             gl.PolygonOffset(-1.0, 1.0);
+        //             defer gl.PolygonOffset(0.0, 0.0);
 
-                    gl.DrawArrays(gl.TRIANGLES, 0, 6);
-                }
-            }
-        }
+        //             gl.DrawArrays(gl.TRIANGLES, 0, 6);
+        //         }
+        //     }
+        // }
 
-        self.shader_programs.selected_block.bind();
-        {
-            gl.Enable(gl.POLYGON_OFFSET_LINE);
-            defer gl.Disable(gl.POLYGON_OFFSET_LINE);
+        // self.shader_programs.selected_block.bind();
+        // {
+        //     gl.Enable(gl.POLYGON_OFFSET_LINE);
+        //     defer gl.Disable(gl.POLYGON_OFFSET_LINE);
 
-            gl.PolygonOffset(-2.0, 1.0);
-            defer gl.PolygonOffset(0.0, 0.0);
+        //     gl.PolygonOffset(-2.0, 1.0);
+        //     defer gl.PolygonOffset(0.0, 0.0);
 
-            gl.Enable(gl.LINE_SMOOTH);
-            defer gl.Disable(gl.LINE_SMOOTH);
+        //     gl.Enable(gl.LINE_SMOOTH);
+        //     defer gl.Disable(gl.LINE_SMOOTH);
 
-            gl.DepthFunc(gl.LEQUAL);
-            defer gl.DepthFunc(gl.LESS);
+        //     gl.DepthFunc(gl.LEQUAL);
+        //     defer gl.DepthFunc(gl.LESS);
 
-            gl.DrawArrays(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len);
-        }
+        //     gl.DrawArrays(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len);
+        // }
 
-        self.shader_programs.crosshair.bind();
-        gl.DrawArrays(gl.TRIANGLES, 0, 6);
+        // self.shader_programs.crosshair.bind();
+        // gl.DrawArrays(gl.TRIANGLES, 0, 6);
 
-        self.shader_programs.text.bind();
-        gl.DrawArrays(gl.TRIANGLES, 0, @intCast(self.text_manager.vertices.data.items.len));
+        // self.shader_programs.text.bind();
+        // gl.DrawArrays(gl.TRIANGLES, 0, @intCast(self.text_manager.vertices.data.items.len));
     }
 
     fn deinit(self: *Game) void {
@@ -630,7 +628,7 @@ const Game = struct {
 //                         .free = false,
 //                     };
 
-//                     last_region_len = 
+//                     last_region_len =
 //                 }
 //             }
 //         }
@@ -646,41 +644,34 @@ const Game = struct {
 var procs: gl.ProcTable = undefined;
 
 pub fn main() !void {
-    var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    // var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+    // defer arena.deinit();
+    // const allocator = arena.allocator();
+
+    const allocator = std.heap.smp_allocator;
 
     var game: Game = try .init(allocator);
     defer game.deinit();
 
     try game.world.generate(allocator);
 
-    const index = try game.world.block_extended_data_store.append(allocator, .initChest(@splat(0)));
-    try game.world.setBlock(allocator, .{ .x = 0, .y = 2, .z = 0 }, .initExtended(.chest, index));
+    // const index = try game.world.addBlockExtendedData(allocator, .initChest(@splat(0)));
+    // try game.world.setBlock(allocator, .{ .x = 0, .y = 2, .z = 0 }, .initExtended(.chest, index));
 
     try game.world.propagateLights(allocator);
 
-    try game.world_mesh.generate(allocator, &game.world);
+    try game.world_mesh.generateMesh(allocator, &game.world);
+    try game.world_mesh.generateVisibleChunkMeshes(allocator, &game.world, &game.camera);
+    try game.world_mesh.generateCommands(allocator);
 
-    game.visible_chunk_meshes = game.world_mesh.cull(&game.camera);
-    game.world_mesh.pos.uploadAndOrResize();
-
-    inline for (0..BlockLayer.len) |layer_idx| {
-        const world_mesh_layer = &game.world_mesh.layers[layer_idx];
-
-        if (world_mesh_layer.mesh.data.items.len > 0) {
-            world_mesh_layer.mesh.uploadAndOrResize();
-        }
-
-        world_mesh_layer.command.uploadAndOrResize();
-        world_mesh_layer.command.bind(6 + layer_idx);
-    }
+    game.world_mesh.uploadMesh();
+    game.world_mesh.uploadCommands();
 
     var delta_time: gl.float = 1.0 / 60.0;
     var timer: std.time.Timer = try .start();
 
     while (!game.window.shouldClose()) {
-        try game.handleInput(delta_time);
+        try game.handleInput(allocator, delta_time);
         try game.appendText(allocator);
 
         game.render();

@@ -84,6 +84,10 @@ pub fn build(self: *TextManager, allocator: std.mem.Allocator, window_width: gl.
         }
     }
 
-    self.vertices.uploadAndOrResize();
-    self.vertices.bind(12);
+    self.vertices.ssbo.upload(self.vertices.data.items) catch {
+        self.vertices.ssbo.resize(self.vertices.data.items.len, 6 * 20);
+        self.vertices.ssbo.upload(self.vertices.data.items) catch unreachable;
+    };
+
+    self.vertices.ssbo.bind(12);
 }

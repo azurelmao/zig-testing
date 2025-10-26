@@ -4,6 +4,7 @@ const Chunk = @import("Chunk.zig");
 const Light = @import("light.zig").Light;
 const Block = @import("block.zig").Block;
 const BlockExtendedDataStore = @import("block.zig").BlockExtendedDataStore;
+const BlockExtendedData = @import("block.zig").BlockExtendedData;
 const Side = @import("side.zig").Side;
 const DedupQueue = @import("dedup_queue.zig").DedupQueue;
 const Vec3f = @import("vec3f.zig").Vec3f;
@@ -21,7 +22,7 @@ chunks_which_need_to_remove_lights: ChunkPosQueue,
 block_extended_data_store: BlockExtendedDataStore,
 
 pub const WIDTH = 1;
-pub const HEIGHT = 8;
+pub const HEIGHT = 4;
 pub const VOLUME = (WIDTH * 2) * (WIDTH * 2) * HEIGHT;
 pub const ABOVE_HEIGHT = 2;
 pub const BELOW_HEIGHT = ABOVE_HEIGHT - HEIGHT;
@@ -153,6 +154,10 @@ pub fn setBlockAndAffectLight(self: *World, allocator: std.mem.Allocator, pos: P
     try self.chunks_which_need_to_remove_lights.enqueue(allocator, chunk_pos);
 
     chunk.setBlock(local_pos, block);
+}
+
+pub fn addBlockExtendedData(self: *World, allocator: std.mem.Allocator, data: BlockExtendedData) !usize {
+    return self.block_extended_data_store.append(allocator, data);
 }
 
 pub const RaycastSide = enum {
@@ -723,7 +728,7 @@ pub fn removeLight(self: *World, pos: Pos, light: Light) !void {
     try self.chunks_which_need_to_remove_lights.enqueue(chunk_pos);
 }
 
-const NeighborChunks = struct {
+pub const NeighborChunks = struct {
     chunks: [6]?*Chunk,
 };
 

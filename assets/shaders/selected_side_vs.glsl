@@ -25,10 +25,10 @@ layout (binding = 0, std140) uniform ubo0 {
     mat4 uViewProjection;
     vec3 uSelectedBlockPosition;
 };
-uniform uint uModelIdx;
+uniform uint uFaceIdx;
 
 void main() {
-    VertexIdxAndTextureIdx perModelData = sVertexIdxAndTextureIdx[uModelIdx];
+    VertexIdxAndTextureIdx perModelData = sVertexIdxAndTextureIdx[uFaceIdx];
     uint vertexIdx = perModelData.vertexIdx;
 
     uint perVertexData = sVertex[vertexIdx + gl_VertexID];
