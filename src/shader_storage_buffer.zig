@@ -10,12 +10,12 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
         capacity: usize,
         flags: gl.bitfield,
 
-        pub fn init(len: usize, flags: gl.bitfield) Self {
+        pub fn init(capacity: usize, flags: gl.bitfield) Self {
             var handle: gl.uint = undefined;
             gl.CreateBuffers(1, @ptrCast(&handle));
             gl.NamedBufferStorage(
                 handle,
-                @intCast(@sizeOf(T) * len),
+                @intCast(@sizeOf(T) * capacity),
                 null,
                 flags,
             );
@@ -23,13 +23,13 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
             return .{
                 .handle = handle,
                 .len = 0,
-                .capacity = len,
+                .capacity = capacity,
                 .flags = flags,
             };
         }
 
-        pub fn initAndBind(index: gl.uint, len: usize, flags: gl.bitfield) Self {
-            const self = init(len, flags);
+        pub fn initAndBind(index: gl.uint, capacity: usize, flags: gl.bitfield) Self {
+            const self = init(capacity, flags);
             gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, index, self.handle);
 
             return self;
@@ -109,17 +109,17 @@ pub fn ShaderStorageBufferWithArrayList(comptime T: type) type {
         data: std.ArrayListUnmanaged(T),
         ssbo: ShaderStorageBuffer(T),
 
-        pub fn init(len: usize, flags: gl.bitfield) Self {
+        pub fn init(allocator: std.mem.Allocator, capacity: usize, flags: gl.bitfield) !Self {
             return .{
-                .data = .empty,
-                .ssbo = .init(len, flags),
+                .data = try .initCapacity(allocator, capacity),
+                .ssbo = .init(capacity, flags),
             };
         }
 
-        pub fn initAndBind(index: gl.uint, len: usize, flags: gl.bitfield) Self {
+        pub fn initAndBind(allocator: std.mem.Allocator, index: gl.uint, capacity: usize, flags: gl.bitfield) !Self {
             return .{
-                .data = .empty,
-                .ssbo = .initAndBind(index, len, flags),
+                .data = try .initCapacity(allocator, capacity),
+                .ssbo = .initAndBind(index, capacity, flags),
             };
         }
     };

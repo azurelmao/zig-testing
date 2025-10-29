@@ -76,9 +76,9 @@ const Game = struct {
         const textures: Textures = try .init();
         const shader_storage_buffers: ShaderStorageBuffers = try .init();
         // const offscreen_framebuffer: Framebuffer = try .init(3, screen.window_width, screen.window_height);
-        const text_manager: TextManager = .init();
+        const text_manager: TextManager = try .init(allocator);
 
-        const world_mesh: WorldMesh = .init();
+        const world_mesh: WorldMesh = try .init(allocator);
 
         return .{
             .settings = settings,
@@ -657,6 +657,14 @@ pub fn main() !void {
 
     // const index = try game.world.addBlockExtendedData(allocator, .initChest(@splat(0)));
     // try game.world.setBlock(allocator, .{ .x = 0, .y = 2, .z = 0 }, .initExtended(.chest, index));
+
+    // for (0..6) |x| {
+    //     for (0..6) |y| {
+    //         for (0..6) |z| {
+    //             try game.world.setBlock(allocator, .{ .x = @intCast(x + 6), .y = @intCast(y + 6), .z = @intCast(z + 6) }, .initNone(.stone));
+    //         }
+    //     }
+    // }
 
     try game.world.propagateLights(allocator);
 

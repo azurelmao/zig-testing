@@ -105,23 +105,24 @@ pub const VirtualAllocation = struct {
 };
 
 pub const VirtualBlock = struct {
-    block: c.VmaVirtualBlock,
+    handle: c.VmaVirtualBlock,
 
     pub fn init(info: c.VmaVirtualBlockCreateInfo) VirtualBlock {
-        var block: c.VmaVirtualBlock = undefined;
+        var handle: c.VmaVirtualBlock = undefined;
 
-        const result = c.vmaCreateVirtualBlock(&info, &block);
+        const result = c.vmaCreateVirtualBlock(&info, &handle);
         if (result != c.VK_SUCCESS) {
             std.debug.panic("{s}", .{@errorName(vkResultToError(result))});
         }
 
         return .{
-            .block = block,
+            .handle = handle,
         };
     }
 
     pub fn deinit(self: VirtualBlock) void {
-        c.vmaDestroyVirtualBlock(self.block);
+        c.vmaClearVirtualBlock(self.handle);
+        c.vmaDestroyVirtualBlock(self.handle);
     }
 
     pub fn alloc(self: VirtualBlock, info: c.VmaVirtualAllocationCreateInfo) !VirtualAllocation {
@@ -129,7 +130,7 @@ pub const VirtualBlock = struct {
 
         std.debug.assert(info.size != 0);
 
-        const result = c.vmaVirtualAllocate(self.block, &info, &handle, null);
+        const result = c.vmaVirtualAllocate(self.handle, &info, &handle, null);
         if (result != c.VK_SUCCESS) {
             return vkResultToError(result);
         }
@@ -141,11 +142,11 @@ pub const VirtualBlock = struct {
 
     pub fn allocInfo(self: VirtualBlock, allocation: VirtualAllocation) c.VmaVirtualAllocationInfo {
         var info: c.VmaVirtualAllocationInfo = undefined;
-        c.vmaGetVirtualAllocationInfo(self.block, allocation.handle, &info);
+        c.vmaGetVirtualAllocationInfo(self.handle, allocation.handle, &info);
         return info;
     }
 
     pub fn free(self: VirtualBlock, allocation: VirtualAllocation) void {
-        c.vmaVirtualFree(self.block, allocation.handle);
+        c.vmaVirtualFree(self.handle, allocation.handle);
     }
 };

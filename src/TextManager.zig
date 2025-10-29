@@ -22,10 +22,10 @@ const Text = struct {
     };
 };
 
-pub fn init() TextManager {
+pub fn init(allocator: std.mem.Allocator) !TextManager {
     return .{
         .text_list = .empty,
-        .vertices = .init(100, gl.DYNAMIC_STORAGE_BIT),
+        .vertices = try .init(allocator, 100, gl.DYNAMIC_STORAGE_BIT),
     };
 }
 

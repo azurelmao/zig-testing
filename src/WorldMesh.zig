@@ -39,11 +39,11 @@ const Visibility = packed struct(u6) {
     };
 };
 
-pub fn init() WorldMesh {
+pub fn init(allocator: std.mem.Allocator) !WorldMesh {
     var layers: [BlockLayer.len]WorldMeshLayer = undefined;
 
     for (&layers) |*world_mesh_layer| {
-        world_mesh_layer.* = .init();
+        world_mesh_layer.* = try .init(allocator);
     }
 
     return .{
@@ -64,7 +64,6 @@ pub const WorldMeshLayer = struct {
     const AVERAGE_CHUNK_MESH_SIZE = 1000;
 
     const INITIAL_MESH_SIZE = World.VOLUME * AVERAGE_CHUNK_MESH_SIZE;
-    // const INITIAL_MESH_SIZE = 100_000;
     pub const MESH_INCREMENT_SIZE = SIX_CHUNK_MESHES * AVERAGE_CHUNK_MESH_SIZE;
     const INITIAL_COMMAND_SIZE = World.VOLUME * 2 * SIX_FACES;
     pub const COMMAND_INCREMENT_SIZE = SIX_CHUNK_MESHES * SIX_FACES;
@@ -74,13 +73,13 @@ pub const WorldMeshLayer = struct {
         face_sizes: [6]usize,
     };
 
-    pub fn init() WorldMeshLayer {
+    pub fn init(allocator: std.mem.Allocator) !WorldMeshLayer {
         return .{
             .virtual_block = .init(.{ .size = INITIAL_MESH_SIZE }),
             .chunk_pos_to_suballoc = .empty,
-            .mesh = .init(INITIAL_MESH_SIZE, gl.DYNAMIC_STORAGE_BIT),
-            .command = .init(INITIAL_COMMAND_SIZE, gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT),
-            .chunk_mesh_pos = .init(INITIAL_COMMAND_SIZE, gl.DYNAMIC_STORAGE_BIT),
+            .mesh = try .init(allocator, INITIAL_MESH_SIZE, gl.DYNAMIC_STORAGE_BIT),
+            .command = try .init(allocator, INITIAL_COMMAND_SIZE, gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT),
+            .chunk_mesh_pos = try .init(allocator, INITIAL_COMMAND_SIZE, gl.DYNAMIC_STORAGE_BIT),
         };
     }
 
@@ -93,16 +92,31 @@ pub const WorldMeshLayer = struct {
         if (total_suballocation_size == 0) return;
 
         const virtual_alloc = self.virtual_block.alloc(.{ .size = @intCast(total_suballocation_size) }) catch expr: {
-            try self.resize(allocator, self.mesh.data.items.len + total_suballocation_size, MESH_INCREMENT_SIZE);
+            try self.resize(allocator, self.mesh.data.items.len + total_suballocation_size + MESH_INCREMENT_SIZE);
 
             break :expr self.virtual_block.alloc(.{ .size = @intCast(total_suballocation_size) }) catch unreachable;
         };
 
-        var face_sizes: [6]usize = undefined;
-        for (&face_sizes, chunk_mesh_layer.faces) |*face_size, chunk_mesh_face| {
-            face_size.* = chunk_mesh_face.items.len;
+        const virtual_alloc_info = self.virtual_block.allocInfo(virtual_alloc);
 
-            try self.mesh.data.appendSlice(allocator, chunk_mesh_face.items);
+        if (virtual_alloc_info.offset + total_suballocation_size > self.mesh.data.items.len) {
+            try self.mesh.data.resize(allocator, virtual_alloc_info.offset + total_suballocation_size);
+        }
+
+        var face_sizes: [6]usize = undefined;
+        var offset: usize = virtual_alloc_info.offset;
+        for (chunk_mesh_layer.faces, 0..) |chunk_mesh_face, face_idx| {
+            const face_size = chunk_mesh_face.items.len;
+
+            if (chunk_mesh_face.items.len > 0) {
+                @memcpy(
+                    self.mesh.data.items[offset .. offset + face_size],
+                    chunk_mesh_face.items,
+                );
+                offset += face_size;
+            }
+
+            face_sizes[face_idx] = face_size;
         }
 
         const suballocation: Suballocation = .{
@@ -113,12 +127,12 @@ pub const WorldMeshLayer = struct {
         try self.chunk_pos_to_suballoc.put(allocator, chunk_pos, suballocation);
     }
 
-    pub fn resize(self: *WorldMeshLayer, allocator: std.mem.Allocator, len: usize, extra_capacity: usize) !void {
-        const new_virtual_block: vma.VirtualBlock = .init(.{ .size = len + extra_capacity });
-        const new_mesh_data = try allocator.alloc(ChunkMesh.PerFaceData, len + extra_capacity);
+    fn resize(self: *WorldMeshLayer, allocator: std.mem.Allocator, len: usize) !void {
+        const new_virtual_block: vma.VirtualBlock = .init(.{ .size = len });
+        const new_mesh_data = try allocator.alloc(ChunkMesh.PerFaceData, len);
         var new_chunk_pos_to_suballoc: std.AutoArrayHashMapUnmanaged(Chunk.Pos, Suballocation) = .empty;
 
-        std.log.debug("{}", .{len});
+        std.log.debug("RESIZED! old: {} new: {}", .{ self.mesh.data.items.len, len });
 
         var iter = self.chunk_pos_to_suballoc.iterator();
         while (iter.next()) |entry| {
@@ -129,9 +143,7 @@ pub const WorldMeshLayer = struct {
             const old_offset = old_virtual_alloc_info.offset;
             const size = old_virtual_alloc_info.size;
 
-            const new_virtual_alloc = new_virtual_block.alloc(.{ .size = size }) catch |err| {
-                std.debug.panic("{s}", .{@errorName(err)});
-            };
+            const new_virtual_alloc = new_virtual_block.alloc(.{ .size = size }) catch unreachable;
 
             const new_virtual_alloc_info = new_virtual_block.allocInfo(new_virtual_alloc);
             const new_offset = new_virtual_alloc_info.offset;
@@ -146,9 +158,12 @@ pub const WorldMeshLayer = struct {
             try new_chunk_pos_to_suballoc.put(allocator, chunk_pos.*, new_suballocation);
         }
 
+        self.virtual_block.deinit();
         self.mesh.data.deinit(allocator);
+        self.chunk_pos_to_suballoc.deinit(allocator);
+
         self.mesh.data = .fromOwnedSlice(new_mesh_data);
-        self.mesh.data.items.len = len;
+
         self.virtual_block = new_virtual_block;
         self.chunk_pos_to_suballoc = new_chunk_pos_to_suballoc;
     }
