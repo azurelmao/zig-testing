@@ -1081,7 +1081,7 @@ pub fn propagateLightRemoval(self: *World, gpa: std.mem.Allocator, chunk: *Chunk
                     const light_to_subtract = neighbor_light_opacity.red + 1;
                     const max_light = @max(neighbor_light.red, light.red);
                     next_light.red = if (max_light <= light_to_subtract) 0 else max_light - light_to_subtract;
-                } else if (light.red > 0 and neighbor_light.red > light.red) {
+                } else if (neighbor_light.red > light.red) {
                     enqueue_addition = true;
                 }
 
@@ -1092,7 +1092,7 @@ pub fn propagateLightRemoval(self: *World, gpa: std.mem.Allocator, chunk: *Chunk
                     const light_to_subtract = neighbor_light_opacity.green + 1;
                     const max_light = @max(neighbor_light.green, light.green);
                     next_light.green = if (max_light <= light_to_subtract) 0 else max_light - light_to_subtract;
-                } else if (light.green > 0 and neighbor_light.green > light.green) {
+                } else if (neighbor_light.green > light.green) {
                     enqueue_addition = true;
                 }
 
@@ -1103,7 +1103,7 @@ pub fn propagateLightRemoval(self: *World, gpa: std.mem.Allocator, chunk: *Chunk
                     const light_to_subtract = neighbor_light_opacity.blue + 1;
                     const max_light = @max(neighbor_light.blue, light.blue);
                     next_light.blue = if (max_light <= light_to_subtract) 0 else max_light - light_to_subtract;
-                } else if (light.blue > 0 and neighbor_light.blue > light.blue) {
+                } else if (neighbor_light.blue > light.blue) {
                     enqueue_addition = true;
                 }
 
@@ -1114,7 +1114,7 @@ pub fn propagateLightRemoval(self: *World, gpa: std.mem.Allocator, chunk: *Chunk
                     const light_to_subtract = neighbor_light_opacity.indirect + 1;
                     const max_light = @max(neighbor_light.indirect, light.indirect);
                     next_light.indirect = if (max_light <= light_to_subtract) 0 else max_light - light_to_subtract;
-                } else if (light.indirect > 0 and neighbor_light.indirect > light.indirect) {
+                } else if (neighbor_light.indirect > light.indirect) {
                     enqueue_addition = true;
                 }
 
