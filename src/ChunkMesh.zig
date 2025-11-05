@@ -7,6 +7,7 @@ const Light = @import("light.zig").Light;
 const BlockLayer = @import("block.zig").BlockLayer;
 const Side = @import("side.zig").Side;
 const World = @import("World.zig");
+const NeighborChunks = World.NeighborChunks;
 
 const ChunkMesh = @This();
 
@@ -32,132 +33,7 @@ pub const PerFaceData = packed struct(u64) {
 
 pub const empty: ChunkMesh = .{ .layers = @splat(.empty) };
 
-const NeighborChunks = struct {
-    const inEdge = .{
-        inWestEdge,
-        inEastEdge,
-        inBottomEdge,
-        inTopEdge,
-        inNorthEdge,
-        inSouthEdge,
-    };
-
-    const getPos = .{
-        getWestPos,
-        getEastPos,
-        getBottomPos,
-        getTopPos,
-        getNorthPos,
-        getSouthPos,
-    };
-
-    const getNeighborPos = .{
-        getWestNeighborPos,
-        getEastNeighborPos,
-        getBottomNeighborPos,
-        getTopNeighborPos,
-        getNorthNeighborPos,
-        getSouthNeighborPos,
-    };
-
-    fn inWestEdge(pos: LocalPos) bool {
-        return pos.x == 0;
-    }
-
-    fn inEastEdge(pos: LocalPos) bool {
-        return pos.x == Chunk.EDGE;
-    }
-
-    fn inBottomEdge(pos: LocalPos) bool {
-        return pos.y == 0;
-    }
-
-    fn inTopEdge(pos: LocalPos) bool {
-        return pos.y == Chunk.EDGE;
-    }
-
-    fn inNorthEdge(pos: LocalPos) bool {
-        return pos.z == 0;
-    }
-
-    fn inSouthEdge(pos: LocalPos) bool {
-        return pos.z == Chunk.EDGE;
-    }
-
-    pub fn getWestPos(pos: LocalPos) LocalPos {
-        var new_pos = pos;
-        new_pos.x -= 1;
-        return new_pos;
-    }
-
-    pub fn getEastPos(pos: LocalPos) LocalPos {
-        var new_pos = pos;
-        new_pos.x += 1;
-        return new_pos;
-    }
-
-    pub fn getBottomPos(pos: LocalPos) LocalPos {
-        var new_pos = pos;
-        new_pos.y -= 1;
-        return new_pos;
-    }
-
-    pub fn getTopPos(pos: LocalPos) LocalPos {
-        var new_pos = pos;
-        new_pos.y += 1;
-        return new_pos;
-    }
-
-    pub fn getNorthPos(pos: LocalPos) LocalPos {
-        var new_pos = pos;
-        new_pos.z -= 1;
-        return new_pos;
-    }
-
-    pub fn getSouthPos(pos: LocalPos) LocalPos {
-        var new_pos = pos;
-        new_pos.z += 1;
-        return new_pos;
-    }
-
-    pub fn getWestNeighborPos(pos: LocalPos) LocalPos {
-        var new_pos = pos;
-        new_pos.x = Chunk.EDGE;
-        return new_pos;
-    }
-
-    pub fn getEastNeighborPos(pos: LocalPos) LocalPos {
-        var new_pos = pos;
-        new_pos.x = 0;
-        return new_pos;
-    }
-
-    pub fn getBottomNeighborPos(pos: LocalPos) LocalPos {
-        var new_pos = pos;
-        new_pos.y = Chunk.EDGE;
-        return new_pos;
-    }
-
-    pub fn getTopNeighborPos(pos: LocalPos) LocalPos {
-        var new_pos = pos;
-        new_pos.y = 0;
-        return new_pos;
-    }
-
-    pub fn getNorthNeighborPos(pos: LocalPos) LocalPos {
-        var new_pos = pos;
-        new_pos.z = Chunk.EDGE;
-        return new_pos;
-    }
-
-    pub fn getSouthNeighborPos(pos: LocalPos) LocalPos {
-        var new_pos = pos;
-        new_pos.z = 0;
-        return new_pos;
-    }
-};
-
-pub fn generate(chunk_mesh: *ChunkMesh, allocator: std.mem.Allocator, chunk: *Chunk, neighbor_chunks: *const World.NeighborChunks) !void {
+pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, neighbor_chunks: *const NeighborChunks) !void {
     var chunk_mesh_layer: *ChunkMeshLayer = undefined;
 
     for (0..Chunk.SIZE) |x| {
@@ -186,7 +62,7 @@ pub fn generate(chunk_mesh: *ChunkMesh, allocator: std.mem.Allocator, chunk: *Ch
                             if (neighbor_block.kind.isNotSolid() and neighbor_block.kind != block.kind) {
                                 const neighbor_light = neighbor_chunk.getLight(neighbor_pos);
 
-                                try chunk_mesh_layer.faces[face_idx].append(allocator, .{
+                                try chunk_mesh_layer.faces[face_idx].append(gpa, .{
                                     .x = pos.x,
                                     .y = pos.y,
                                     .z = pos.z,
@@ -205,7 +81,7 @@ pub fn generate(chunk_mesh: *ChunkMesh, allocator: std.mem.Allocator, chunk: *Ch
                         if (neighbor_block.kind.isNotSolid() and neighbor_block.kind != block.kind) {
                             const neighbor_light = chunk.getLight(neighbor_pos);
 
-                            try chunk_mesh_layer.faces[face_idx].append(allocator, .{
+                            try chunk_mesh_layer.faces[face_idx].append(gpa, .{
                                 .x = pos.x,
                                 .y = pos.y,
                                 .z = pos.z,

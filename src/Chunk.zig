@@ -98,30 +98,30 @@ pub const LocalPos = packed struct(u15) {
     }
 };
 
-pub fn init(allocator: std.mem.Allocator, pos: Pos) !Chunk {
+pub fn init(gpa: std.mem.Allocator, pos: Pos) !Chunk {
     var block_to_index = std.HashMapUnmanaged(Block, u15, Block.Context, 80).empty;
     try block_to_index.put(
-        allocator,
+        gpa,
         .init(.air, .{ .none = {} }),
         0,
     );
 
     var index_to_block = std.AutoHashMapUnmanaged(u15, Block).empty;
     try index_to_block.put(
-        allocator,
+        gpa,
         0,
         .init(.air, .{ .none = {} }),
     );
 
-    const light = try allocator.create([VOLUME]Light);
+    const light = try gpa.create([VOLUME]Light);
     @memset(light, .{ .red = 0, .green = 0, .blue = 0, .indirect = 0 });
-    const light_addition_queue = LightQueue.init(allocator);
-    const light_removal_queue = LightQueue.init(allocator);
+    const light_addition_queue = LightQueue.init(gpa);
+    const light_removal_queue = LightQueue.init(gpa);
 
-    const air_bitset = try allocator.create([AREA]u32);
+    const air_bitset = try gpa.create([AREA]u32);
     @memset(air_bitset, 0);
 
-    const water_bitset = try allocator.create([AREA]u32);
+    const water_bitset = try gpa.create([AREA]u32);
     @memset(water_bitset, 0);
 
     return .{
@@ -166,7 +166,7 @@ pub fn getBlock(self: Chunk, pos: LocalPos) Block {
     }
 }
 
-pub fn setBlock(self: *Chunk, allocator: std.mem.Allocator, pos: LocalPos, block: Block) !void {
+pub fn setBlock(self: *Chunk, gpa: std.mem.Allocator, pos: LocalPos, block: Block) !void {
     const x: usize = @intCast(pos.x);
     const z: usize = @intCast(pos.z);
     const idx = x * SIZE + z;
@@ -181,8 +181,8 @@ pub fn setBlock(self: *Chunk, allocator: std.mem.Allocator, pos: LocalPos, block
 
         const block_index: u15 = @intCast(prev_count);
 
-        try self.block_to_index.put(allocator, block, block_index);
-        try self.index_to_block.put(allocator, block_index, block);
+        try self.block_to_index.put(gpa, block, block_index);
+        try self.index_to_block.put(gpa, block_index, block);
 
         const count = prev_count + 1;
         const count_f: f32 = @floatFromInt(count);
@@ -193,7 +193,7 @@ pub fn setBlock(self: *Chunk, allocator: std.mem.Allocator, pos: LocalPos, block
         const total_size_in_bytes = total_size_in_bits / 8;
 
         if (item_size_in_bits > self.index_bit_size) {
-            const new_blocks = try allocator.alloc(u8, total_size_in_bytes);
+            const new_blocks = try gpa.alloc(u8, total_size_in_bytes);
 
             self.index_bit_size = @intCast(item_size_in_bits);
 
@@ -217,7 +217,7 @@ pub fn setBlock(self: *Chunk, allocator: std.mem.Allocator, pos: LocalPos, block
                 },
             }
 
-            allocator.free(self.blocks);
+            gpa.free(self.blocks);
             self.blocks = new_blocks;
         }
     }

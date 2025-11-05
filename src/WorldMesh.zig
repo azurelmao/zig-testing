@@ -13,8 +13,10 @@ const Side = @import("side.zig").Side;
 
 const WorldMesh = @This();
 
+chunk_mesh: ChunkMesh,
 layers: [BlockLayer.len]WorldMeshLayer,
 visible_chunk_meshes: std.ArrayListUnmanaged(VisibleChunkMesh),
+visible_chunk_mesh_pos: ShaderStorageBufferWithArrayList(Vec3f),
 
 const VisibleChunkMesh = struct {
     pos: Chunk.Pos,
@@ -39,16 +41,18 @@ const Visibility = packed struct(u6) {
     };
 };
 
-pub fn init(allocator: std.mem.Allocator) !WorldMesh {
+pub fn init(gpa: std.mem.Allocator) !WorldMesh {
     var layers: [BlockLayer.len]WorldMeshLayer = undefined;
 
     for (&layers) |*world_mesh_layer| {
-        world_mesh_layer.* = try .init(allocator);
+        world_mesh_layer.* = try .init(gpa);
     }
 
     return .{
+        .chunk_mesh = .empty,
         .layers = layers,
         .visible_chunk_meshes = .empty,
+        .visible_chunk_mesh_pos = try .initAndBind(gpa, 12, WorldMeshLayer.INITIAL_COMMAND_SIZE, gl.DYNAMIC_STORAGE_BIT),
     };
 }
 
@@ -61,7 +65,7 @@ pub const WorldMeshLayer = struct {
 
     const SIX_CHUNK_MESHES = 6;
     const SIX_FACES = 6;
-    const AVERAGE_CHUNK_MESH_SIZE = 1000;
+    const AVERAGE_CHUNK_MESH_SIZE = 3000;
 
     const INITIAL_MESH_SIZE = World.VOLUME * AVERAGE_CHUNK_MESH_SIZE;
     pub const MESH_INCREMENT_SIZE = SIX_CHUNK_MESHES * AVERAGE_CHUNK_MESH_SIZE;
@@ -73,17 +77,17 @@ pub const WorldMeshLayer = struct {
         face_sizes: [6]usize,
     };
 
-    pub fn init(allocator: std.mem.Allocator) !WorldMeshLayer {
+    pub fn init(gpa: std.mem.Allocator) !WorldMeshLayer {
         return .{
             .virtual_block = .init(.{ .size = INITIAL_MESH_SIZE }),
             .chunk_pos_to_suballoc = .empty,
-            .mesh = try .init(allocator, INITIAL_MESH_SIZE, gl.DYNAMIC_STORAGE_BIT),
-            .command = try .init(allocator, INITIAL_COMMAND_SIZE, gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT),
-            .chunk_mesh_pos = try .init(allocator, INITIAL_COMMAND_SIZE, gl.DYNAMIC_STORAGE_BIT),
+            .mesh = try .init(gpa, INITIAL_MESH_SIZE, gl.DYNAMIC_STORAGE_BIT),
+            .command = try .init(gpa, INITIAL_COMMAND_SIZE, gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT),
+            .chunk_mesh_pos = try .init(gpa, INITIAL_COMMAND_SIZE, gl.DYNAMIC_STORAGE_BIT),
         };
     }
 
-    pub fn suballoc(self: *WorldMeshLayer, allocator: std.mem.Allocator, chunk_mesh_layer: *ChunkMeshLayer, chunk_pos: Chunk.Pos) !void {
+    pub fn suballoc(self: *WorldMeshLayer, gpa: std.mem.Allocator, chunk_mesh_layer: *ChunkMeshLayer, chunk_pos: Chunk.Pos) !void {
         var total_suballocation_size: usize = 0;
         for (chunk_mesh_layer.faces) |chunk_mesh_face| {
             total_suballocation_size += chunk_mesh_face.items.len;
@@ -92,7 +96,7 @@ pub const WorldMeshLayer = struct {
         if (total_suballocation_size == 0) return;
 
         const virtual_alloc = self.virtual_block.alloc(.{ .size = @intCast(total_suballocation_size) }) catch expr: {
-            try self.resize(allocator, self.mesh.data.items.len + total_suballocation_size + MESH_INCREMENT_SIZE);
+            try self.resize(gpa, self.mesh.data.items.len + total_suballocation_size + MESH_INCREMENT_SIZE);
 
             break :expr self.virtual_block.alloc(.{ .size = @intCast(total_suballocation_size) }) catch unreachable;
         };
@@ -100,7 +104,7 @@ pub const WorldMeshLayer = struct {
         const virtual_alloc_info = self.virtual_block.allocInfo(virtual_alloc);
 
         if (virtual_alloc_info.offset + total_suballocation_size > self.mesh.data.items.len) {
-            try self.mesh.data.resize(allocator, virtual_alloc_info.offset + total_suballocation_size);
+            try self.mesh.data.resize(gpa, virtual_alloc_info.offset + total_suballocation_size);
         }
 
         var face_sizes: [6]usize = undefined;
@@ -124,15 +128,13 @@ pub const WorldMeshLayer = struct {
             .face_sizes = face_sizes,
         };
 
-        try self.chunk_pos_to_suballoc.put(allocator, chunk_pos, suballocation);
+        try self.chunk_pos_to_suballoc.put(gpa, chunk_pos, suballocation);
     }
 
-    fn resize(self: *WorldMeshLayer, allocator: std.mem.Allocator, len: usize) !void {
+    fn resize(self: *WorldMeshLayer, gpa: std.mem.Allocator, len: usize) !void {
         const new_virtual_block: vma.VirtualBlock = .init(.{ .size = len });
-        const new_mesh_data = try allocator.alloc(ChunkMesh.PerFaceData, len);
+        const new_mesh_data = try gpa.alloc(ChunkMesh.PerFaceData, len);
         var new_chunk_pos_to_suballoc: std.AutoArrayHashMapUnmanaged(Chunk.Pos, Suballocation) = .empty;
-
-        std.log.debug("RESIZED! old: {} new: {}", .{ self.mesh.data.items.len, len });
 
         var iter = self.chunk_pos_to_suballoc.iterator();
         while (iter.next()) |entry| {
@@ -155,12 +157,12 @@ pub const WorldMeshLayer = struct {
                 .face_sizes = old_suballocation.face_sizes,
             };
 
-            try new_chunk_pos_to_suballoc.put(allocator, chunk_pos.*, new_suballocation);
+            try new_chunk_pos_to_suballoc.put(gpa, chunk_pos.*, new_suballocation);
         }
 
         self.virtual_block.deinit();
-        self.mesh.data.deinit(allocator);
-        self.chunk_pos_to_suballoc.deinit(allocator);
+        self.mesh.data.deinit(gpa);
+        self.chunk_pos_to_suballoc.deinit(gpa);
 
         self.mesh.data = .fromOwnedSlice(new_mesh_data);
 
@@ -168,9 +170,11 @@ pub const WorldMeshLayer = struct {
         self.chunk_pos_to_suballoc = new_chunk_pos_to_suballoc;
     }
 
-    pub fn free(self: *WorldMeshLayer, chunk_pos: Chunk.Pos) !void {
-        self.virtual_block.free(self.chunk_pos_to_suballoc.get(chunk_pos).?.virtual_alloc);
-        self.chunk_pos_to_suballoc.orderedRemove(chunk_pos);
+    pub fn free(self: *WorldMeshLayer, chunk_pos: Chunk.Pos) void {
+        if (self.chunk_pos_to_suballoc.get(chunk_pos)) |suballocation| {
+            self.virtual_block.free(suballocation.virtual_alloc);
+            _ = self.chunk_pos_to_suballoc.orderedRemove(chunk_pos);
+        }
     }
 };
 
@@ -181,19 +185,17 @@ const DrawArraysIndirectCommand = extern struct {
     base_instance: gl.uint = 0, // unused
 };
 
-pub fn generateMesh(self: *WorldMesh, allocator: std.mem.Allocator, world: *World) !void {
-    var chunk_mesh: ChunkMesh = .empty;
-
+pub fn generateMesh(self: *WorldMesh, gpa: std.mem.Allocator, world: *World) !void {
     var chunk_iter = world.chunks.valueIterator();
     while (chunk_iter.next()) |chunk| {
         const chunk_pos = chunk.pos;
         const neighbor_chunks = world.getNeighborChunks(chunk_pos);
 
         if (chunk.num_of_air != Chunk.VOLUME) {
-            try chunk_mesh.generate(allocator, chunk, &neighbor_chunks);
+            try self.chunk_mesh.generate(gpa, chunk, &neighbor_chunks);
 
-            for (&self.layers, &chunk_mesh.layers) |*world_mesh_layer, *chunk_mesh_layer| {
-                try world_mesh_layer.suballoc(allocator, chunk_mesh_layer, chunk_pos);
+            for (&self.layers, &self.chunk_mesh.layers) |*world_mesh_layer, *chunk_mesh_layer| {
+                try world_mesh_layer.suballoc(gpa, chunk_mesh_layer, chunk_pos);
 
                 for (&chunk_mesh_layer.faces) |*chunk_mesh_face| {
                     chunk_mesh_face.clearRetainingCapacity();
@@ -203,8 +205,32 @@ pub fn generateMesh(self: *WorldMesh, allocator: std.mem.Allocator, world: *Worl
     }
 }
 
-pub fn generateVisibleChunkMeshes(self: *WorldMesh, allocator: std.mem.Allocator, world: *const World, camera: *const Camera) !void {
+pub fn generateChunkMesh(self: *WorldMesh, gpa: std.mem.Allocator, world: *World, chunk_pos: Chunk.Pos) !void {
+    const chunk = try world.getChunk(chunk_pos);
+    const neighbor_chunks = world.getNeighborChunks(chunk_pos);
+
+    if (chunk.num_of_air != Chunk.VOLUME) {
+        try self.chunk_mesh.generate(gpa, chunk, &neighbor_chunks);
+
+        for (&self.layers, &self.chunk_mesh.layers) |*world_mesh_layer, *chunk_mesh_layer| {
+            try world_mesh_layer.suballoc(gpa, chunk_mesh_layer, chunk_pos);
+
+            for (&chunk_mesh_layer.faces) |*chunk_mesh_face| {
+                chunk_mesh_face.clearRetainingCapacity();
+            }
+        }
+    }
+}
+
+pub fn invalidateChunkMesh(self: *WorldMesh, chunk_pos: Chunk.Pos) void {
+    for (&self.layers) |*world_mesh_layer| {
+        world_mesh_layer.free(chunk_pos);
+    }
+}
+
+pub fn generateVisibleChunkMeshes(self: *WorldMesh, gpa: std.mem.Allocator, world: *const World, camera: *const Camera) !void {
     self.visible_chunk_meshes.clearRetainingCapacity();
+    self.visible_chunk_mesh_pos.data.clearRetainingCapacity();
 
     const left_nrm = Vec3f.new(camera.plane_left[0], camera.plane_left[1], camera.plane_left[2]).normalize();
     const right_nrm = Vec3f.new(camera.plane_right[0], camera.plane_right[1], camera.plane_right[2]).normalize();
@@ -215,12 +241,13 @@ pub fn generateVisibleChunkMeshes(self: *WorldMesh, allocator: std.mem.Allocator
 
     var iter = world.chunks.keyIterator();
     while (iter.next()) |chunk_pos| {
+        const chunk_mesh_pos = chunk_pos.toVec3f();
+
         if (chunk_pos.equal(camera_chunk_pos)) {
-            try self.visible_chunk_meshes.append(allocator, .{ .pos = chunk_pos.*, .visibility = .full });
+            try self.visible_chunk_meshes.append(gpa, .{ .pos = chunk_pos.*, .visibility = .full });
+            try self.visible_chunk_mesh_pos.data.append(gpa, chunk_mesh_pos);
             continue;
         }
-
-        const chunk_mesh_pos = chunk_pos.toVec3f();
 
         const point = chunk_mesh_pos.addScalar(Chunk.CENTER).subtract(camera.position);
         if ((point.dot(camera.direction) < -Chunk.RADIUS) or
@@ -269,11 +296,20 @@ pub fn generateVisibleChunkMeshes(self: *WorldMesh, allocator: std.mem.Allocator
             visibility.south = true;
         }
 
-        try self.visible_chunk_meshes.append(allocator, .{ .pos = chunk_pos.*, .visibility = visibility });
+        try self.visible_chunk_meshes.append(gpa, .{ .pos = chunk_pos.*, .visibility = visibility });
+        try self.visible_chunk_mesh_pos.data.append(gpa, chunk_mesh_pos);
     }
+
+    self.visible_chunk_mesh_pos.ssbo.upload(self.visible_chunk_mesh_pos.data.items) catch |err| switch (err) {
+        error.DataTooLarge => {
+            self.visible_chunk_mesh_pos.ssbo.resize(self.visible_chunk_mesh_pos.data.items.len, WorldMesh.WorldMeshLayer.COMMAND_INCREMENT_SIZE);
+            self.visible_chunk_mesh_pos.ssbo.upload(self.visible_chunk_mesh_pos.data.items) catch unreachable;
+        },
+        else => unreachable,
+    };
 }
 
-pub fn generateCommands(self: *WorldMesh, allocator: std.mem.Allocator) !void {
+pub fn generateCommands(self: *WorldMesh, gpa: std.mem.Allocator) !void {
     for (&self.layers) |*world_mesh_layer| {
         world_mesh_layer.command.data.clearRetainingCapacity();
         world_mesh_layer.chunk_mesh_pos.data.clearRetainingCapacity();
@@ -303,8 +339,8 @@ pub fn generateCommands(self: *WorldMesh, allocator: std.mem.Allocator) !void {
                         .count = @intCast(total_size * 6),
                     };
 
-                    try world_mesh_layer.command.data.append(allocator, command);
-                    try world_mesh_layer.chunk_mesh_pos.data.append(allocator, chunk_mesh_pos);
+                    try world_mesh_layer.command.data.append(gpa, command);
+                    try world_mesh_layer.chunk_mesh_pos.data.append(gpa, chunk_mesh_pos);
 
                     starting_offset = 0;
                     total_size = 0;
@@ -319,8 +355,8 @@ pub fn generateCommands(self: *WorldMesh, allocator: std.mem.Allocator) !void {
                     .count = @intCast(total_size * 6),
                 };
 
-                try world_mesh_layer.command.data.append(allocator, command);
-                try world_mesh_layer.chunk_mesh_pos.data.append(allocator, chunk_mesh_pos);
+                try world_mesh_layer.command.data.append(gpa, command);
+                try world_mesh_layer.chunk_mesh_pos.data.append(gpa, chunk_mesh_pos);
             }
         }
     }

@@ -3,7 +3,6 @@ const znoise = @import("znoise");
 const Chunk = @import("Chunk.zig");
 const Light = @import("light.zig").Light;
 const Block = @import("block.zig").Block;
-const BlockExtendedDataStore = @import("block.zig").BlockExtendedDataStore;
 const BlockExtendedData = @import("block.zig").BlockExtendedData;
 const Side = @import("side.zig").Side;
 const DedupQueue = @import("dedup_queue.zig").DedupQueue;
@@ -11,15 +10,13 @@ const Vec3f = @import("vec3f.zig").Vec3f;
 
 const World = @This();
 
-const Chunks = std.AutoHashMapUnmanaged(Chunk.Pos, Chunk);
-const ChunkPosQueue = DedupQueue(Chunk.Pos);
-
 prng: std.Random.Xoshiro256,
 seed: i32,
-chunks: Chunks,
-chunks_which_need_to_add_lights: ChunkPosQueue,
-chunks_which_need_to_remove_lights: ChunkPosQueue,
-block_extended_data_store: BlockExtendedDataStore,
+chunks: std.AutoHashMapUnmanaged(Chunk.Pos, Chunk),
+chunks_which_need_to_add_lights: DedupQueue(Chunk.Pos),
+chunks_which_need_to_remove_lights: DedupQueue(Chunk.Pos),
+chunks_which_need_to_regenerate_meshes: DedupQueue(Chunk.Pos),
+block_extended_data_store: std.ArrayListUnmanaged(BlockExtendedData),
 
 pub const WIDTH = 1;
 pub const HEIGHT = 4;
@@ -29,6 +26,24 @@ pub const BELOW_HEIGHT = ABOVE_HEIGHT - HEIGHT;
 pub const BOTTOM_OF_THE_WORLD = BELOW_HEIGHT * Chunk.SIZE;
 pub const SEA_LEVEL = 0;
 pub const SEA_LEVEL_DEEP = SEA_LEVEL - 16;
+
+pub fn init(seed: i32) !World {
+    const prng = std.Random.DefaultPrng.init(expr: {
+        var prng_seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&prng_seed));
+        break :expr prng_seed;
+    });
+
+    return .{
+        .prng = prng,
+        .seed = seed,
+        .chunks = .empty,
+        .chunks_which_need_to_add_lights = .empty,
+        .chunks_which_need_to_remove_lights = .empty,
+        .chunks_which_need_to_regenerate_meshes = .empty,
+        .block_extended_data_store = .empty,
+    };
+}
 
 pub const Pos = struct {
     x: i16,
@@ -101,23 +116,6 @@ pub const Pos = struct {
     }
 };
 
-pub fn init(seed: i32) !World {
-    const prng = std.Random.DefaultPrng.init(expr: {
-        var prng_seed: u64 = undefined;
-        try std.posix.getrandom(std.mem.asBytes(&prng_seed));
-        break :expr prng_seed;
-    });
-
-    return .{
-        .prng = prng,
-        .seed = seed,
-        .chunks = .empty,
-        .chunks_which_need_to_add_lights = .empty,
-        .chunks_which_need_to_remove_lights = .empty,
-        .block_extended_data_store = .empty,
-    };
-}
-
 pub fn getChunk(self: World, pos: Chunk.Pos) !*Chunk {
     return self.chunks.getPtr(pos) orelse error.ChunkNotFound;
 }
@@ -138,26 +136,35 @@ pub fn getBlockOrNull(self: World, pos: Pos) ?Block {
     return chunk.getBlock(pos.toLocalPos());
 }
 
-pub fn setBlock(self: *World, allocator: std.mem.Allocator, pos: Pos, block: Block) !void {
+pub fn setBlock(self: *World, gpa: std.mem.Allocator, pos: Pos, block: Block) !void {
     const chunk = try self.getChunk(pos.toChunkPos());
 
-    try chunk.setBlock(allocator, pos.toLocalPos(), block);
+    try chunk.setBlock(gpa, pos.toLocalPos(), block);
 }
 
-pub fn setBlockAndAffectLight(self: *World, allocator: std.mem.Allocator, pos: Pos, block: Block) !void {
+pub fn setBlockAndAffectLight(self: *World, gpa: std.mem.Allocator, pos: Pos, block: Block) !void {
     const chunk_pos = pos.toChunkPos();
     const chunk = try self.getChunk(chunk_pos);
 
     const local_pos = pos.toLocalPos();
     const light = chunk.getLight(local_pos);
-    try chunk.light_removal_queue.writeItem(.{ .pos = Pos.from(chunk_pos, local_pos), .light = light });
-    try self.chunks_which_need_to_remove_lights.enqueue(allocator, chunk_pos);
 
-    chunk.setBlock(local_pos, block);
+    try chunk.light_removal_queue.writeItem(.{ .pos = Pos.from(chunk_pos, local_pos), .light = light });
+    try self.chunks_which_need_to_remove_lights.enqueue(gpa, chunk_pos);
+
+    try chunk.setBlock(gpa, local_pos, block);
 }
 
-pub fn addBlockExtendedData(self: *World, allocator: std.mem.Allocator, data: BlockExtendedData) !usize {
-    return self.block_extended_data_store.append(allocator, data);
+pub fn addBlockExtendedData(self: *World, gpa: std.mem.Allocator, data: BlockExtendedData) !usize {
+    try self.block_extended_data_store.append(gpa, data);
+    const index = self.array.items.len - 1;
+
+    return index;
+}
+
+// What will happen if a BED is deleted?
+pub fn getBlockExtendedData(self: *World, index: usize) BlockExtendedData {
+    return self.block_extended_data_store[index];
 }
 
 pub const RaycastSide = enum {
@@ -266,7 +273,7 @@ pub fn raycast(self: World, origin: Vec3f, direction: Vec3f) RaycastResult {
     };
 }
 
-pub fn generate(self: *World, allocator: std.mem.Allocator) !void {
+pub fn generate(self: *World, gpa: std.mem.Allocator) !void {
     const gen1 = znoise.FnlGenerator{
         .noise_type = .opensimplex2,
         .seed = self.seed,
@@ -316,7 +323,7 @@ pub fn generate(self: *World, allocator: std.mem.Allocator) !void {
         .weighted_strength = -1,
     };
 
-    var height_map = try allocator.create([Chunk.AREA]i16);
+    var height_map = try gpa.create([Chunk.AREA]i16);
 
     for (0..WIDTH * 2) |chunk_x_| {
         for (0..WIDTH * 2) |chunk_z_| {
@@ -346,23 +353,23 @@ pub fn generate(self: *World, allocator: std.mem.Allocator) !void {
                 const chunk_z = @as(i11, @intCast(chunk_z_)) - WIDTH;
                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
 
-                var chunk = try Chunk.init(allocator, chunk_pos);
+                var chunk = try Chunk.init(gpa, chunk_pos);
 
                 if (chunk_y >= min_chunk_height and chunk_y <= max_chunk_height) {
-                    try generateNoise2D(allocator, &chunk, height_map);
+                    try generateNoise2D(gpa, &chunk, height_map);
                 } else if (chunk_y < min_chunk_height) {
-                    try generateFillWithStone(allocator, &chunk);
+                    try generateFillWithStone(gpa, &chunk);
                 }
 
-                try generateNoise3D(allocator, &chunk, &cave_gen, self.prng.random());
+                try generateNoise3D(gpa, &chunk, &cave_gen, self.prng.random());
 
-                try self.chunks.put(allocator, chunk.pos, chunk);
+                try self.chunks.put(gpa, chunk.pos, chunk);
             }
         }
     }
 
-    const indirect_light_bitset = try allocator.create([Chunk.AREA]u32);
-    const cave_bitset = try allocator.create([Chunk.AREA]u32);
+    const indirect_light_bitset = try gpa.create([Chunk.AREA]u32);
+    const cave_bitset = try gpa.create([Chunk.AREA]u32);
 
     for (0..WIDTH * 2) |chunk_x_| {
         for (0..WIDTH * 2) |chunk_z_| {
@@ -376,7 +383,7 @@ pub fn generate(self: *World, allocator: std.mem.Allocator) !void {
 
                 try generateIndirectLight(chunk, indirect_light_bitset);
                 try fillChunkWithIndirectLight(chunk, indirect_light_bitset, cave_bitset);
-                try self.chunks_which_need_to_add_lights.enqueue(allocator, chunk.pos);
+                try self.chunks_which_need_to_add_lights.enqueue(gpa, chunk.pos);
             }
 
             chunk_y -= 1;
@@ -386,7 +393,7 @@ pub fn generate(self: *World, allocator: std.mem.Allocator) !void {
 
                 try continueIndirectLight(chunk, indirect_light_bitset);
                 try fillChunkWithIndirectLight(chunk, indirect_light_bitset, cave_bitset);
-                try self.chunks_which_need_to_add_lights.enqueue(allocator, chunk.pos);
+                try self.chunks_which_need_to_add_lights.enqueue(gpa, chunk.pos);
             }
         }
     }
@@ -418,7 +425,7 @@ pub fn getHeight(gen1: *const znoise.FnlGenerator, gen2: *const znoise.FnlGenera
     return @max(BOTTOM_OF_THE_WORLD, @as(i16, @intFromFloat(@floor(height))));
 }
 
-pub fn generateNoise2D(allocator: std.mem.Allocator, chunk: *Chunk, height_map: *[Chunk.AREA]i16) !void {
+pub fn generateNoise2D(gpa: std.mem.Allocator, chunk: *Chunk, height_map: *[Chunk.AREA]i16) !void {
     for (0..Chunk.SIZE) |x_| {
         for (0..Chunk.SIZE) |z_| {
             const x: u5 = @intCast(x_);
@@ -435,18 +442,18 @@ pub fn generateNoise2D(allocator: std.mem.Allocator, chunk: *Chunk, height_map: 
                 if (world_pos.y < height) {
                     if (world_pos.y == height - 1) {
                         if (world_pos.y < SEA_LEVEL) {
-                            try chunk.setBlock(allocator, local_pos, .initNone(.sand));
+                            try chunk.setBlock(gpa, local_pos, .initNone(.sand));
                         } else {
-                            try chunk.setBlock(allocator, local_pos, .initNone(.grass));
+                            try chunk.setBlock(gpa, local_pos, .initNone(.grass));
                         }
                     } else {
-                        try chunk.setBlock(allocator, local_pos, .initNone(.stone));
+                        try chunk.setBlock(gpa, local_pos, .initNone(.stone));
                     }
                 } else {
                     if (world_pos.y == BOTTOM_OF_THE_WORLD) {
-                        try chunk.setBlock(allocator, local_pos, .initNone(.stone));
+                        try chunk.setBlock(gpa, local_pos, .initNone(.stone));
                     } else if (world_pos.y < SEA_LEVEL) {
-                        try chunk.setBlock(allocator, local_pos, .initNone(.water));
+                        try chunk.setBlock(gpa, local_pos, .initNone(.water));
                     }
                 }
             }
@@ -454,7 +461,7 @@ pub fn generateNoise2D(allocator: std.mem.Allocator, chunk: *Chunk, height_map: 
     }
 }
 
-pub fn generateFillWithStone(allocator: std.mem.Allocator, chunk: *Chunk) !void {
+pub fn generateFillWithStone(gpa: std.mem.Allocator, chunk: *Chunk) !void {
     for (0..Chunk.SIZE) |x_| {
         const x: u5 = @intCast(x_);
 
@@ -465,7 +472,7 @@ pub fn generateFillWithStone(allocator: std.mem.Allocator, chunk: *Chunk) !void 
                 const y: u5 = @intCast(y_);
                 const local_pos: Chunk.LocalPos = .{ .x = x, .y = y, .z = z };
 
-                try chunk.setBlock(allocator, local_pos, .initNone(.stone));
+                try chunk.setBlock(gpa, local_pos, .initNone(.stone));
             }
         }
     }
@@ -480,7 +487,7 @@ pub fn caveThreshold(height: f32) f32 {
     return (-ymax / (xmin - xmax)) * (height - xmax) + ymax;
 }
 
-pub fn generateNoise3D(allocator: std.mem.Allocator, chunk: *Chunk, gen: *const znoise.FnlGenerator, random: std.Random) !void {
+pub fn generateNoise3D(gpa: std.mem.Allocator, chunk: *Chunk, gen: *const znoise.FnlGenerator, random: std.Random) !void {
     for (0..Chunk.SIZE) |x_| {
         const x: u5 = @intCast(x_);
 
@@ -498,9 +505,9 @@ pub fn generateNoise3D(allocator: std.mem.Allocator, chunk: *Chunk, gen: *const 
 
                 if (density < -threshold) {
                     if (world_pos.y == BOTTOM_OF_THE_WORLD) {
-                        try chunk.setBlock(allocator, local_pos, .initNone(.bedrock));
+                        try chunk.setBlock(gpa, local_pos, .initNone(.bedrock));
                     } else if (world_pos.y == BOTTOM_OF_THE_WORLD + 1) {
-                        try chunk.setBlock(allocator, local_pos, .initNone(.lava));
+                        try chunk.setBlock(gpa, local_pos, .initNone(.lava));
 
                         var light_pos = world_pos;
                         light_pos.y += 1;
@@ -512,7 +519,7 @@ pub fn generateNoise3D(allocator: std.mem.Allocator, chunk: *Chunk, gen: *const 
                     } else {
                         const prev_block = chunk.getBlock(local_pos);
                         if (prev_block.kind == .stone or prev_block.kind == .grass) {
-                            try chunk.setBlock(allocator, local_pos, .initNone(.air));
+                            try chunk.setBlock(gpa, local_pos, .initNone(.air));
 
                             if (random.uintAtMost(u32, 1000) == 0) {
                                 try chunk.light_addition_queue.writeItem(.{
@@ -730,6 +737,129 @@ pub fn removeLight(self: *World, pos: Pos, light: Light) !void {
 
 pub const NeighborChunks = struct {
     chunks: [6]?*Chunk,
+
+    pub const inEdge = .{
+        inWestEdge,
+        inEastEdge,
+        inBottomEdge,
+        inTopEdge,
+        inNorthEdge,
+        inSouthEdge,
+    };
+
+    pub const getPos = .{
+        getWestPos,
+        getEastPos,
+        getBottomPos,
+        getTopPos,
+        getNorthPos,
+        getSouthPos,
+    };
+
+    pub const getNeighborPos = .{
+        getWestNeighborPos,
+        getEastNeighborPos,
+        getBottomNeighborPos,
+        getTopNeighborPos,
+        getNorthNeighborPos,
+        getSouthNeighborPos,
+    };
+
+    fn inWestEdge(pos: Chunk.LocalPos) bool {
+        return pos.x == 0;
+    }
+
+    fn inEastEdge(pos: Chunk.LocalPos) bool {
+        return pos.x == Chunk.EDGE;
+    }
+
+    fn inBottomEdge(pos: Chunk.LocalPos) bool {
+        return pos.y == 0;
+    }
+
+    fn inTopEdge(pos: Chunk.LocalPos) bool {
+        return pos.y == Chunk.EDGE;
+    }
+
+    fn inNorthEdge(pos: Chunk.LocalPos) bool {
+        return pos.z == 0;
+    }
+
+    fn inSouthEdge(pos: Chunk.LocalPos) bool {
+        return pos.z == Chunk.EDGE;
+    }
+
+    fn getWestPos(pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = pos;
+        new_pos.x -= 1;
+        return new_pos;
+    }
+
+    fn getEastPos(pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = pos;
+        new_pos.x += 1;
+        return new_pos;
+    }
+
+    fn getBottomPos(pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = pos;
+        new_pos.y -= 1;
+        return new_pos;
+    }
+
+    fn getTopPos(pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = pos;
+        new_pos.y += 1;
+        return new_pos;
+    }
+
+    fn getNorthPos(pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = pos;
+        new_pos.z -= 1;
+        return new_pos;
+    }
+
+    fn getSouthPos(pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = pos;
+        new_pos.z += 1;
+        return new_pos;
+    }
+
+    fn getWestNeighborPos(pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = pos;
+        new_pos.x = Chunk.EDGE;
+        return new_pos;
+    }
+
+    fn getEastNeighborPos(pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = pos;
+        new_pos.x = 0;
+        return new_pos;
+    }
+
+    fn getBottomNeighborPos(pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = pos;
+        new_pos.y = Chunk.EDGE;
+        return new_pos;
+    }
+
+    fn getTopNeighborPos(pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = pos;
+        new_pos.y = 0;
+        return new_pos;
+    }
+
+    fn getNorthNeighborPos(pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = pos;
+        new_pos.z = Chunk.EDGE;
+        return new_pos;
+    }
+
+    fn getSouthNeighborPos(pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = pos;
+        new_pos.z = 0;
+        return new_pos;
+    }
 };
 
 pub fn getNeighborChunks(self: *World, chunk_pos: Chunk.Pos) NeighborChunks {
@@ -742,22 +872,13 @@ pub fn getNeighborChunks(self: *World, chunk_pos: Chunk.Pos) NeighborChunks {
     return .{ .chunks = chunks };
 }
 
-pub fn propagateLights(self: *World, allocator: std.mem.Allocator) !void {
-    while (self.chunks_which_need_to_add_lights.dequeue()) |chunk_pos| {
-        const chunk = self.getChunk(chunk_pos) catch {
-            std.log.err("{}", .{chunk_pos});
-            return error.PropAdd1;
-        };
-
-        try self.propagateLightAddition(allocator, chunk);
-    }
-
+pub fn propagateLights(self: *World, gpa: std.mem.Allocator) !void {
     while (self.chunks_which_need_to_remove_lights.dequeue()) |chunk_pos| {
         const chunk = self.getChunk(chunk_pos) catch {
             return error.PropRem;
         };
 
-        try self.propagateLightRemoval(allocator, chunk);
+        try self.propagateLightRemoval(gpa, chunk);
     }
 
     while (self.chunks_which_need_to_add_lights.dequeue()) |chunk_pos| {
@@ -765,11 +886,11 @@ pub fn propagateLights(self: *World, allocator: std.mem.Allocator) !void {
             return error.PropAdd2;
         };
 
-        try self.propagateLightAddition(allocator, chunk);
+        try self.propagateLightAddition(gpa, chunk);
     }
 }
 
-pub fn propagateLightAddition(self: *World, allocator: std.mem.Allocator, chunk: *Chunk) !void {
+pub fn propagateLightAddition(self: *World, gpa: std.mem.Allocator, chunk: *Chunk) !void {
     for (0..chunk.light_addition_queue.readableLength()) |node_idx| {
         const node = chunk.light_addition_queue.peekItem(node_idx);
         const local_pos = node.pos.toLocalPos();
@@ -886,14 +1007,14 @@ pub fn propagateLightAddition(self: *World, allocator: std.mem.Allocator, chunk:
                         .light = next_light,
                     });
 
-                    if (is_neighbor_chunk) try self.chunks_which_need_to_add_lights.enqueue(allocator, neighbor_chunk_pos);
+                    if (is_neighbor_chunk) try self.chunks_which_need_to_add_lights.enqueue(gpa, neighbor_chunk_pos);
                 }
             }
         }
     }
 }
 
-pub fn propagateLightRemoval(self: *World, allocator: std.mem.Allocator, chunk: *Chunk) !void {
+pub fn propagateLightRemoval(self: *World, gpa: std.mem.Allocator, chunk: *Chunk) !void {
     for (0..chunk.light_removal_queue.readableLength()) |i| {
         const node = chunk.light_removal_queue.peekItem(i);
         const local_pos = node.pos.toLocalPos();
@@ -1005,7 +1126,7 @@ pub fn propagateLightRemoval(self: *World, allocator: std.mem.Allocator, chunk: 
 
                     neighbor_chunk.setLight(neighbor_local_pos, removed_light);
 
-                    if (is_neighbor_chunk) try self.chunks_which_need_to_remove_lights.enqueue(allocator, neighbor_chunk_pos);
+                    if (is_neighbor_chunk) try self.chunks_which_need_to_remove_lights.enqueue(gpa, neighbor_chunk_pos);
                 }
 
                 if (enqueue_addition) {
@@ -1014,7 +1135,7 @@ pub fn propagateLightRemoval(self: *World, allocator: std.mem.Allocator, chunk: 
                         .light = neighbor_light,
                     });
 
-                    try self.chunks_which_need_to_add_lights.enqueue(allocator, neighbor_chunk_pos);
+                    try self.chunks_which_need_to_add_lights.enqueue(gpa, neighbor_chunk_pos);
                 }
             }
         }

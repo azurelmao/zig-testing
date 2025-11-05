@@ -18,13 +18,13 @@ pub fn DedupQueue(T: type) type {
         }
 
         pub fn count(self: Self) usize {
-            self.out.count();
+            return self.out.count();
         }
 
-        pub fn enqueue(self: *Self, allocator: std.mem.Allocator, val: T) !void {
+        pub fn enqueue(self: *Self, gpa: std.mem.Allocator, val: T) !void {
             if (self.in.contains(val) or self.out.contains(val)) return;
-            try self.out.ensureUnusedCapacity(allocator, self.in.count() + 1);
-            try self.in.put(allocator, val, {});
+            try self.out.ensureUnusedCapacity(gpa, self.in.count() + 1);
+            try self.in.put(gpa, val, {});
         }
 
         pub fn dequeue(self: *Self) ?T {

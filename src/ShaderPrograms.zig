@@ -14,20 +14,20 @@ selected_side: ShaderProgram,
 crosshair: ShaderProgram,
 text: ShaderProgram,
 
-pub fn init(allocator: std.mem.Allocator, raycast_result: World.RaycastResult, screen: Screen) !ShaderPrograms {
-    const chunks = try ShaderProgram.init(allocator, assets.vertexShaderPath("chunks"), assets.fragmentShaderPath("chunks"));
+pub fn init(gpa: std.mem.Allocator, raycast_result: World.RaycastResult, screen: Screen) !ShaderPrograms {
+    const chunks = try ShaderProgram.init(gpa, assets.vertexShaderPath("chunks"), assets.fragmentShaderPath("chunks"));
     chunks.label("Chunks Shader Program");
 
-    const chunks_bb = try ShaderProgram.init(allocator, assets.vertexShaderPath("chunks_bb"), assets.fragmentShaderPath("chunks_bb"));
+    const chunks_bb = try ShaderProgram.init(gpa, assets.vertexShaderPath("chunks_bb"), assets.fragmentShaderPath("chunks_bb"));
     chunks_bb.label("Chunks BB Shader Program");
 
-    const chunks_lines = try ShaderProgram.init(allocator, assets.vertexShaderPath("chunks_lines"), assets.fragmentShaderPath("chunks_lines"));
-    chunks_lines.label("Chunks Lines Shader Program");
+    const chunks_debug = try ShaderProgram.init(gpa, assets.vertexShaderPath("chunks_debug"), assets.fragmentShaderPath("chunks_debug"));
+    chunks_debug.label("Chunks Lines Shader Program");
 
-    const selected_block = try ShaderProgram.init(allocator, assets.vertexShaderPath("selected_block"), assets.fragmentShaderPath("selected_block"));
+    const selected_block = try ShaderProgram.init(gpa, assets.vertexShaderPath("selected_block"), assets.fragmentShaderPath("selected_block"));
     selected_block.label("Selected Block Shader Program");
 
-    const selected_side = try ShaderProgram.init(allocator, assets.vertexShaderPath("selected_side"), assets.fragmentShaderPath("selected_side"));
+    const selected_side = try ShaderProgram.init(gpa, assets.vertexShaderPath("selected_side"), assets.fragmentShaderPath("selected_side"));
     selected_side.label("Selected Side Shader Program");
 
     if (raycast_result.side != .out_of_bounds and raycast_result.side != .inside) {
@@ -37,18 +37,18 @@ pub fn init(allocator: std.mem.Allocator, raycast_result: World.RaycastResult, s
         }
     }
 
-    const crosshair = try ShaderProgram.init(allocator, assets.vertexShaderPath("crosshair"), assets.fragmentShaderPath("crosshair"));
+    const crosshair = try ShaderProgram.init(gpa, assets.vertexShaderPath("crosshair"), assets.fragmentShaderPath("crosshair"));
     crosshair.label("Crosshair Shader Program");
 
     crosshair.setUniform2f("uWindowSize", screen.window_width_f, screen.window_height_f);
 
-    const text = try ShaderProgram.init(allocator, assets.vertexShaderPath("text"), assets.fragmentShaderPath("text"));
+    const text = try ShaderProgram.init(gpa, assets.vertexShaderPath("text"), assets.fragmentShaderPath("text"));
     text.label("Text Shader Program");
 
     return .{
         .chunks = chunks,
         .chunks_bb = chunks_bb,
-        .chunks_debug = chunks_lines,
+        .chunks_debug = chunks_debug,
         .selected_block = selected_block,
         .selected_side = selected_side,
         .crosshair = crosshair,

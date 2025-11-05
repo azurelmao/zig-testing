@@ -7,13 +7,13 @@ const ShaderProgram = @This();
 handle: gl.uint,
 uniforms: std.StringHashMapUnmanaged(gl.int),
 
-pub fn init(allocator: std.mem.Allocator, vertex_shader_path: []const gl.char, fragment_shader_path: []const gl.char) !ShaderProgram {
+pub fn init(gpa: std.mem.Allocator, vertex_shader_path: []const gl.char, fragment_shader_path: []const gl.char) !ShaderProgram {
     const handle = gl.CreateProgram();
 
-    const vertexShader = try readAndCompileShader(allocator, vertex_shader_path, gl.VERTEX_SHADER);
+    const vertexShader = try readAndCompileShader(gpa, vertex_shader_path, gl.VERTEX_SHADER);
     gl.AttachShader(handle, vertexShader);
 
-    const fragmentShader = try readAndCompileShader(allocator, fragment_shader_path, gl.FRAGMENT_SHADER);
+    const fragmentShader = try readAndCompileShader(gpa, fragment_shader_path, gl.FRAGMENT_SHADER);
     gl.AttachShader(handle, fragmentShader);
 
     gl.LinkProgram(handle);
@@ -32,20 +32,21 @@ pub fn init(allocator: std.mem.Allocator, vertex_shader_path: []const gl.char, f
 
     var uniforms = std.StringHashMapUnmanaged(gl.int).empty;
     for (0..@intCast(count_uniforms)) |i| {
-        const uniform_name = try allocator.alloc(gl.char, @intCast(uniform_max_len));
+        const uniform_name = try gpa.alloc(gl.char, @intCast(uniform_max_len));
 
         var uniform_len: gl.sizei = undefined;
         gl.GetActiveUniformName(handle, @intCast(i), uniform_max_len, &uniform_len, uniform_name.ptr);
 
         const uniform_location = gl.GetUniformLocation(handle, @ptrCast(uniform_name.ptr));
-        try uniforms.put(allocator, uniform_name[0..@intCast(uniform_len)], uniform_location);
+        try uniforms.put(gpa, uniform_name[0..@intCast(uniform_len)], uniform_location);
     }
 
     return .{ .handle = handle, .uniforms = uniforms };
 }
 
-fn readAndCompileShader(allocator: std.mem.Allocator, shader_path: []const gl.char, @"type": gl.@"enum") !gl.uint {
-    const shader_source: []const gl.char = try std.fs.cwd().readFileAllocOptions(allocator, shader_path, std.math.maxInt(u16), null, @alignOf(u8), 0);
+fn readAndCompileShader(gpa: std.mem.Allocator, shader_path: []const gl.char, @"type": gl.@"enum") !gl.uint {
+    const shader_source: []const gl.char = try std.fs.cwd().readFileAllocOptions(gpa, shader_path, std.math.maxInt(u16), null, @alignOf(u8), 0);
+    defer gpa.free(shader_source);
 
     const handle = gl.CreateShader(@"type");
     gl.ShaderSource(handle, 1, @ptrCast(&shader_source.ptr), null);
@@ -58,7 +59,9 @@ fn readAndCompileShader(allocator: std.mem.Allocator, shader_path: []const gl.ch
         var log_len: gl.int = undefined;
         gl.GetShaderiv(handle, gl.INFO_LOG_LENGTH, &log_len);
 
-        const log = try allocator.alloc(gl.char, @intCast(log_len));
+        const log = try gpa.alloc(gl.char, @intCast(log_len));
+        defer gpa.free(log);
+
         gl.GetShaderInfoLog(handle, log_len, null, @ptrCast(log.ptr));
         std.log.err("{s}", .{log});
 

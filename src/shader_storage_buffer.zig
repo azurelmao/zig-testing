@@ -109,16 +109,16 @@ pub fn ShaderStorageBufferWithArrayList(comptime T: type) type {
         data: std.ArrayListUnmanaged(T),
         ssbo: ShaderStorageBuffer(T),
 
-        pub fn init(allocator: std.mem.Allocator, capacity: usize, flags: gl.bitfield) !Self {
+        pub fn init(gpa: std.mem.Allocator, capacity: usize, flags: gl.bitfield) !Self {
             return .{
-                .data = try .initCapacity(allocator, capacity),
+                .data = try .initCapacity(gpa, capacity),
                 .ssbo = .init(capacity, flags),
             };
         }
 
-        pub fn initAndBind(allocator: std.mem.Allocator, index: gl.uint, capacity: usize, flags: gl.bitfield) !Self {
+        pub fn initAndBind(gpa: std.mem.Allocator, index: gl.uint, capacity: usize, flags: gl.bitfield) !Self {
             return .{
-                .data = try .initCapacity(allocator, capacity),
+                .data = try .initCapacity(gpa, capacity),
                 .ssbo = .initAndBind(index, capacity, flags),
             };
         }

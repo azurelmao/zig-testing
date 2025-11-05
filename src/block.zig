@@ -137,25 +137,6 @@ pub const BlockExtendedData = union(BlockExtendedDataKind) {
     }
 };
 
-pub const BlockExtendedDataStore = struct {
-    array: std.ArrayListUnmanaged(BlockExtendedData),
-
-    pub const empty = BlockExtendedDataStore{
-        .array = .empty,
-    };
-
-    pub fn append(self: *BlockExtendedDataStore, allocator: std.mem.Allocator, data: BlockExtendedData) !usize {
-        try self.array.append(allocator, data);
-        const index = self.array.items.len - 1;
-
-        return index;
-    }
-
-    pub fn get(self: BlockExtendedDataStore, index: usize) BlockExtendedData {
-        return self.array.items[index];
-    }
-};
-
 const BlockDataKind = enum {
     none,
     extended,

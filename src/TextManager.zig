@@ -22,15 +22,15 @@ const Text = struct {
     };
 };
 
-pub fn init(allocator: std.mem.Allocator) !TextManager {
+pub fn init(gpa: std.mem.Allocator) !TextManager {
     return .{
         .text_list = .empty,
-        .vertices = try .init(allocator, 100, gl.DYNAMIC_STORAGE_BIT),
+        .vertices = try .init(gpa, 100, gl.DYNAMIC_STORAGE_BIT),
     };
 }
 
-pub fn append(self: *TextManager, allocator: std.mem.Allocator, text: Text) !void {
-    try self.text_list.append(allocator, text);
+pub fn append(self: *TextManager, gpa: std.mem.Allocator, text: Text) !void {
+    try self.text_list.append(gpa, text);
 }
 
 pub fn clear(self: *TextManager) void {
@@ -38,7 +38,7 @@ pub fn clear(self: *TextManager) void {
     self.text_list.clearRetainingCapacity();
 }
 
-pub fn build(self: *TextManager, allocator: std.mem.Allocator, window_width: gl.sizei, window_height: gl.sizei, ui_scale: gl.sizei) !void {
+pub fn build(self: *TextManager, gpa: std.mem.Allocator, window_width: gl.sizei, window_height: gl.sizei, ui_scale: gl.sizei) !void {
     const half_window_width = @divTrunc(window_width, 2 * ui_scale);
     const half_window_height = @divTrunc(window_height, 2 * ui_scale);
     const half_window_width_f = @as(gl.float, @floatFromInt(window_width)) / 2.0;
@@ -71,7 +71,7 @@ pub fn build(self: *TextManager, allocator: std.mem.Allocator, window_width: gl.
             const width: gl.float = @floatFromInt(pixel_width);
             const max_u = width / max_width;
 
-            try self.vertices.data.appendSlice(allocator, &.{
+            try self.vertices.data.appendSlice(gpa, &.{
                 .{ .x = max_x, .y = max_y, .u = max_u, .v = 0, .idx = idx },
                 .{ .x = min_x, .y = max_y, .u = 0, .v = 0, .idx = idx },
                 .{ .x = min_x, .y = min_y, .u = 0, .v = 1, .idx = idx },
@@ -89,5 +89,5 @@ pub fn build(self: *TextManager, allocator: std.mem.Allocator, window_width: gl.
         self.vertices.ssbo.upload(self.vertices.data.items) catch unreachable;
     };
 
-    self.vertices.ssbo.bind(12);
+    self.vertices.ssbo.bind(14);
 }

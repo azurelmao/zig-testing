@@ -1,7 +1,7 @@
 #version 460 core
 
 layout (location = 0) out vec4 oColor;
-layout (binding = 3) uniform sampler2D uFramebuffer;
+layout (binding = 3) uniform sampler2D uOffscreenFramebuffer;
 
 vec3 rgb2hsv(vec3 c) {
     vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
@@ -22,7 +22,7 @@ vec3 hsv2rgb(vec3 c) {
 const float unit = 50.0 / 255.0;
 
 void main() {
-    vec3 prevColor = texelFetch(uFramebuffer, ivec2(gl_FragCoord.xy), 0).rgb;
+    vec3 prevColor = texelFetch(uOffscreenFramebuffer, ivec2(gl_FragCoord.xy), 0).rgb;
     vec3 invertedColor = 1 - prevColor;
     
     vec3 finalColor = hsv2rgb(rgb2hsv(invertedColor) + vec3(0, unit, 0));
