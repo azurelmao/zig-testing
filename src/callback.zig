@@ -18,15 +18,23 @@ const NewKeyAction = struct {
     mods: glfw.Mods,
 };
 
+const NewButtonAction = struct {
+    button: glfw.MouseButton,
+    action: glfw.Action,
+    mods: glfw.Mods,
+};
+
 pub const UserData = struct {
     new_window_size: ?NewWindowSize,
     new_cursor_pos: ?NewCursorPos,
     new_key_action: ?NewKeyAction,
+    new_button_action: ?NewButtonAction,
 
     pub const default: UserData = .{
         .new_window_size = null,
         .new_cursor_pos = null,
         .new_key_action = null,
+        .new_button_action = null,
     };
 };
 
@@ -39,6 +47,14 @@ pub fn keyCallback(window: glfw.Window, key: glfw.Key, scancode: i32, action: gl
 
     window.getUserPointer(UserData).?.new_key_action = .{
         .key = key,
+        .action = action,
+        .mods = mods,
+    };
+}
+
+pub fn buttonCallback(window: glfw.Window, button: glfw.MouseButton, action: glfw.Action, mods: glfw.Mods) void {
+    window.getUserPointer(UserData).?.new_button_action = .{
+        .button = button,
         .action = action,
         .mods = mods,
     };

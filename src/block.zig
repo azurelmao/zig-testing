@@ -2,6 +2,7 @@ const std = @import("std");
 const Side = @import("side.zig").Side;
 const Light = @import("light.zig").Light;
 const Vec3f = @import("vec3f.zig").Vec3f;
+const World = @import("World.zig");
 
 pub const BlockKind = enum {
     air,
@@ -148,14 +149,10 @@ pub const BlockData = packed union {
     /// Index to the extended data store
     extended: usize,
     redstone_lamp: RedstoneLampData,
-
-    pub fn initRedstoneLamp(powered: bool) BlockData {
-        return .{ .redstone_lamp = powered };
-    }
 };
 
 const RedstoneLampData = packed struct {
-    powered: bool,
+    light: Light,
 };
 
 pub const Block = struct {
@@ -255,7 +252,6 @@ pub const BlockTextureKind = enum(u11) {
     glass_tinted,
     chest,
     redstone_lamp_active,
-    redstone_lamp_inactive,
 
     pub inline fn idx(self: BlockTextureKind) u11 {
         return @intFromEnum(self);

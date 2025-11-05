@@ -98,7 +98,8 @@ flat out vec3 pLight;
 out vec3 pVertexPosition;
 
 void main() {
-    PerFaceData perFaceData = sPerFace[gl_VertexID / 6];
+    uint faceIdx = gl_VertexID / 6;
+    PerFaceData perFaceData = sPerFace[faceIdx];
     
     vec3 localPosition = unpackLocalPosition(perFaceData.data1);
     uint modelIdx = unpackModelIdx(perFaceData.data1);

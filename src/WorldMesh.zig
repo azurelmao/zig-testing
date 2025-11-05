@@ -113,10 +113,7 @@ pub const WorldMeshLayer = struct {
             const face_size = chunk_mesh_face.items.len;
 
             if (chunk_mesh_face.items.len > 0) {
-                @memcpy(
-                    self.mesh.data.items[offset .. offset + face_size],
-                    chunk_mesh_face.items,
-                );
+                @memcpy(self.mesh.data.items[offset .. offset + face_size], chunk_mesh_face.items);
                 offset += face_size;
             }
 

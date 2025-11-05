@@ -1,17 +1,15 @@
 #version 460 core
 
 layout (binding = 0, std430) readonly buffer ssbo0 {
-    uint sVertex[];
+    uint sPerVertex[];
 };
 
-struct VertexIdxAndTextureIdx {
-    uint vertexIdx;
-    uint data;
+layout (binding = 0, std140) uniform ubo0 {
+    mat4 uViewProjection;
+    vec3 uSelectedBlockPosition;
 };
 
-layout (binding = 1, std430) readonly buffer ssbo1 {
-    VertexIdxAndTextureIdx sVertexIdxAndTextureIdx[];
-};
+uniform uint uFaceIdx;
 
 vec3 unpackModelPosition(uint data) {
     float x = bitfieldExtract(data, 0, 5);
@@ -21,17 +19,10 @@ vec3 unpackModelPosition(uint data) {
     return vec3(x, y, z);
 }
 
-layout (binding = 0, std140) uniform ubo0 {
-    mat4 uViewProjection;
-    vec3 uSelectedBlockPosition;
-};
-uniform uint uFaceIdx;
-
 void main() {
-    VertexIdxAndTextureIdx perModelData = sVertexIdxAndTextureIdx[uFaceIdx];
-    uint vertexIdx = perModelData.vertexIdx;
+    uint vertexIdx = uFaceIdx + (gl_VertexID % 6);
 
-    uint perVertexData = sVertex[vertexIdx + gl_VertexID];
+    uint perVertexData = sPerVertex[vertexIdx];
     vec3 modelPosition = unpackModelPosition(perVertexData);
 
     vec4 worldPosition = vec4(uSelectedBlockPosition + modelPosition, 1.0);

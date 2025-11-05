@@ -18,6 +18,7 @@ const ShaderStorageBuffers = @import("ShaderStorageBuffers.zig");
 const Framebuffer = @import("Framebuffer.zig");
 const TextManager = @import("TextManager.zig");
 const Side = @import("side.zig").Side;
+const Light = @import("light.zig").Light;
 
 const c = @import("vma");
 
@@ -50,6 +51,8 @@ const Game = struct {
     world: World,
     world_mesh: WorldMesh,
     selected_block: World.RaycastResult,
+    inventory: [7]Block,
+    selected_slot: u3,
 
     fn init(gpa: std.mem.Allocator) !Game {
         const settings: Settings = .{};
@@ -81,6 +84,27 @@ const Game = struct {
 
         const world_mesh: WorldMesh = try .init(gpa);
 
+        var inventory: [7]Block = undefined;
+        for (0..inventory.len) |idx| {
+            // R 0 0 red
+            // 0 G 0 green
+            // 0 0 B blue
+            // R G 0 yellow
+            // R 0 B magenta
+            // 0 G B cyan
+            // R G B white
+
+            const light_idx: u4 = @intCast(idx + 1);
+            const light: Light = .{
+                .red = (light_idx & 0b1) * 15,
+                .green = ((light_idx >> 1) & 0b1) * 15,
+                .blue = ((light_idx >> 2) & 0b1) * 15,
+                .indirect = 0,
+            };
+
+            inventory[idx] = .init(.redstone_lamp, .{ .redstone_lamp = .{ .light = light } });
+        }
+
         return .{
             .settings = settings,
             .screen = screen,
@@ -96,6 +120,8 @@ const Game = struct {
             .world = world,
             .world_mesh = world_mesh,
             .selected_block = selected_block,
+            .inventory = inventory,
+            .selected_slot = 0,
         };
     }
 
@@ -185,6 +211,7 @@ const Game = struct {
         window.setCursorPosCallback(callback.cursorCallback);
         window.setFramebufferSizeCallback(callback.framebufferSizeCallback);
         window.setKeyCallback(callback.keyCallback);
+        window.setMouseButtonCallback(callback.buttonCallback);
 
         return window;
     }
@@ -196,17 +223,33 @@ const Game = struct {
         var calc_view_matrix = false;
         var calc_projection_matrix = false;
 
-        var break_block = false;
-
         if (self.callback_user_data.new_key_action) |new_key_action| {
             if (new_key_action.action == .press) switch (new_key_action.key) {
                 .escape => self.window.setShouldClose(true),
                 .F4 => self.settings.chunk_borders = !self.settings.chunk_borders,
-                .r => break_block = true,
+                .one => self.selected_slot = 0,
+                .two => self.selected_slot = 1,
+                .three => self.selected_slot = 2,
+                .four => self.selected_slot = 3,
+                .five => self.selected_slot = 4,
+                .six => self.selected_slot = 5,
+                .seven => self.selected_slot = 6,
                 else => {},
             };
 
             self.callback_user_data.new_key_action = null;
+        }
+
+        var action: enum { none, destroy, place } = .none;
+
+        if (self.callback_user_data.new_button_action) |new_button_action| {
+            if (new_button_action.action == .press) switch (new_button_action.button) {
+                .left => action = .destroy,
+                .right => action = .place,
+                else => {},
+            };
+
+            self.callback_user_data.new_button_action = null;
         }
 
         if (self.window.getKey(glfw.Key.s) == .press) {
@@ -282,7 +325,7 @@ const Game = struct {
             self.camera.calcProjectionMatrix(self.screen.aspect_ratio);
         }
 
-        const calc_view_projection_matrix = calc_view_matrix or calc_projection_matrix or break_block;
+        const calc_view_projection_matrix = calc_view_matrix or calc_projection_matrix or action != .none;
         if (calc_view_projection_matrix) {
             self.camera.calcViewProjectionMatrix();
             self.camera.calcFrustumPlanes();
@@ -296,23 +339,23 @@ const Game = struct {
 
             if (selected_side != .out_of_bounds and selected_side != .inside) {
                 if (self.selected_block.block) |block| {
-                    const face_idx = block.kind.getModelIdx() + selected_side.idx();
+                    const face_idx = (block.kind.getModelIdx() * 36) + (selected_side.idx() * 6);
                     self.shader_programs.selected_side.setUniform1ui("uFaceIdx", @intCast(face_idx));
                 }
             }
 
             self.uniform_buffer.uploadViewProjectionMatrix(self.camera.view_projection_matrix);
 
-            if (break_block) {
-                if (self.selected_block.block) |block| {
+            switch (action) {
+                .destroy => if (self.selected_block.block) |block| {
                     if (block.kind != .air) {
                         const world_pos = self.selected_block.pos;
-
-                        try self.world.setBlockAndAffectLight(gpa, world_pos, .initNone(.air));
-
                         const chunk_pos = world_pos.toChunkPos();
                         const local_pos = world_pos.toLocalPos();
                         const neighbor_chunks = self.world.getNeighborChunks(chunk_pos);
+
+                        try self.world.setBlock(gpa, world_pos, .initNone(.air));
+                        self.world.onBlockDestroy(gpa, block, world_pos);
 
                         inline for (Side.values) |side| {
                             const face_idx = side.idx();
@@ -326,7 +369,18 @@ const Game = struct {
 
                         try self.world.chunks_which_need_to_regenerate_meshes.enqueue(gpa, chunk_pos);
                     }
-                }
+                },
+                .place => inner: {
+                    const world_pos = self.selected_block.pos.add(World.Pos.Offsets[self.selected_block.side.idx()]);
+                    const chunk_pos = world_pos.toChunkPos();
+
+                    const block = self.inventory[self.selected_slot];
+                    self.world.setBlock(gpa, world_pos, block) catch break :inner;
+                    self.world.onBlockPlace(gpa, block, world_pos);
+
+                    try self.world.chunks_which_need_to_regenerate_meshes.enqueue(gpa, chunk_pos);
+                },
+                else => {},
             }
 
             self.camera.changed = true;
@@ -578,120 +632,45 @@ const Game = struct {
             }
         }
 
-        // if (self.selected_block.side != .out_of_bounds and self.selected_block.side != .inside) {
-        //     if (self.selected_block.block) |_| {
-        //         self.shader_programs.selected_side.bind();
-        //         {
-        //             gl.Enable(gl.POLYGON_OFFSET_FILL);
-        //             defer gl.Disable(gl.POLYGON_OFFSET_FILL);
+        if (self.selected_block.side != .out_of_bounds and self.selected_block.side != .inside) {
+            if (self.selected_block.block) |_| {
+                self.shader_programs.selected_side.bind();
+                {
+                    gl.Enable(gl.POLYGON_OFFSET_FILL);
+                    defer gl.Disable(gl.POLYGON_OFFSET_FILL);
 
-        //             gl.PolygonOffset(-1.0, 1.0);
-        //             defer gl.PolygonOffset(0.0, 0.0);
+                    gl.PolygonOffset(-1.0, 1.0);
+                    defer gl.PolygonOffset(0.0, 0.0);
 
-        //             gl.DrawArrays(gl.TRIANGLES, 0, 6);
-        //         }
-        //     }
-        // }
+                    gl.DrawArrays(gl.TRIANGLES, 0, 6);
+                }
+            }
+        }
 
-        // self.shader_programs.selected_block.bind();
-        // {
-        //     gl.Enable(gl.POLYGON_OFFSET_LINE);
-        //     defer gl.Disable(gl.POLYGON_OFFSET_LINE);
+        self.shader_programs.selected_block.bind();
+        {
+            gl.Enable(gl.POLYGON_OFFSET_LINE);
+            defer gl.Disable(gl.POLYGON_OFFSET_LINE);
 
-        //     gl.PolygonOffset(-2.0, 1.0);
-        //     defer gl.PolygonOffset(0.0, 0.0);
+            gl.PolygonOffset(-2.0, 1.0);
+            defer gl.PolygonOffset(0.0, 0.0);
 
-        //     gl.Enable(gl.LINE_SMOOTH);
-        //     defer gl.Disable(gl.LINE_SMOOTH);
+            gl.Enable(gl.LINE_SMOOTH);
+            defer gl.Disable(gl.LINE_SMOOTH);
 
-        //     gl.DepthFunc(gl.LEQUAL);
-        //     defer gl.DepthFunc(gl.LESS);
+            gl.DepthFunc(gl.LEQUAL);
+            defer gl.DepthFunc(gl.LESS);
 
-        //     gl.DrawArrays(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len);
-        // }
+            gl.DrawArrays(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len);
+        }
 
-        // self.shader_programs.crosshair.bind();
-        // gl.DrawArrays(gl.TRIANGLES, 0, 6);
+        self.shader_programs.crosshair.bind();
+        gl.DrawArrays(gl.TRIANGLES, 0, 6);
 
-        // self.shader_programs.text.bind();
-        // gl.DrawArrays(gl.TRIANGLES, 0, @intCast(self.text_manager.vertices.data.items.len));
+        self.shader_programs.text.bind();
+        gl.DrawArrays(gl.TRIANGLES, 0, @intCast(self.text_manager.vertices.data.items.len));
     }
 };
-
-// pub fn RegionManager(comptime T: type) type {
-//     return struct {
-//         buffer: []T,
-//         regions: std.ArrayListUnmanaged(Region),
-
-//         const Self = @This();
-
-//         pub fn init(allocator: std.mem.Allocator, len: usize) !Self {
-//             const buffer = try allocator.alloc(T, len);
-
-//             var regions: std.ArrayListUnmanaged(Region) = try .empty;
-//             regions.append(allocator, .{
-//                 .offset = 0,
-//                 .len = len,
-//                 .free = true,
-//             });
-
-//             return .{
-//                 .buffer = buffer,
-//                 .regions = regions,
-//             };
-//         }
-
-//         pub fn create(self: *Self, allocator: std.mem.Allocator, data: []const T) !void {
-//             for (self.regions.items) |*region| {
-//                 if (region.free and region.len >= data.len) {
-//                     const len_left = region.len - data.len;
-
-//                     region.free = false;
-//                     region.len = data.len;
-
-//                     if (len_left != 0) {
-//                         self.regions.append(allocator, .{
-//                             .offset = data.len,
-//                             .len = len_left,
-//                             .free = true,
-//                         });
-//                     }
-
-//                     @memcpy(self.buffer[0..data.len], data[0..]);
-
-//                     return;
-//                 }
-//             }
-
-//             // out of regions, have to realloc buffer, will also defragmentize
-//             const new_buffer = try allocator.alloc(T, self.buffer.len + data.len);
-
-//             var last_free_region_index: usize = 0;
-//             var last_region_len: usize = 0;
-//             for (self.regions.items, 0..) |region, index| {
-//                 if (region.free) {
-//                     last_free_region_index = index;
-//                 } else {
-//                     const last_free_region = self.regions.items[last_free_region_index];
-
-//                     self.regions.items[last_free_region_index] = .{
-//                         .offset = last_free_region.offset,
-//                         .len = region.len,
-//                         .free = false,
-//                     };
-
-//                     last_region_len =
-//                 }
-//             }
-//         }
-
-//         const Region = struct {
-//             offset: usize,
-//             len: usize,
-//             free: bool,
-//         };
-//     };
-// }
 
 var procs: gl.ProcTable = undefined;
 
