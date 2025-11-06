@@ -9,7 +9,7 @@ const Camera = @import("Camera.zig");
 const ShaderStorageBufferWithArrayList = @import("shader_storage_buffer.zig").ShaderStorageBufferWithArrayList;
 const ChunkMesh = @import("ChunkMesh.zig");
 const ChunkMeshLayer = ChunkMesh.ChunkMeshLayer;
-const Side = @import("side.zig").Side;
+const Dir = @import("dir.zig").Dir;
 
 const WorldMesh = @This();
 
@@ -109,7 +109,7 @@ pub const WorldMeshLayer = struct {
 
         var face_sizes: [6]usize = undefined;
         var offset: usize = virtual_alloc_info.offset;
-        for (chunk_mesh_layer.faces, 0..) |chunk_mesh_face, face_idx| {
+        for (chunk_mesh_layer.faces, 0..) |chunk_mesh_face, dir_idx| {
             const face_size = chunk_mesh_face.items.len;
 
             if (chunk_mesh_face.items.len > 0) {
@@ -117,7 +117,7 @@ pub const WorldMeshLayer = struct {
                 offset += face_size;
             }
 
-            face_sizes[face_idx] = face_size;
+            face_sizes[dir_idx] = face_size;
         }
 
         const suballocation: Suballocation = .{
@@ -324,10 +324,10 @@ pub fn generateCommands(self: *WorldMesh, gpa: std.mem.Allocator) !void {
             var starting_offset: usize = 0;
             var total_size: usize = 0;
 
-            for (Side.values) |side| {
-                const face_size = suballocation.face_sizes[side.idx()];
+            for (Dir.values) |dir| {
+                const face_size = suballocation.face_sizes[dir.idx()];
 
-                if (((mask >> @intCast(side.idx())) & 0b1 == 1) and face_size != 0) {
+                if (((mask >> @intCast(dir.idx())) & 0b1 == 1) and face_size != 0) {
                     if (total_size == 0) starting_offset = offset;
                     total_size += face_size;
                 } else if (total_size != 0) {

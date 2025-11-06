@@ -4,7 +4,7 @@ const Chunk = @import("Chunk.zig");
 const Light = @import("light.zig").Light;
 const Block = @import("block.zig").Block;
 const BlockExtendedData = @import("block.zig").BlockExtendedData;
-const Side = @import("side.zig").Side;
+const Dir = @import("dir.zig").Dir;
 const DedupQueue = @import("dedup_queue.zig").DedupQueue;
 const Vec3f = @import("vec3f.zig").Vec3f;
 
@@ -50,7 +50,7 @@ pub const Pos = struct {
     y: i16,
     z: i16,
 
-    pub const Offsets = [6]Pos{
+    pub const OFFSETS = [6]Pos{
         .{ .x = -1, .y = 0, .z = 0 },
         .{ .x = 1, .y = 0, .z = 0 },
         .{ .x = 0, .y = -1, .z = 0 },
@@ -171,7 +171,7 @@ pub const RaycastSide = enum {
 
 pub const RaycastResult = struct {
     pos: Pos,
-    side: RaycastSide,
+    dir: RaycastSide,
     block: ?Block,
 };
 
@@ -198,7 +198,7 @@ pub fn raycast(self: World, origin: Vec3f, direction: Vec3f) RaycastResult {
 
         if (block_or_null) |block| {
             if (block.kind.isInteractable()) {
-                const side: RaycastSide = expr: {
+                const dir: RaycastSide = expr: {
                     if (mask.x) {
                         if (step.x > 0) {
                             break :expr .west;
@@ -224,7 +224,7 @@ pub fn raycast(self: World, origin: Vec3f, direction: Vec3f) RaycastResult {
 
                 return .{
                     .pos = block_world_pos,
-                    .side = side,
+                    .dir = dir,
                     .block = block,
                 };
             }
@@ -255,7 +255,7 @@ pub fn raycast(self: World, origin: Vec3f, direction: Vec3f) RaycastResult {
 
     return .{
         .pos = moving_position.toWorldPos(),
-        .side = .out_of_bounds,
+        .dir = .out_of_bounds,
         .block = null,
     };
 }
@@ -714,6 +714,42 @@ pub fn removeLight(self: *World, gpa: std.mem.Allocator, pos: Pos, light: Light)
     try self.chunks_which_need_to_remove_lights.enqueue(gpa, chunk_pos);
 }
 
+pub fn fillLightFromNeighbors(self: *World, gpa: std.mem.Allocator, pos: Pos) !void {
+    const local_pos = pos.toLocalPos();
+    const chunk_pos = pos.toChunkPos();
+
+    const chunk = try self.getChunk(chunk_pos);
+    chunk.setLight(local_pos, .{ .red = 0, .green = 0, .blue = 0, .indirect = 0 });
+
+    const neighbor_chunks = self.getNeighborChunks(chunk_pos);
+
+    inline for (Dir.indices) |dir_idx| skip: {
+        const neighbor_world_pos = pos.add(Pos.OFFSETS[dir_idx]);
+        const neighbor_local_pos = neighbor_world_pos.toLocalPos();
+
+        const neighbor_chunk = expr: {
+            if (World.NeighborChunks.inEdge[dir_idx](local_pos)) {
+                if (neighbor_chunks.chunks[dir_idx]) |neighbor_chunk| {
+                    break :expr neighbor_chunk;
+                } else {
+                    break :skip;
+                }
+            } else {
+                break :expr chunk;
+            }
+        };
+
+        const light = neighbor_chunk.getLight(neighbor_local_pos);
+
+        try neighbor_chunk.light_addition_queue.writeItem(.{
+            .pos = neighbor_world_pos,
+            .light = light,
+        });
+
+        try self.chunks_which_need_to_add_lights.enqueue(gpa, neighbor_chunk.pos);
+    }
+}
+
 pub const NeighborChunks = struct {
     chunks: [6]?*Chunk,
 
@@ -844,28 +880,37 @@ pub const NeighborChunks = struct {
 pub fn getNeighborChunks(self: *World, chunk_pos: Chunk.Pos) NeighborChunks {
     var chunks: [6]?*Chunk = undefined;
 
-    inline for (0..6) |face_idx| {
-        chunks[face_idx] = self.getChunkOrNull(chunk_pos.add(Chunk.Pos.Offsets[face_idx]));
+    inline for (Dir.indices) |dir_idx| {
+        chunks[dir_idx] = self.getChunkOrNull(chunk_pos.add(Chunk.Pos.OFFSETS[dir_idx]));
     }
 
     return .{ .chunks = chunks };
 }
 
-pub fn onBlockDestroy(self: *World, gpa: std.mem.Allocator, block: Block, pos: Pos) void {
+pub fn onBlockDestroy(self: *World, gpa: std.mem.Allocator, block: Block, pos: Pos) !void {
     switch (block.kind) {
         .redstone_lamp => {
-            self.removeLight(gpa, pos, block.data.redstone_lamp.light) catch unreachable;
+            for (Dir.indices) |dir_idx| {
+                const neighbor_world_pos = pos.add(Pos.OFFSETS[dir_idx]);
+                try self.removeLight(gpa, neighbor_world_pos, block.data.redstone_lamp.light);
+            }
         },
         else => {
-            self.removeLight(gpa, pos, .{ .red = 0, .green = 0, .blue = 0, .indirect = 0 }) catch unreachable;
+            try self.fillLightFromNeighbors(gpa, pos);
         },
     }
 }
 
-pub fn onBlockPlace(self: *World, gpa: std.mem.Allocator, block: Block, pos: Pos) void {
+pub fn onBlockPlace(self: *World, gpa: std.mem.Allocator, block: Block, pos: Pos) !void {
     switch (block.kind) {
         .redstone_lamp => {
-            self.addLight(gpa, pos, block.data.redstone_lamp.light) catch unreachable;
+            for (Dir.indices) |dir_idx| {
+                const neighbor_pos = pos.add(Pos.OFFSETS[dir_idx]);
+                self.addLight(gpa, neighbor_pos, block.data.redstone_lamp.light) catch |err| switch (err) {
+                    error.ChunkNotFound => continue,
+                    else => return err,
+                };
+            }
         },
         else => {},
     }
@@ -876,12 +921,14 @@ pub fn propagateLights(self: *World, gpa: std.mem.Allocator) !void {
         const chunk = self.getChunkOrNull(chunk_pos) orelse unreachable;
 
         try self.propagateLightRemoval(gpa, chunk);
+        try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, chunk_pos);
     }
 
     while (self.chunks_which_need_to_add_lights.dequeue()) |chunk_pos| {
         const chunk = self.getChunkOrNull(chunk_pos) orelse unreachable;
 
         try self.propagateLightAddition(gpa, chunk);
+        try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, chunk_pos);
     }
 }
 
@@ -891,12 +938,19 @@ pub fn propagateLightAddition(self: *World, gpa: std.mem.Allocator, chunk: *Chun
         const local_pos = node.pos.toLocalPos();
         const light = node.light;
 
+        const block = chunk.getBlock(local_pos);
+
+        const light_opacity = switch (block.kind.getLightOpacity()) {
+            .translucent => |light_opacity| light_opacity,
+            .@"opaque" => continue,
+        };
+
         const current_light = chunk.getLight(local_pos);
-        const next_light = Light{
-            .red = @max(current_light.red, light.red),
-            .green = @max(current_light.green, light.green),
-            .blue = @max(current_light.blue, light.blue),
-            .indirect = @max(current_light.indirect, light.indirect),
+        const next_light: Light = .{
+            .red = @max(current_light.red, light.red -| light_opacity.red),
+            .green = @max(current_light.green, light.green -| light_opacity.green),
+            .blue = @max(current_light.blue, light.blue -| light_opacity.blue),
+            .indirect = @max(current_light.indirect, light.indirect -| light_opacity.indirect),
         };
 
         chunk.setLight(local_pos, next_light);
@@ -909,16 +963,16 @@ pub fn propagateLightAddition(self: *World, gpa: std.mem.Allocator, chunk: *Chun
         const world_pos = node.pos;
         const light = node.light;
 
-        inline for (0..6) |face_idx| {
+        inline for (Dir.indices) |dir_idx| {
             skip: {
-                const neighbor_world_pos = world_pos.add(Pos.Offsets[face_idx]);
+                const neighbor_world_pos = world_pos.add(Pos.OFFSETS[dir_idx]);
                 const neighbor_chunk_pos = neighbor_world_pos.toChunkPos();
 
                 var is_neighbor_chunk = false;
 
                 const neighbor_chunk = expr: {
                     if (neighbor_chunk_pos.notEqual(chunk.pos)) {
-                        if (neighbor_chunks.chunks[face_idx]) |neighbor_chunk| {
+                        if (neighbor_chunks.chunks[dir_idx]) |neighbor_chunk| {
                             is_neighbor_chunk = true;
 
                             break :expr neighbor_chunk;
@@ -976,7 +1030,7 @@ pub fn propagateLightAddition(self: *World, gpa: std.mem.Allocator, chunk: *Chun
                     neighbor_chunk.setLight(neighbor_local_pos, next_light);
                 }
 
-                if (face_idx == Side.bottom.idx() and light.indirect == 15 and neighbor_light_opacity.indirect == 0) {
+                if (dir_idx == Dir.bottom.idx() and light.indirect == 15 and neighbor_light_opacity.indirect == 0) {
                     enqueue = true;
 
                     neighbor_light = neighbor_chunk.getLight(neighbor_local_pos);
@@ -1016,7 +1070,7 @@ pub fn propagateLightRemoval(self: *World, gpa: std.mem.Allocator, chunk: *Chunk
         const node_light = node.light;
 
         const light = chunk.getLight(local_pos);
-        const next_light = Light{
+        const next_light: Light = .{
             .red = light.red -| node_light.red,
             .green = light.green -| node_light.green,
             .blue = light.blue -| node_light.blue,
@@ -1031,18 +1085,18 @@ pub fn propagateLightRemoval(self: *World, gpa: std.mem.Allocator, chunk: *Chunk
     while (chunk.light_removal_queue.readableLength() > 0) {
         const node = chunk.light_removal_queue.readItem().?;
         const world_pos = node.pos;
-        const light = node.light;
+        const node_light = node.light;
 
-        inline for (0..6) |face_idx| {
+        inline for (Dir.indices) |dir_idx| {
             skip: {
-                const neighbor_world_pos = world_pos.add(Pos.Offsets[face_idx]);
+                const neighbor_world_pos = world_pos.add(Pos.OFFSETS[dir_idx]);
                 const neighbor_chunk_pos = neighbor_world_pos.toChunkPos();
 
                 var is_neighbor_chunk = false;
 
                 const neighbor_chunk = expr: {
                     if (neighbor_chunk_pos.notEqual(chunk.pos)) {
-                        if (neighbor_chunks.chunks[face_idx]) |neighbor_chunk| {
+                        if (neighbor_chunks.chunks[dir_idx]) |neighbor_chunk| {
                             is_neighbor_chunk = true;
 
                             break :expr neighbor_chunk;
@@ -1063,63 +1117,51 @@ pub fn propagateLightRemoval(self: *World, gpa: std.mem.Allocator, chunk: *Chunk
                 };
 
                 const neighbor_light = neighbor_chunk.getLight(neighbor_local_pos);
-                var removed_light = neighbor_light;
-                var next_light = light;
+                var light_set_after_removal = neighbor_light;
+                var light_added_to_removal_queue = node_light;
 
                 var enqueue_removal = false;
                 var enqueue_addition = false;
 
-                if (neighbor_light.red > 0 and neighbor_light.red <= light.red) {
+                if (neighbor_light.red > 0 and neighbor_light.red < node_light.red) {
                     enqueue_removal = true;
-                    removed_light.red = 0;
-
-                    const light_to_subtract = neighbor_light_opacity.red + 1;
-                    const max_light = @max(neighbor_light.red, light.red);
-                    next_light.red = max_light -| light_to_subtract;
-                } else if (neighbor_light.red > light.red) {
+                    light_set_after_removal.red = 0;
+                    light_added_to_removal_queue.red -|= neighbor_light_opacity.red +| 1;
+                } else if (neighbor_light.red >= node_light.red and node_light.red > 0) {
                     enqueue_addition = true;
                 }
 
-                if (neighbor_light.green > 0 and neighbor_light.green <= light.green) {
+                if (neighbor_light.green > 0 and neighbor_light.green < node_light.green) {
                     enqueue_removal = true;
-                    removed_light.green = 0;
-
-                    const light_to_subtract = neighbor_light_opacity.green + 1;
-                    const max_light = @max(neighbor_light.green, light.green);
-                    next_light.green = max_light -| light_to_subtract;
-                } else if (neighbor_light.green > light.green) {
+                    light_set_after_removal.green = 0;
+                    light_added_to_removal_queue.green -|= neighbor_light_opacity.green +| 1;
+                } else if (neighbor_light.green >= node_light.green and node_light.green > 0) {
                     enqueue_addition = true;
                 }
 
-                if (neighbor_light.blue > 0 and neighbor_light.blue <= light.blue) {
+                if (neighbor_light.blue > 0 and neighbor_light.blue < node_light.blue) {
                     enqueue_removal = true;
-                    removed_light.blue = 0;
-
-                    const light_to_subtract = neighbor_light_opacity.blue + 1;
-                    const max_light = @max(neighbor_light.blue, light.blue);
-                    next_light.blue = max_light -| light_to_subtract;
-                } else if (neighbor_light.blue > light.blue) {
+                    light_set_after_removal.blue = 0;
+                    light_added_to_removal_queue.blue -|= neighbor_light_opacity.blue +| 1;
+                } else if (neighbor_light.blue >= node_light.blue and node_light.blue > 0) {
                     enqueue_addition = true;
                 }
 
-                if (neighbor_light.indirect > 0 and neighbor_light.indirect <= light.indirect) {
+                if (neighbor_light.indirect > 0 and neighbor_light.indirect < node_light.indirect) {
                     enqueue_removal = true;
-                    removed_light.indirect = 0;
-
-                    const light_to_subtract = neighbor_light_opacity.indirect + 1;
-                    const max_light = @max(neighbor_light.indirect, light.indirect);
-                    next_light.indirect = max_light -| light_to_subtract;
-                } else if (neighbor_light.indirect > light.indirect) {
+                    light_set_after_removal.indirect = 0;
+                    light_added_to_removal_queue.indirect -|= neighbor_light_opacity.indirect +| 1;
+                } else if (neighbor_light.indirect >= node_light.indirect and node_light.indirect > 0) {
                     enqueue_addition = true;
                 }
 
                 if (enqueue_removal) {
                     try neighbor_chunk.light_removal_queue.writeItem(.{
                         .pos = neighbor_world_pos,
-                        .light = next_light,
+                        .light = light_added_to_removal_queue,
                     });
 
-                    neighbor_chunk.setLight(neighbor_local_pos, removed_light);
+                    neighbor_chunk.setLight(neighbor_local_pos, light_set_after_removal);
 
                     if (is_neighbor_chunk) try self.chunks_which_need_to_remove_lights.enqueue(gpa, neighbor_chunk_pos);
                 }

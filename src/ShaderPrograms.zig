@@ -28,12 +28,12 @@ pub fn init(gpa: std.mem.Allocator, raycast_result: World.RaycastResult, screen:
     selected_block.label("Selected Block Shader Program");
 
     const selected_side = try ShaderProgram.init(gpa, assets.vertexShaderPath("selected_side"), assets.fragmentShaderPath("selected_side"));
-    selected_side.label("Selected Side Shader Program");
+    selected_side.label("Selected Dir Shader Program");
 
-    if (raycast_result.side != .out_of_bounds and raycast_result.side != .inside) {
+    if (raycast_result.dir != .out_of_bounds and raycast_result.dir != .inside) {
         if (raycast_result.block) |block| {
-            const face_idx = block.kind.getModelIdx() + raycast_result.side.idx();
-            selected_side.setUniform1ui("uFaceIdx", @intCast(face_idx));
+            const dir_idx = block.kind.getModelIdx() + raycast_result.dir.idx();
+            selected_side.setUniform1ui("uFaceIdx", @intCast(dir_idx));
         }
     }
 

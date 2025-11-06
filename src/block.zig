@@ -1,5 +1,5 @@
 const std = @import("std");
-const Side = @import("side.zig").Side;
+const Dir = @import("dir.zig").Dir;
 const Light = @import("light.zig").Light;
 const Vec3f = @import("vec3f.zig").Vec3f;
 const World = @import("World.zig");
@@ -230,7 +230,8 @@ pub const BlockLayer = enum {
     glass_stained,
     glass,
 
-    pub const len = std.enums.values(BlockLayer).len;
+    pub const values = std.enums.values(BlockLayer);
+    pub const len = values.len;
 
     pub inline fn idx(self: BlockLayer) usize {
         return @intFromEnum(self);
@@ -268,8 +269,8 @@ pub const BlockTextureScheme = struct {
     pub fn grass(top: BlockTextureKind, bottom: BlockTextureKind, sides: BlockTextureKind) BlockTextureScheme {
         var faces: [6]BlockTextureKind = @splat(sides);
 
-        faces[Side.top.idx()] = top;
-        faces[Side.bottom.idx()] = bottom;
+        faces[Dir.top.idx()] = top;
+        faces[Dir.bottom.idx()] = bottom;
 
         return .{ .faces = faces };
     }
@@ -374,7 +375,7 @@ pub const BlockModel = struct {
     const square = expr: {
         var faces: [6][]const PerVertexData = undefined;
 
-        faces[Side.west.idx()] = &.{
+        faces[Dir.west.idx()] = &.{
             .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 0 },
             .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 0 },
             .{ .x = 0, .y = 0, .z = 0, .u = 0, .v = 1 },
@@ -383,7 +384,7 @@ pub const BlockModel = struct {
             .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 0 },
         };
 
-        faces[Side.east.idx()] = &.{
+        faces[Dir.east.idx()] = &.{
             .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 1 },
             .{ .x = 1, .y = 1, .z = 0, .u = 1, .v = 0 },
             .{ .x = 1, .y = 1, .z = 1, .u = 0, .v = 0 },
@@ -392,7 +393,7 @@ pub const BlockModel = struct {
             .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 1 },
         };
 
-        faces[Side.bottom.idx()] = &.{
+        faces[Dir.bottom.idx()] = &.{
             .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
             .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 0 },
             .{ .x = 1, .y = 0, .z = 1, .u = 0, .v = 0 },
@@ -401,7 +402,7 @@ pub const BlockModel = struct {
             .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
         };
 
-        faces[Side.top.idx()] = &.{
+        faces[Dir.top.idx()] = &.{
             .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
             .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
             .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 1 },
@@ -410,7 +411,7 @@ pub const BlockModel = struct {
             .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
         };
 
-        faces[Side.north.idx()] = &.{
+        faces[Dir.north.idx()] = &.{
             .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
             .{ .x = 0, .y = 1, .z = 0, .u = 1, .v = 0 },
             .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
@@ -419,7 +420,7 @@ pub const BlockModel = struct {
             .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
         };
 
-        faces[Side.south.idx()] = &.{
+        faces[Dir.south.idx()] = &.{
             .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
             .{ .x = 0, .y = 1, .z = 1, .u = 0, .v = 0 },
             .{ .x = 0, .y = 0, .z = 1, .u = 0, .v = 1 },

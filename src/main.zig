@@ -17,7 +17,7 @@ const Textures = @import("Textures.zig");
 const ShaderStorageBuffers = @import("ShaderStorageBuffers.zig");
 const Framebuffer = @import("Framebuffer.zig");
 const TextManager = @import("TextManager.zig");
-const Side = @import("side.zig").Side;
+const Dir = @import("dir.zig").Dir;
 const Light = @import("light.zig").Light;
 
 const c = @import("vma");
@@ -335,12 +335,12 @@ const Game = struct {
             const selected_block_pos = self.selected_block.pos.toVec3f();
             self.uniform_buffer.uploadSelectedBlockPos(selected_block_pos);
 
-            const selected_side = self.selected_block.side;
+            const selected_side = self.selected_block.dir;
 
             if (selected_side != .out_of_bounds and selected_side != .inside) {
                 if (self.selected_block.block) |block| {
-                    const face_idx = (block.kind.getModelIdx() * 36) + (selected_side.idx() * 6);
-                    self.shader_programs.selected_side.setUniform1ui("uFaceIdx", @intCast(face_idx));
+                    const dir_idx = (block.kind.getModelIdx() * 36) + (selected_side.idx() * 6);
+                    self.shader_programs.selected_side.setUniform1ui("uFaceIdx", @intCast(dir_idx));
                 }
             }
 
@@ -350,35 +350,20 @@ const Game = struct {
                 .destroy => if (self.selected_block.block) |block| {
                     if (block.kind != .air) {
                         const world_pos = self.selected_block.pos;
-                        const chunk_pos = world_pos.toChunkPos();
-                        const local_pos = world_pos.toLocalPos();
-                        const neighbor_chunks = self.world.getNeighborChunks(chunk_pos);
 
                         try self.world.setBlock(gpa, world_pos, .initNone(.air));
-                        self.world.onBlockDestroy(gpa, block, world_pos);
-
-                        inline for (Side.values) |side| {
-                            const face_idx = side.idx();
-
-                            if (World.NeighborChunks.inEdge[face_idx](local_pos)) {
-                                if (neighbor_chunks.chunks[face_idx]) |neighbor_chunk| {
-                                    try self.world.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_chunk.pos);
-                                }
-                            }
-                        }
-
-                        try self.world.chunks_which_need_to_regenerate_meshes.enqueue(gpa, chunk_pos);
+                        try self.world.onBlockDestroy(gpa, block, world_pos);
                     }
                 },
-                .place => inner: {
-                    const world_pos = self.selected_block.pos.add(World.Pos.Offsets[self.selected_block.side.idx()]);
-                    const chunk_pos = world_pos.toChunkPos();
+                .place => skip: {
+                    if (selected_side == .out_of_bounds or selected_side == .inside) break :skip;
+
+                    const world_pos = self.selected_block.pos.add(World.Pos.OFFSETS[selected_side.idx()]);
+                    if (self.world.getChunkOrNull(world_pos.toChunkPos()) == null) break :skip;
 
                     const block = self.inventory[self.selected_slot];
-                    self.world.setBlock(gpa, world_pos, block) catch break :inner;
-                    self.world.onBlockPlace(gpa, block, world_pos);
-
-                    try self.world.chunks_which_need_to_regenerate_meshes.enqueue(gpa, chunk_pos);
+                    try self.world.setBlock(gpa, world_pos, block);
+                    try self.world.onBlockPlace(gpa, block, world_pos);
                 },
                 else => {},
             }
@@ -389,20 +374,20 @@ const Game = struct {
 
     fn appendRaycastText(self: *Game, gpa: std.mem.Allocator, original_line: i32) !i32 {
         const world_pos = self.selected_block.pos;
-        const side = self.selected_block.side;
+        const dir = self.selected_block.dir;
 
         var line = original_line;
 
-        switch (side) {
+        switch (dir) {
             else => {
                 try self.text_manager.append(gpa, .{
                     .pixel_x = 0,
                     .pixel_y = line * 6,
-                    .text = try std.fmt.allocPrint(gpa, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
+                    .text = try std.fmt.allocPrint(gpa, "looking at: [x: {d} y: {d} z: {d}] on dir: {s}", .{
                         world_pos.x,
                         world_pos.y,
                         world_pos.z,
-                        @tagName(side),
+                        @tagName(dir),
                     }),
                 });
                 line += 1;
@@ -416,7 +401,7 @@ const Game = struct {
                 });
                 line += 1;
 
-                if (self.world.getLight(world_pos.add(World.Pos.Offsets[side.idx()]))) |light| {
+                if (self.world.getLight(world_pos.add(World.Pos.OFFSETS[dir.idx()]))) |light| {
                     try self.text_manager.append(gpa, .{
                         .pixel_x = 0,
                         .pixel_y = line * 6,
@@ -444,11 +429,11 @@ const Game = struct {
                 try self.text_manager.append(gpa, .{
                     .pixel_x = 0,
                     .pixel_y = line * 6,
-                    .text = try std.fmt.allocPrint(gpa, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
+                    .text = try std.fmt.allocPrint(gpa, "looking at: [x: {d} y: {d} z: {d}] on dir: {s}", .{
                         world_pos.x,
                         world_pos.y,
                         world_pos.z,
-                        @tagName(side),
+                        @tagName(dir),
                     }),
                 });
                 line += 1;
@@ -479,11 +464,11 @@ const Game = struct {
                 try self.text_manager.append(gpa, .{
                     .pixel_x = 0,
                     .pixel_y = line * 6,
-                    .text = try std.fmt.allocPrint(gpa, "looking at: [x: {d} y: {d} z: {d}] on side: {s}", .{
+                    .text = try std.fmt.allocPrint(gpa, "looking at: [x: {d} y: {d} z: {d}] on dir: {s}", .{
                         world_pos.x,
                         world_pos.y,
                         world_pos.z,
-                        @tagName(side),
+                        @tagName(dir),
                     }),
                 });
                 line += 1;
@@ -561,6 +546,8 @@ const Game = struct {
         var upload_mesh = false;
 
         while (self.world.chunks_which_need_to_regenerate_meshes.dequeue()) |chunk_pos| {
+            if (self.world.getChunkOrNull(chunk_pos) == null) continue;
+
             upload_mesh = true;
 
             self.world_mesh.invalidateChunkMesh(chunk_pos);
@@ -585,14 +572,26 @@ const Game = struct {
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         self.shader_programs.chunks.bind();
-        for (&self.world_mesh.layers) |*world_mesh_layer| {
-            if (world_mesh_layer.command.data.items.len == 0) continue;
+        inline for (BlockLayer.values) |block_layer| skip: {
+            if (block_layer == .water) {
+                gl.Disable(gl.CULL_FACE);
+            }
+
+            const world_mesh_layer = &self.world_mesh.layers[block_layer.idx()];
+            if (world_mesh_layer.command.data.items.len == 0) {
+                gl.Enable(gl.CULL_FACE);
+                break :skip;
+            }
 
             world_mesh_layer.mesh.ssbo.bind(1);
             world_mesh_layer.chunk_mesh_pos.ssbo.bind(2);
             world_mesh_layer.command.ssbo.bindAsIndirectBuffer();
 
             gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(world_mesh_layer.command.data.items.len), 0);
+
+            if (block_layer == .water) {
+                gl.Enable(gl.CULL_FACE);
+            }
         }
 
         // self.shader_programs.chunks_bb.bind();
@@ -632,7 +631,7 @@ const Game = struct {
             }
         }
 
-        if (self.selected_block.side != .out_of_bounds and self.selected_block.side != .inside) {
+        if (self.selected_block.dir != .out_of_bounds and self.selected_block.dir != .inside) {
             if (self.selected_block.block) |_| {
                 self.shader_programs.selected_side.bind();
                 {

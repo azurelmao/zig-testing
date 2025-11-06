@@ -38,7 +38,7 @@ pub const Pos = struct {
     y: i11,
     z: i11,
 
-    pub const Offsets = [6]Pos{
+    pub const OFFSETS = [6]Pos{
         .{ .x = -1, .y = 0, .z = 0 },
         .{ .x = 1, .y = 0, .z = 0 },
         .{ .x = 0, .y = -1, .z = 0 },
