@@ -4,7 +4,7 @@ const Light = @import("light.zig").Light;
 const Vec3f = @import("vec3f.zig").Vec3f;
 const World = @import("World.zig");
 
-pub const BlockKind = enum {
+pub const BlockKind = enum(u16) {
     air,
     stone,
     grass,
@@ -17,7 +17,7 @@ pub const BlockKind = enum {
     glass_tinted,
     glass,
     chest,
-    redstone_lamp,
+    lamp,
 
     pub inline fn idx(self: BlockKind) usize {
         return @intFromEnum(self);
@@ -26,7 +26,7 @@ pub const BlockKind = enum {
     pub fn blockDataKind(self: BlockKind) BlockDataKind {
         return switch (self) {
             .chest => .extended,
-            .redstone_lamp => .redstone_lamp,
+            .lamp => .lamp,
             else => .none,
         };
     }
@@ -109,7 +109,7 @@ pub const BlockKind = enum {
             .glass_tinted => .allSides(.glass_tinted),
             .glass => .allSides(.glass),
             .chest => .allSides(.chest),
-            .redstone_lamp => .allSides(.redstone_lamp_active),
+            .lamp => .allSides(.lamp),
             else => std.debug.panic("Block kind \"{s}\" is missing a texture scheme", .{@tagName(self)}),
         };
     }
@@ -141,21 +141,25 @@ pub const BlockExtendedData = union(BlockExtendedDataKind) {
 const BlockDataKind = enum {
     none,
     extended,
-    redstone_lamp,
+    lamp,
 };
 
 pub const BlockData = packed union {
     none: void,
     /// Index to the extended data store
-    extended: usize,
-    redstone_lamp: RedstoneLampData,
+    extended: u48,
+    lamp: LampData,
+
+    comptime {
+        std.debug.assert(@bitSizeOf(BlockData) == 48);
+    }
 };
 
-const RedstoneLampData = packed struct {
+const LampData = packed struct(u16) {
     light: Light,
 };
 
-pub const Block = struct {
+pub const Block = packed struct(u64) {
     kind: BlockKind,
     data: BlockData,
 
@@ -252,7 +256,7 @@ pub const BlockTextureKind = enum(u11) {
     glass,
     glass_tinted,
     chest,
-    redstone_lamp_active,
+    lamp,
 
     pub inline fn idx(self: BlockTextureKind) u11 {
         return @intFromEnum(self);

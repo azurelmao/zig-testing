@@ -18,7 +18,7 @@ pub fn DedupQueue(T: type) type {
         }
 
         pub fn count(self: Self) usize {
-            return self.out.count();
+            return self.in.count();
         }
 
         pub fn enqueue(self: *Self, gpa: std.mem.Allocator, val: T) !void {

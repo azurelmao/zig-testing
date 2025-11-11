@@ -19,6 +19,8 @@ const Framebuffer = @import("Framebuffer.zig");
 const TextManager = @import("TextManager.zig");
 const Dir = @import("dir.zig").Dir;
 const Light = @import("light.zig").Light;
+const ShaderStorageBufferWithArrayList = @import("shader_storage_buffer.zig").ShaderStorageBufferWithArrayList;
+const Vec3f = @import("vec3f.zig").Vec3f;
 
 const c = @import("vma");
 
@@ -31,6 +33,13 @@ const Settings = struct {
     mouse_speed: gl.float = 10.0,
     movement_speed: gl.float = 16.0,
     chunk_borders: bool = true,
+    light_addition_nodes: bool = true,
+    light_removal_nodes: bool = true,
+};
+
+pub const Debug = struct {
+    addition_nodes: ShaderStorageBufferWithArrayList(Vec3f),
+    removal_nodes: ShaderStorageBufferWithArrayList(Vec3f),
 };
 
 const Game = struct {
@@ -53,6 +62,7 @@ const Game = struct {
     selected_block: World.RaycastResult,
     inventory: [7]Block,
     selected_slot: u3,
+    debug: Debug,
 
     fn init(gpa: std.mem.Allocator) !Game {
         const settings: Settings = .{};
@@ -86,14 +96,6 @@ const Game = struct {
 
         var inventory: [7]Block = undefined;
         for (0..inventory.len) |idx| {
-            // R 0 0 red
-            // 0 G 0 green
-            // 0 0 B blue
-            // R G 0 yellow
-            // R 0 B magenta
-            // 0 G B cyan
-            // R G B white
-
             const light_idx: u4 = @intCast(idx + 1);
             const light: Light = .{
                 .red = (light_idx & 0b1) * 15,
@@ -102,7 +104,7 @@ const Game = struct {
                 .indirect = 0,
             };
 
-            inventory[idx] = .init(.redstone_lamp, .{ .redstone_lamp = .{ .light = light } });
+            inventory[idx] = .init(.lamp, .{ .lamp = .{ .light = light } });
         }
 
         return .{
@@ -122,6 +124,10 @@ const Game = struct {
             .selected_block = selected_block,
             .inventory = inventory,
             .selected_slot = 0,
+            .debug = .{
+                .addition_nodes = try .init(gpa, 10_000, gl.DYNAMIC_STORAGE_BIT),
+                .removal_nodes = try .init(gpa, 10_000, gl.DYNAMIC_STORAGE_BIT),
+            },
         };
     }
 
@@ -227,6 +233,8 @@ const Game = struct {
             if (new_key_action.action == .press) switch (new_key_action.key) {
                 .escape => self.window.setShouldClose(true),
                 .F4 => self.settings.chunk_borders = !self.settings.chunk_borders,
+                .F3 => self.settings.light_removal_nodes = !self.settings.light_removal_nodes,
+                .F2 => self.settings.light_addition_nodes = !self.settings.light_addition_nodes,
                 .one => self.selected_slot = 0,
                 .two => self.selected_slot = 1,
                 .three => self.selected_slot = 2,
@@ -352,7 +360,18 @@ const Game = struct {
                         const world_pos = self.selected_block.pos;
 
                         try self.world.setBlock(gpa, world_pos, .initNone(.air));
-                        try self.world.onBlockDestroy(gpa, block, world_pos);
+
+                        switch (block.kind) {
+                            .lamp => {
+                                for (Dir.indices) |dir_idx| {
+                                    const neighbor_world_pos = world_pos.add(World.Pos.OFFSETS[dir_idx]);
+                                    try self.world.removeLight(gpa, neighbor_world_pos);
+                                }
+                            },
+                            else => {},
+                        }
+
+                        try self.world.fillLightFromNeighbors(gpa, world_pos);
                     }
                 },
                 .place => skip: {
@@ -363,7 +382,21 @@ const Game = struct {
 
                     const block = self.inventory[self.selected_slot];
                     try self.world.setBlock(gpa, world_pos, block);
-                    try self.world.onBlockPlace(gpa, block, world_pos);
+
+                    try self.world.removeLight(gpa, world_pos);
+
+                    switch (block.kind) {
+                        .lamp => {
+                            for (Dir.indices) |dir_idx| {
+                                const neighbor_world_pos = world_pos.add(World.Pos.OFFSETS[dir_idx]);
+                                self.world.addLight(gpa, neighbor_world_pos, block.data.lamp.light) catch |err| switch (err) {
+                                    error.ChunkNotFound => continue,
+                                    else => return err,
+                                };
+                            }
+                        },
+                        else => {},
+                    }
                 },
                 else => {},
             }
@@ -541,10 +574,34 @@ const Game = struct {
     }
 
     fn processChanges(self: *Game, gpa: std.mem.Allocator) !void {
-        try self.world.propagateLights(gpa);
+        const upload_nodes = self.world.chunks_which_need_to_remove_lights.count() > 0;
+
+        if (upload_nodes) {
+            self.debug.addition_nodes.data.clearRetainingCapacity();
+            self.debug.removal_nodes.data.clearRetainingCapacity();
+        }
+
+        try self.world.propagateLights(gpa, &self.debug);
+
+        if (upload_nodes) {
+            self.debug.addition_nodes.ssbo.upload(self.debug.addition_nodes.data.items) catch |err| switch (err) {
+                error.DataTooLarge => {
+                    self.debug.addition_nodes.ssbo.resize(self.debug.addition_nodes.data.items.len, 0);
+                    self.debug.addition_nodes.ssbo.upload(self.debug.addition_nodes.data.items) catch unreachable;
+                },
+                else => unreachable,
+            };
+
+            self.debug.removal_nodes.ssbo.upload(self.debug.removal_nodes.data.items) catch |err| switch (err) {
+                error.DataTooLarge => {
+                    self.debug.removal_nodes.ssbo.resize(self.debug.removal_nodes.data.items.len, 0);
+                    self.debug.removal_nodes.ssbo.upload(self.debug.removal_nodes.data.items) catch unreachable;
+                },
+                else => unreachable,
+            };
+        }
 
         var upload_mesh = false;
-
         while (self.world.chunks_which_need_to_regenerate_meshes.dequeue()) |chunk_pos| {
             if (self.world.getChunkOrNull(chunk_pos) == null) continue;
 
@@ -579,7 +636,9 @@ const Game = struct {
 
             const world_mesh_layer = &self.world_mesh.layers[block_layer.idx()];
             if (world_mesh_layer.command.data.items.len == 0) {
-                gl.Enable(gl.CULL_FACE);
+                if (block_layer == .water) {
+                    gl.Enable(gl.CULL_FACE);
+                }
                 break :skip;
             }
 
@@ -646,6 +705,35 @@ const Game = struct {
             }
         }
 
+        if (self.settings.light_removal_nodes or self.settings.light_addition_nodes) {
+            self.shader_programs.debug_nodes.bind();
+            {
+                gl.Enable(gl.POLYGON_OFFSET_LINE);
+                defer gl.Disable(gl.POLYGON_OFFSET_LINE);
+
+                gl.PolygonOffset(-2.0, 1.0);
+                defer gl.PolygonOffset(0.0, 0.0);
+
+                gl.Enable(gl.LINE_SMOOTH);
+                defer gl.Disable(gl.LINE_SMOOTH);
+
+                gl.DepthFunc(gl.LEQUAL);
+                defer gl.DepthFunc(gl.LESS);
+
+                if (self.settings.light_removal_nodes) {
+                    self.shader_programs.debug_nodes.setUniform3f("uColor", 1, 0, 0);
+                    self.debug.removal_nodes.ssbo.bind(15);
+                    gl.DrawArraysInstanced(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len, @intCast(self.debug.removal_nodes.data.items.len));
+                }
+
+                if (self.settings.light_addition_nodes) {
+                    self.shader_programs.debug_nodes.setUniform3f("uColor", 0, 0, 1);
+                    self.debug.addition_nodes.ssbo.bind(15);
+                    gl.DrawArraysInstanced(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len, @intCast(self.debug.addition_nodes.data.items.len));
+                }
+            }
+        }
+
         self.shader_programs.selected_block.bind();
         {
             gl.Enable(gl.POLYGON_OFFSET_LINE);
@@ -696,7 +784,9 @@ pub fn main() !void {
     //     }
     // }
 
-    try game.world.propagateLights(gpa);
+    _ = try game.world.propagateLights(gpa, &game.debug);
+    game.debug.addition_nodes.data.clearRetainingCapacity();
+    game.debug.removal_nodes.data.clearRetainingCapacity();
 
     try game.world_mesh.generateMesh(gpa, &game.world);
     try game.world_mesh.generateVisibleChunkMeshes(gpa, &game.world, &game.camera);

@@ -13,6 +13,7 @@ selected_block: ShaderProgram,
 selected_side: ShaderProgram,
 crosshair: ShaderProgram,
 text: ShaderProgram,
+debug_nodes: ShaderProgram,
 
 pub fn init(gpa: std.mem.Allocator, raycast_result: World.RaycastResult, screen: Screen) !ShaderPrograms {
     const chunks = try ShaderProgram.init(gpa, assets.vertexShaderPath("chunks"), assets.fragmentShaderPath("chunks"));
@@ -45,6 +46,9 @@ pub fn init(gpa: std.mem.Allocator, raycast_result: World.RaycastResult, screen:
     const text = try ShaderProgram.init(gpa, assets.vertexShaderPath("text"), assets.fragmentShaderPath("text"));
     text.label("Text Shader Program");
 
+    const debug_nodes = try ShaderProgram.init(gpa, assets.vertexShaderPath("debug_nodes"), assets.fragmentShaderPath("debug_nodes"));
+    debug_nodes.label("Debug Nodes Shader Program");
+
     return .{
         .chunks = chunks,
         .chunks_bb = chunks_bb,
@@ -53,5 +57,6 @@ pub fn init(gpa: std.mem.Allocator, raycast_result: World.RaycastResult, screen:
         .selected_side = selected_side,
         .crosshair = crosshair,
         .text = text,
+        .debug_nodes = debug_nodes,
     };
 }
