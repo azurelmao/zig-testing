@@ -182,8 +182,6 @@ pub fn placeBlock(self: *World, gpa: std.mem.Allocator, world_pos: WorldPos, blo
 pub fn breakBlock(self: *World, gpa: std.mem.Allocator, world_pos: WorldPos, block: Block) !void {
     try self.setBlock(gpa, world_pos, .initNone(.air));
 
-    _ = try self.removeLight(world_pos);
-
     switch (block.kind) {
         .lamp => {
             for ([_]u3{Dir.top.idx()}) |dir_idx| {
@@ -193,6 +191,8 @@ pub fn breakBlock(self: *World, gpa: std.mem.Allocator, world_pos: WorldPos, blo
         },
         else => {},
     }
+
+    _ = try self.removeLight(world_pos);
 
     try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, world_pos.toChunkPos());
 }
