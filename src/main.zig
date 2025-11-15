@@ -29,12 +29,13 @@ pub const std_options: std.Options = .{
 };
 
 const Settings = struct {
-    ui_scale: gl.sizei = 2,
+    ui_scale: gl.sizei = 3,
     mouse_speed: gl.float = 10.0,
     movement_speed: gl.float = 16.0,
     chunk_borders: bool = true,
     light_addition_nodes: bool = true,
     light_removal_nodes: bool = true,
+    relative_selector: bool = false,
 };
 
 pub const Debug = struct {
@@ -60,6 +61,7 @@ const Game = struct {
     world: World,
     world_mesh: WorldMesh,
     selected_block: World.RaycastResult,
+    relative_selector_world_pos: World.Pos,
     inventory: [7]Block,
     selected_slot: u3,
     debug: Debug,
@@ -69,7 +71,7 @@ const Game = struct {
         const screen: Screen = .{};
         const camera: Camera = .init(.new(0, 0, 0), 0, 0, screen.aspect_ratio);
 
-        const world: World = try .init(30);
+        const world: World = try .init(gpa, 30);
         const selected_block = world.raycast(camera.position, camera.direction);
 
         try initGLFW();
@@ -81,7 +83,7 @@ const Game = struct {
 
         try initGL();
         var uniform_buffer: UniformBuffer = .init(0);
-        uniform_buffer.uploadSelectedBlockPos(selected_block.pos.toVec3f());
+        uniform_buffer.uploadSelectedBlockPos(selected_block.world_pos.toVec3f());
         uniform_buffer.uploadViewProjectionMatrix(camera.view_projection_matrix);
 
         const shader_programs: ShaderPrograms = try .init(gpa, selected_block, screen);
@@ -122,6 +124,7 @@ const Game = struct {
             .world = world,
             .world_mesh = world_mesh,
             .selected_block = selected_block,
+            .relative_selector_world_pos = .{ .x = 0, .y = 0, .z = 0 },
             .inventory = inventory,
             .selected_slot = 0,
             .debug = .{
@@ -228,13 +231,17 @@ const Game = struct {
 
         var calc_view_matrix = false;
         var calc_projection_matrix = false;
+        var selector_changed = false;
 
         if (self.callback_user_data.new_key_action) |new_key_action| {
             if (new_key_action.action == .press) switch (new_key_action.key) {
                 .escape => self.window.setShouldClose(true),
+
                 .F4 => self.settings.chunk_borders = !self.settings.chunk_borders,
                 .F3 => self.settings.light_removal_nodes = !self.settings.light_removal_nodes,
                 .F2 => self.settings.light_addition_nodes = !self.settings.light_addition_nodes,
+                .F1 => self.settings.relative_selector = !self.settings.relative_selector,
+
                 .one => self.selected_slot = 0,
                 .two => self.selected_slot = 1,
                 .three => self.selected_slot = 2,
@@ -242,6 +249,32 @@ const Game = struct {
                 .five => self.selected_slot = 4,
                 .six => self.selected_slot = 5,
                 .seven => self.selected_slot = 6,
+
+                .kp_8 => {
+                    self.relative_selector_world_pos.x +|= 1;
+                    selector_changed = true;
+                },
+                .kp_2 => {
+                    self.relative_selector_world_pos.x -|= 1;
+                    selector_changed = true;
+                },
+                .kp_6 => {
+                    self.relative_selector_world_pos.z +|= 1;
+                    selector_changed = true;
+                },
+                .kp_4 => {
+                    self.relative_selector_world_pos.z -|= 1;
+                    selector_changed = true;
+                },
+                .kp_9 => {
+                    self.relative_selector_world_pos.y +|= 1;
+                    selector_changed = true;
+                },
+                .kp_3 => {
+                    self.relative_selector_world_pos.y -|= 1;
+                    selector_changed = true;
+                },
+
                 else => {},
             };
 
@@ -337,76 +370,59 @@ const Game = struct {
         if (calc_view_projection_matrix) {
             self.camera.calcViewProjectionMatrix();
             self.camera.calcFrustumPlanes();
+            self.uniform_buffer.uploadViewProjectionMatrix(self.camera.view_projection_matrix);
 
             self.selected_block = self.world.raycast(self.camera.position, self.camera.direction);
-
-            const selected_block_pos = self.selected_block.pos.toVec3f();
-            self.uniform_buffer.uploadSelectedBlockPos(selected_block_pos);
-
-            const selected_side = self.selected_block.dir;
-
-            if (selected_side != .out_of_bounds and selected_side != .inside) {
-                if (self.selected_block.block) |block| {
-                    const dir_idx = (block.kind.getModelIdx() * 36) + (selected_side.idx() * 6);
-                    self.shader_programs.selected_side.setUniform1ui("uFaceIdx", @intCast(dir_idx));
-                }
-            }
-
-            self.uniform_buffer.uploadViewProjectionMatrix(self.camera.view_projection_matrix);
 
             switch (action) {
                 .destroy => if (self.selected_block.block) |block| {
                     if (block.kind != .air) {
-                        const world_pos = self.selected_block.pos;
+                        const world_pos = self.selected_block.world_pos;
 
-                        try self.world.setBlock(gpa, world_pos, .initNone(.air));
-
-                        switch (block.kind) {
-                            .lamp => {
-                                for (Dir.indices) |dir_idx| {
-                                    const neighbor_world_pos = world_pos.add(World.Pos.OFFSETS[dir_idx]);
-                                    try self.world.removeLight(gpa, neighbor_world_pos);
-                                }
-                            },
-                            else => {},
-                        }
-
-                        try self.world.fillLightFromNeighbors(gpa, world_pos);
+                        try self.world.breakBlock(gpa, world_pos, block);
                     }
                 },
                 .place => skip: {
-                    if (selected_side == .out_of_bounds or selected_side == .inside) break :skip;
+                    const selected_dir = self.selected_block.dir;
 
-                    const world_pos = self.selected_block.pos.add(World.Pos.OFFSETS[selected_side.idx()]);
+                    if (selected_dir == .out_of_bounds or selected_dir == .inside) break :skip;
+
+                    const world_pos = self.selected_block.world_pos.add(World.Pos.OFFSETS[selected_dir.idx()]);
                     if (self.world.getChunkOrNull(world_pos.toChunkPos()) == null) break :skip;
 
                     const block = self.inventory[self.selected_slot];
-                    try self.world.setBlock(gpa, world_pos, block);
-
-                    try self.world.removeLight(gpa, world_pos);
-
-                    switch (block.kind) {
-                        .lamp => {
-                            for (Dir.indices) |dir_idx| {
-                                const neighbor_world_pos = world_pos.add(World.Pos.OFFSETS[dir_idx]);
-                                self.world.addLight(gpa, neighbor_world_pos, block.data.lamp.light) catch |err| switch (err) {
-                                    error.ChunkNotFound => continue,
-                                    else => return err,
-                                };
-                            }
-                        },
-                        else => {},
-                    }
+                    try self.world.placeBlock(gpa, world_pos, block);
                 },
                 else => {},
             }
 
+            if (action != .none) {
+                self.selected_block = self.world.raycast(self.camera.position, self.camera.direction);
+            }
+
+            const selected_block_pos = self.selected_block.world_pos.toVec3f();
+            self.uniform_buffer.uploadSelectedBlockPos(selected_block_pos);
+
+            const selected_dir = self.selected_block.dir;
+
+            if (selected_dir != .out_of_bounds and selected_dir != .inside) {
+                if (self.selected_block.block) |block| {
+                    const dir_idx = (block.kind.getModelIdx() * 36) + (selected_dir.idx() * 6);
+                    self.shader_programs.selected_side.setUniform1ui("uFaceIdx", @intCast(dir_idx));
+                }
+            }
+
             self.camera.changed = true;
         }
+
+        // if (selector_changed) {
+        const selector_pos = self.selected_block.world_pos.add(self.relative_selector_world_pos).toVec3f();
+        self.uniform_buffer.uploadSelectorPos(selector_pos);
+        // }
     }
 
     fn appendRaycastText(self: *Game, gpa: std.mem.Allocator, original_line: i32) !i32 {
-        const world_pos = self.selected_block.pos;
+        const world_pos = self.selected_block.world_pos;
         const dir = self.selected_block.dir;
 
         var line = original_line;
@@ -474,9 +490,7 @@ const Game = struct {
                 try self.text_manager.append(gpa, .{
                     .pixel_x = 0,
                     .pixel_y = line * 6,
-                    .text = try std.fmt.allocPrint(gpa, "block: {s}", .{
-                        if (self.selected_block.block) |block| @tagName(block.kind) else "null",
-                    }),
+                    .text = try std.fmt.allocPrint(gpa, "block: {s}", .{@tagName(self.selected_block.block.?.kind)}),
                 });
                 line += 1;
 
@@ -506,6 +520,50 @@ const Game = struct {
                 });
                 line += 1;
             },
+        }
+
+        return line;
+    }
+
+    fn appendRelativeSelectorText(self: *Game, gpa: std.mem.Allocator, original_line: i32) !i32 {
+        const world_pos = self.selected_block.world_pos.add(self.relative_selector_world_pos);
+        var line = original_line;
+
+        const block_or_null = self.world.getBlockOrNull(world_pos);
+        const light_or_null = self.world.getLightOrNull(world_pos);
+
+        try self.text_manager.append(gpa, .{
+            .pixel_x = 0,
+            .pixel_y = line * 6,
+            .text = try std.fmt.allocPrint(gpa, "selector at: [x: {d} y: {d} z: {d}]", .{
+                world_pos.x,
+                world_pos.y,
+                world_pos.z,
+            }),
+        });
+        line += 1;
+
+        if (block_or_null) |block| {
+            try self.text_manager.append(gpa, .{
+                .pixel_x = 0,
+                .pixel_y = line * 6,
+                .text = try std.fmt.allocPrint(gpa, "block: {s}", .{@tagName(block.kind)}),
+            });
+            line += 1;
+        }
+
+        if (light_or_null) |light| {
+            try self.text_manager.append(gpa, .{
+                .pixel_x = 0,
+                .pixel_y = line * 6,
+                .text = try std.fmt.allocPrint(gpa, "light: [r: {} g: {} b: {} i: {}]", .{
+                    light.red,
+                    light.green,
+                    light.blue,
+                    light.indirect,
+                }),
+            });
+            line += 1;
         }
 
         return line;
@@ -569,12 +627,23 @@ const Game = struct {
         });
         line += 1;
 
+        // make some space between raycast info
+        line += 1;
+
         line = try self.appendRaycastText(gpa, line);
+
+        if (self.settings.relative_selector) {
+            // make some space between relative selector info
+            line += 1;
+
+            line = try self.appendRelativeSelectorText(gpa, line);
+        }
+
         try self.text_manager.build(gpa, self.screen.window_width, self.screen.window_height, self.settings.ui_scale);
     }
 
     fn processChanges(self: *Game, gpa: std.mem.Allocator) !void {
-        const upload_nodes = self.world.chunks_which_need_to_remove_lights.count() > 0;
+        const upload_nodes = self.world.light_source_removal_queue.readableLength() > 0;
 
         if (upload_nodes) {
             self.debug.addition_nodes.data.clearRetainingCapacity();
@@ -751,6 +820,24 @@ const Game = struct {
             gl.DrawArrays(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len);
         }
 
+        if (self.settings.relative_selector) {
+            self.shader_programs.relative_selector.bind();
+
+            gl.Enable(gl.POLYGON_OFFSET_LINE);
+            defer gl.Disable(gl.POLYGON_OFFSET_LINE);
+
+            gl.PolygonOffset(-2.0, 1.0);
+            defer gl.PolygonOffset(0.0, 0.0);
+
+            gl.Enable(gl.LINE_SMOOTH);
+            defer gl.Disable(gl.LINE_SMOOTH);
+
+            gl.DepthFunc(gl.LEQUAL);
+            defer gl.DepthFunc(gl.LESS);
+
+            gl.DrawArrays(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len);
+        }
+
         self.shader_programs.crosshair.bind();
         gl.DrawArrays(gl.TRIANGLES, 0, 6);
 
@@ -784,9 +871,9 @@ pub fn main() !void {
     //     }
     // }
 
-    _ = try game.world.propagateLights(gpa, &game.debug);
-    game.debug.addition_nodes.data.clearRetainingCapacity();
+    try game.world.propagateLights(gpa, &game.debug);
     game.debug.removal_nodes.data.clearRetainingCapacity();
+    game.debug.addition_nodes.data.clearRetainingCapacity();
 
     try game.world_mesh.generateMesh(gpa, &game.world);
     try game.world_mesh.generateVisibleChunkMeshes(gpa, &game.world, &game.camera);

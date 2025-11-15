@@ -14,6 +14,7 @@ selected_side: ShaderProgram,
 crosshair: ShaderProgram,
 text: ShaderProgram,
 debug_nodes: ShaderProgram,
+relative_selector: ShaderProgram,
 
 pub fn init(gpa: std.mem.Allocator, raycast_result: World.RaycastResult, screen: Screen) !ShaderPrograms {
     const chunks = try ShaderProgram.init(gpa, assets.vertexShaderPath("chunks"), assets.fragmentShaderPath("chunks"));
@@ -40,7 +41,6 @@ pub fn init(gpa: std.mem.Allocator, raycast_result: World.RaycastResult, screen:
 
     const crosshair = try ShaderProgram.init(gpa, assets.vertexShaderPath("crosshair"), assets.fragmentShaderPath("crosshair"));
     crosshair.label("Crosshair Shader Program");
-
     crosshair.setUniform2f("uWindowSize", screen.window_width_f, screen.window_height_f);
 
     const text = try ShaderProgram.init(gpa, assets.vertexShaderPath("text"), assets.fragmentShaderPath("text"));
@@ -48,6 +48,9 @@ pub fn init(gpa: std.mem.Allocator, raycast_result: World.RaycastResult, screen:
 
     const debug_nodes = try ShaderProgram.init(gpa, assets.vertexShaderPath("debug_nodes"), assets.fragmentShaderPath("debug_nodes"));
     debug_nodes.label("Debug Nodes Shader Program");
+
+    const relative_selector = try ShaderProgram.init(gpa, assets.vertexShaderPath("relative_selector"), assets.fragmentShaderPath("relative_selector"));
+    relative_selector.label("Relative Selector Shader Program");
 
     return .{
         .chunks = chunks,
@@ -58,5 +61,6 @@ pub fn init(gpa: std.mem.Allocator, raycast_result: World.RaycastResult, screen:
         .crosshair = crosshair,
         .text = text,
         .debug_nodes = debug_nodes,
+        .relative_selector = relative_selector,
     };
 }

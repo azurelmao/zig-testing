@@ -9,6 +9,7 @@ handle: gl.uint,
 const Data = extern struct {
     view_projection_matrix: Matrix4x4f,
     selected_block_pos: Vec3f,
+    selector_pos: Vec3f,
 };
 
 pub fn init(index: gl.uint) UniformBuffer {
@@ -23,9 +24,13 @@ pub fn init(index: gl.uint) UniformBuffer {
 }
 
 pub fn uploadViewProjectionMatrix(self: UniformBuffer, view_projection_matrix: Matrix4x4f) void {
-    gl.NamedBufferSubData(self.handle, 0, @sizeOf(Matrix4x4f), @ptrCast(&view_projection_matrix));
+    gl.NamedBufferSubData(self.handle, @offsetOf(Data, "view_projection_matrix"), @sizeOf(Matrix4x4f), @ptrCast(&view_projection_matrix));
 }
 
 pub fn uploadSelectedBlockPos(self: UniformBuffer, selected_block_pos: Vec3f) void {
-    gl.NamedBufferSubData(self.handle, @sizeOf(Matrix4x4f), @sizeOf(Vec3f), @ptrCast(&selected_block_pos));
+    gl.NamedBufferSubData(self.handle, @offsetOf(Data, "selected_block_pos"), @sizeOf(Vec3f), @ptrCast(&selected_block_pos));
+}
+
+pub fn uploadSelectorPos(self: UniformBuffer, selected_block_pos: Vec3f) void {
+    gl.NamedBufferSubData(self.handle, @offsetOf(Data, "selector_pos"), @sizeOf(Vec3f), @ptrCast(&selected_block_pos));
 }

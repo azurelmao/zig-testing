@@ -2,12 +2,12 @@ const std = @import("std");
 const znoise = @import("znoise");
 const Chunk = @import("Chunk.zig");
 const Light = @import("light.zig").Light;
+const LightNode = @import("light.zig").LightNode;
 const Block = @import("block.zig").Block;
 const BlockExtendedData = @import("block.zig").BlockExtendedData;
 const Dir = @import("dir.zig").Dir;
 const DedupQueue = @import("dedup_queue.zig").DedupQueue;
 const Vec3f = @import("vec3f.zig").Vec3f;
-const WorldMesh = @import("WorldMesh.zig");
 const Debug = @import("main.zig").Debug;
 
 const World = @This();
@@ -15,10 +15,16 @@ const World = @This();
 prng: std.Random.Xoshiro256,
 seed: i32,
 chunks: std.AutoHashMapUnmanaged(Chunk.Pos, Chunk),
-chunks_which_need_to_add_lights: DedupQueue(Chunk.Pos),
-chunks_which_need_to_remove_lights: DedupQueue(Chunk.Pos),
 chunks_which_need_to_regenerate_meshes: DedupQueue(Chunk.Pos),
+light_source_addition_queue: Queue(LightNode),
+light_source_removal_queue: Queue(LightNode),
+light_addition_queue: Queue(LightNode),
+light_removal_queue: Queue(LightNode),
 block_extended_data_store: std.ArrayListUnmanaged(BlockExtendedData),
+
+pub fn Queue(comptime T: type) type {
+    return std.fifo.LinearFifo(T, .Dynamic);
+}
 
 pub const WIDTH = 1;
 pub const HEIGHT = 4;
@@ -29,7 +35,7 @@ pub const BOTTOM_OF_THE_WORLD = BELOW_HEIGHT * Chunk.SIZE;
 pub const SEA_LEVEL = 0;
 pub const SEA_LEVEL_DEEP = SEA_LEVEL - 16;
 
-pub fn init(seed: i32) !World {
+pub fn init(gpa: std.mem.Allocator, seed: i32) !World {
     const prng = std.Random.DefaultPrng.init(expr: {
         var prng_seed: u64 = undefined;
         try std.posix.getrandom(std.mem.asBytes(&prng_seed));
@@ -40,9 +46,11 @@ pub fn init(seed: i32) !World {
         .prng = prng,
         .seed = seed,
         .chunks = .empty,
-        .chunks_which_need_to_add_lights = .empty,
-        .chunks_which_need_to_remove_lights = .empty,
         .chunks_which_need_to_regenerate_meshes = .empty,
+        .light_source_addition_queue = .init(gpa),
+        .light_source_removal_queue = .init(gpa),
+        .light_addition_queue = .init(gpa),
+        .light_removal_queue = .init(gpa),
         .block_extended_data_store = .empty,
     };
 }
@@ -63,9 +71,9 @@ pub const Pos = packed struct {
 
     pub fn from(chunk_pos: Chunk.Pos, local_pos: Chunk.LocalPos) Pos {
         return .{
-            .x = (@as(i16, @intCast(chunk_pos.x)) << Chunk.BIT_SIZE) + @as(i16, @intCast(local_pos.x)),
-            .y = (@as(i16, @intCast(chunk_pos.y)) << Chunk.BIT_SIZE) + @as(i16, @intCast(local_pos.y)),
-            .z = (@as(i16, @intCast(chunk_pos.z)) << Chunk.BIT_SIZE) + @as(i16, @intCast(local_pos.z)),
+            .x = (@as(i16, @intCast(chunk_pos.x)) << Chunk.BIT_SIZE) | @as(i16, @intCast(local_pos.x)),
+            .y = (@as(i16, @intCast(chunk_pos.y)) << Chunk.BIT_SIZE) | @as(i16, @intCast(local_pos.y)),
+            .z = (@as(i16, @intCast(chunk_pos.z)) << Chunk.BIT_SIZE) | @as(i16, @intCast(local_pos.z)),
         };
     }
 
@@ -118,30 +126,32 @@ pub const Pos = packed struct {
     }
 };
 
-pub fn getChunk(self: World, pos: Chunk.Pos) !*Chunk {
-    return self.chunks.getPtr(pos) orelse error.ChunkNotFound;
+const WorldPos = Pos;
+
+pub fn getChunk(self: World, world_pos: Chunk.Pos) !*Chunk {
+    return self.chunks.getPtr(world_pos) orelse error.ChunkNotFound;
 }
 
-pub fn getChunkOrNull(self: World, pos: Chunk.Pos) ?*Chunk {
-    return self.chunks.getPtr(pos);
+pub fn getChunkOrNull(self: World, world_pos: Chunk.Pos) ?*Chunk {
+    return self.chunks.getPtr(world_pos);
 }
 
-pub fn getBlock(self: World, pos: Pos) !Block {
-    const chunk = try self.getChunk(pos.toChunkPos());
+pub fn getBlock(self: World, world_pos: WorldPos) !Block {
+    const chunk = try self.getChunk(world_pos.toChunkPos());
 
-    return chunk.getBlock(pos.toLocalPos());
+    return chunk.getBlock(world_pos.toLocalPos());
 }
 
-pub fn getBlockOrNull(self: World, pos: Pos) ?Block {
-    const chunk = self.getChunkOrNull(pos.toChunkPos()) orelse return null;
+pub fn getBlockOrNull(self: World, world_pos: WorldPos) ?Block {
+    const chunk = self.getChunkOrNull(world_pos.toChunkPos()) orelse return null;
 
-    return chunk.getBlock(pos.toLocalPos());
+    return chunk.getBlock(world_pos.toLocalPos());
 }
 
-pub fn setBlock(self: *World, gpa: std.mem.Allocator, pos: Pos, block: Block) !void {
-    const chunk = try self.getChunk(pos.toChunkPos());
+pub fn setBlock(self: *World, gpa: std.mem.Allocator, world_pos: WorldPos, block: Block) !void {
+    const chunk = try self.getChunk(world_pos.toChunkPos());
 
-    try chunk.setBlock(gpa, pos.toLocalPos(), block);
+    try chunk.setBlock(gpa, world_pos.toLocalPos(), block);
 }
 
 pub fn addBlockExtendedData(self: *World, gpa: std.mem.Allocator, data: BlockExtendedData) !usize {
@@ -149,6 +159,42 @@ pub fn addBlockExtendedData(self: *World, gpa: std.mem.Allocator, data: BlockExt
     const index = self.array.items.len - 1;
 
     return index;
+}
+
+pub fn placeBlock(self: *World, gpa: std.mem.Allocator, world_pos: WorldPos, block: Block) !void {
+    _ = try self.removeLight(world_pos);
+
+    try self.setBlock(gpa, world_pos, block);
+
+    switch (block.kind) {
+        .lamp => {
+            for ([_]u3{Dir.top.idx()}) |dir_idx| {
+                const neighbor_world_pos = world_pos.add(World.WorldPos.OFFSETS[dir_idx]);
+                _ = try self.addLight(neighbor_world_pos, block.data.lamp.light);
+            }
+        },
+        else => {},
+    }
+
+    try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, world_pos.toChunkPos());
+}
+
+pub fn breakBlock(self: *World, gpa: std.mem.Allocator, world_pos: WorldPos, block: Block) !void {
+    try self.setBlock(gpa, world_pos, .initNone(.air));
+
+    _ = try self.removeLight(world_pos);
+
+    switch (block.kind) {
+        .lamp => {
+            for ([_]u3{Dir.top.idx()}) |dir_idx| {
+                const neighbor_world_pos = world_pos.add(World.WorldPos.OFFSETS[dir_idx]);
+                _ = try self.removeLight(neighbor_world_pos);
+            }
+        },
+        else => {},
+    }
+
+    try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, world_pos.toChunkPos());
 }
 
 // What will happen if a BED is deleted?
@@ -172,7 +218,7 @@ pub const RaycastSide = enum {
 };
 
 pub const RaycastResult = struct {
-    pos: Pos,
+    world_pos: WorldPos,
     dir: RaycastSide,
     block: ?Block,
 };
@@ -225,7 +271,7 @@ pub fn raycast(self: World, origin: Vec3f, direction: Vec3f) RaycastResult {
                 };
 
                 return .{
-                    .pos = block_world_pos,
+                    .world_pos = block_world_pos,
                     .dir = dir,
                     .block = block,
                 };
@@ -256,7 +302,7 @@ pub fn raycast(self: World, origin: Vec3f, direction: Vec3f) RaycastResult {
     }
 
     return .{
-        .pos = moving_position.toWorldPos(),
+        .world_pos = moving_position.toWorldPos(),
         .dir = .out_of_bounds,
         .block = null,
     };
@@ -342,17 +388,16 @@ pub fn generate(self: *World, gpa: std.mem.Allocator) !void {
                 const chunk_z = @as(i11, @intCast(chunk_z_)) - WIDTH;
                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
 
-                var chunk = try Chunk.init(gpa, chunk_pos);
+                try self.chunks.put(gpa, chunk_pos, try Chunk.init(gpa, chunk_pos));
+                const chunk = self.getChunkOrNull(chunk_pos) orelse unreachable;
 
                 if (chunk_y >= min_chunk_height and chunk_y <= max_chunk_height) {
-                    try generateNoise2D(gpa, &chunk, height_map);
+                    try generateNoise2D(gpa, chunk, height_map);
                 } else if (chunk_y < min_chunk_height) {
-                    try generateFillWithStone(gpa, &chunk);
+                    try generateFillWithStone(gpa, chunk);
                 }
 
-                try generateNoise3D(gpa, &chunk, &cave_gen, self.prng.random());
-
-                try self.chunks.put(gpa, chunk.pos, chunk);
+                try generateNoise3D(self, gpa, chunk, &cave_gen, self.prng.random());
             }
         }
     }
@@ -371,8 +416,7 @@ pub fn generate(self: *World, gpa: std.mem.Allocator) !void {
                 const chunk = try self.getChunk(chunk_pos);
 
                 try generateIndirectLight(chunk, indirect_light_bitset);
-                try fillChunkWithIndirectLight(chunk, indirect_light_bitset, cave_bitset);
-                try self.chunks_which_need_to_add_lights.enqueue(gpa, chunk.pos);
+                try self.fillChunkWithIndirectLight(chunk, indirect_light_bitset, cave_bitset);
             }
 
             chunk_y -= 1;
@@ -380,9 +424,8 @@ pub fn generate(self: *World, gpa: std.mem.Allocator) !void {
                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
                 const chunk = try self.getChunk(chunk_pos);
 
-                try continueIndirectLight(chunk, indirect_light_bitset);
-                try fillChunkWithIndirectLight(chunk, indirect_light_bitset, cave_bitset);
-                try self.chunks_which_need_to_add_lights.enqueue(gpa, chunk.pos);
+                try self.continueIndirectLight(chunk, indirect_light_bitset);
+                try self.fillChunkWithIndirectLight(chunk, indirect_light_bitset, cave_bitset);
             }
         }
     }
@@ -426,7 +469,7 @@ pub fn generateNoise2D(gpa: std.mem.Allocator, chunk: *Chunk, height_map: *[Chun
             for (0..Chunk.SIZE) |y_| {
                 const y: u5 = @intCast(y_);
                 const local_pos: Chunk.LocalPos = .{ .x = x, .y = y, .z = z };
-                const world_pos: Pos = .from(chunk.pos, local_pos);
+                const world_pos: WorldPos = .from(chunk.pos, local_pos);
 
                 if (world_pos.y < height) {
                     if (world_pos.y == height - 1) {
@@ -476,7 +519,7 @@ pub fn caveThreshold(height: f32) f32 {
     return (-ymax / (xmin - xmax)) * (height - xmax) + ymax;
 }
 
-pub fn generateNoise3D(gpa: std.mem.Allocator, chunk: *Chunk, gen: *const znoise.FnlGenerator, random: std.Random) !void {
+pub fn generateNoise3D(self: *World, gpa: std.mem.Allocator, chunk: *Chunk, gen: *const znoise.FnlGenerator, random: std.Random) !void {
     for (0..Chunk.SIZE) |x_| {
         const x: u5 = @intCast(x_);
 
@@ -486,7 +529,7 @@ pub fn generateNoise3D(gpa: std.mem.Allocator, chunk: *Chunk, gen: *const znoise
             for (0..Chunk.SIZE) |y_| {
                 const y: u5 = @intCast(y_);
                 const local_pos: Chunk.LocalPos = .{ .x = x, .y = y, .z = z };
-                const world_pos: Pos = .from(chunk.pos, local_pos);
+                const world_pos: WorldPos = .from(chunk.pos, local_pos);
                 const noise_pos = world_pos.toVec3f();
 
                 const density = gen.noise3(noise_pos.x, noise_pos.y, noise_pos.z);
@@ -501,20 +544,29 @@ pub fn generateNoise3D(gpa: std.mem.Allocator, chunk: *Chunk, gen: *const znoise
                         var light_pos = world_pos;
                         light_pos.y += 1;
 
-                        try chunk.light_addition_queue.writeItem(.{
-                            .light = .{ .red = 15, .green = 6, .blue = 1, .indirect = 0 },
-                            .pos = light_pos,
+                        const light: Light = .{
+                            .red = 15,
+                            .green = 6,
+                            .blue = 1,
+                            .indirect = 0,
+                        };
+
+                        try self.light_source_addition_queue.writeItem(.{
+                            .world_pos = light_pos,
+                            .light = light,
                         });
+
+                        chunk.setLight(local_pos, light);
                     } else {
                         const prev_block = chunk.getBlock(local_pos);
-                        if (prev_block.kind == .stone or prev_block.kind == .grass) {
+                        if (prev_block.kind != .water and prev_block.kind != .sand) {
                             try chunk.setBlock(gpa, local_pos, .initNone(.air));
 
                             _ = random;
                             // if (random.uintAtMost(u32, 1000) == 0) {
                             //     try chunk.light_addition_queue.writeItem(.{
                             //         .light = .{ .red = random.uintAtMost(u4, 15), .green = random.uintAtMost(u4, 15), .blue = random.uintAtMost(u4, 15), .indirect = 0 },
-                            //         .pos = world_pos,
+                            //         .world_pos = world_pos,
                             //     });
                             // }
                         }
@@ -541,7 +593,7 @@ pub fn generateIndirectLight(chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]
     }
 }
 
-pub fn continueIndirectLight(chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]u32) !void {
+pub fn continueIndirectLight(self: *World, chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]u32) !void {
     for (0..Chunk.SIZE) |x| {
         for (0..Chunk.SIZE) |z| {
             const idx = x * Chunk.SIZE + z;
@@ -554,26 +606,24 @@ pub fn continueIndirectLight(chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]
                 const water_column = chunk.water_bitset[idx];
 
                 if (((water_column >> Chunk.EDGE) & 1) == 1) {
-                    const world_pos = Pos.from(
-                        chunk.pos,
-                        .{
-                            .x = @intCast(x),
-                            .y = Chunk.EDGE,
-                            .z = @intCast(z),
-                        },
-                    );
+                    // const world_pos = WorldPos.from(
+                    //     chunk.pos,
+                    //     .{
+                    //         .x = @intCast(x),
+                    //         .y = Chunk.EDGE,
+                    //         .z = @intCast(z),
+                    //     },
+                    // );
 
-                    const light = Light{
-                        .red = 0,
-                        .green = 0,
-                        .blue = 0,
-                        .indirect = 15,
-                    };
+                    // const light = Light{
+                    //     .red = 0,
+                    //     .green = 0,
+                    //     .blue = 0,
+                    //     .indirect = 15,
+                    // };
 
-                    try chunk.light_addition_queue.writeItem(.{
-                        .pos = world_pos,
-                        .light = light,
-                    });
+                    // _ = try self.addLight(world_pos, light);
+                    _ = self;
                 }
 
                 indirect_light_column = air_column;
@@ -588,7 +638,7 @@ pub fn continueIndirectLight(chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]
     }
 }
 
-pub fn fillChunkWithIndirectLight(chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]u32, cave_bitset: *[Chunk.AREA]u32) !void {
+pub fn fillChunkWithIndirectLight(self: *World, chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]u32, cave_bitset: *[Chunk.AREA]u32) !void {
     for (0..Chunk.SIZE) |x| {
         for (0..Chunk.SIZE) |z| {
             const idx = x * Chunk.SIZE + z;
@@ -670,8 +720,8 @@ pub fn fillChunkWithIndirectLight(chunk: *Chunk, indirect_light_bitset: *[Chunk.
                     chunk.setLight(local_pos, light);
 
                     if (((edges_column >> @intCast(y)) & 1) == 1) {
-                        try chunk.light_addition_queue.writeItem(.{
-                            .pos = Pos.from(chunk.pos, local_pos),
+                        try self.light_source_addition_queue.writeItem(.{
+                            .world_pos = WorldPos.from(chunk.pos, local_pos),
                             .light = light,
                         });
                     }
@@ -681,73 +731,27 @@ pub fn fillChunkWithIndirectLight(chunk: *Chunk, indirect_light_bitset: *[Chunk.
     }
 }
 
-pub fn getLight(self: *World, pos: Pos) !Light {
-    const chunk = try self.getChunk(pos.toChunkPos());
+pub fn getLight(self: *World, world_pos: WorldPos) !Light {
+    const chunk = try self.getChunk(world_pos.toChunkPos());
 
-    return chunk.getLight(pos.toLocalPos());
+    return chunk.getLight(world_pos.toLocalPos());
 }
 
-pub fn setLight(self: *World, pos: Pos, light: Light) !void {
-    const chunk = try self.getChunk(pos.toChunkPos());
+pub fn getLightOrNull(self: *World, world_pos: WorldPos) ?Light {
+    const chunk = self.getChunkOrNull(world_pos.toChunkPos()) orelse return null;
 
-    chunk.setLight(pos.toLocalPos(), light);
+    return chunk.getLight(world_pos.toLocalPos());
 }
 
-pub fn addLight(self: *World, gpa: std.mem.Allocator, pos: Pos, light: Light) !void {
-    const local_pos = pos.toLocalPos();
-    const chunk_pos = pos.toChunkPos();
-    const chunk = try self.getChunk(chunk_pos);
+pub fn setLight(self: *World, world_pos: WorldPos, light: Light) !void {
+    const chunk = try self.getChunk(world_pos.toChunkPos());
 
-    const block = chunk.getBlock(local_pos);
-
-    const light_opacity = switch (block.kind.getLightOpacity()) {
-        .translucent => |light_opacity| light_opacity,
-        .@"opaque" => return,
-    };
-
-    const current_light = chunk.getLight(local_pos);
-    const next_light: Light = .{
-        .red = @max(current_light.red, light.red -| light_opacity.red),
-        .green = @max(current_light.green, light.green -| light_opacity.green),
-        .blue = @max(current_light.blue, light.blue -| light_opacity.blue),
-        .indirect = @max(current_light.indirect, light.indirect -| light_opacity.indirect),
-    };
-
-    try chunk.light_addition_queue.writeItem(.{
-        .pos = pos,
-        .light = light,
-    });
-
-    chunk.setLight(local_pos, next_light);
-
-    try self.chunks_which_need_to_add_lights.enqueue(gpa, chunk_pos);
+    chunk.setLight(world_pos.toLocalPos(), light);
 }
 
-pub fn removeLight(self: *World, gpa: std.mem.Allocator, pos: Pos) !void {
-    const local_pos = pos.toLocalPos();
-    const chunk_pos = pos.toChunkPos();
-    const chunk = try self.getChunk(chunk_pos);
-
-    switch (chunk.getBlock(local_pos).kind.getLightOpacity()) {
-        .translucent => {},
-        .@"opaque" => return,
-    }
-
-    const light = chunk.getLight(local_pos);
-
-    try chunk.light_removal_queue.writeItem(.{
-        .pos = pos,
-        .light = light,
-    });
-
-    chunk.setLight(local_pos, .zeroed);
-
-    try self.chunks_which_need_to_remove_lights.enqueue(gpa, chunk_pos);
-}
-
-pub fn fillLightFromNeighbors(self: *World, gpa: std.mem.Allocator, pos: Pos) !void {
-    const local_pos = pos.toLocalPos();
-    const chunk_pos = pos.toChunkPos();
+pub fn fillLightFromNeighbors(self: *World, world_pos: WorldPos) !void {
+    const local_pos = world_pos.toLocalPos();
+    const chunk_pos = world_pos.toChunkPos();
     const chunk = try self.getChunk(chunk_pos);
 
     const neighbor_chunks = self.getNeighborChunks(chunk_pos);
@@ -762,13 +766,12 @@ pub fn fillLightFromNeighbors(self: *World, gpa: std.mem.Allocator, pos: Pos) !v
 
     inline for (Dir.values) |dir| skip: {
         const dir_idx = dir.idx();
-        const neighbor_world_pos = pos.add(Pos.OFFSETS[dir_idx]);
+        const neighbor_world_pos = world_pos.add(WorldPos.OFFSETS[dir_idx]);
         const neighbor_local_pos = neighbor_world_pos.toLocalPos();
 
         const neighbor_chunk = expr: {
             if (World.NeighborChunks.inEdge[dir_idx](local_pos)) {
                 if (neighbor_chunks.chunks[dir_idx]) |neighbor_chunk| {
-                    try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_chunk.pos);
                     break :expr neighbor_chunk;
                 } else {
                     break :skip;
@@ -800,14 +803,12 @@ pub fn fillLightFromNeighbors(self: *World, gpa: std.mem.Allocator, pos: Pos) !v
         };
     }
 
-    try chunk.light_addition_queue.writeItem(.{
-        .pos = pos,
+    try self.light_source_addition_queue.writeItem(.{
+        .world_pos = world_pos,
         .light = next_light,
     });
 
     chunk.setLight(local_pos, next_light);
-
-    try self.chunks_which_need_to_add_lights.enqueue(gpa, chunk_pos);
 }
 
 pub const NeighborChunks = struct {
@@ -840,98 +841,98 @@ pub const NeighborChunks = struct {
         getSouthNeighborPos,
     };
 
-    fn inWestEdge(pos: Chunk.LocalPos) bool {
-        return pos.x == 0;
+    fn inWestEdge(world_pos: Chunk.LocalPos) bool {
+        return world_pos.x == 0;
     }
 
-    fn inEastEdge(pos: Chunk.LocalPos) bool {
-        return pos.x == Chunk.EDGE;
+    fn inEastEdge(world_pos: Chunk.LocalPos) bool {
+        return world_pos.x == Chunk.EDGE;
     }
 
-    fn inBottomEdge(pos: Chunk.LocalPos) bool {
-        return pos.y == 0;
+    fn inBottomEdge(world_pos: Chunk.LocalPos) bool {
+        return world_pos.y == 0;
     }
 
-    fn inTopEdge(pos: Chunk.LocalPos) bool {
-        return pos.y == Chunk.EDGE;
+    fn inTopEdge(world_pos: Chunk.LocalPos) bool {
+        return world_pos.y == Chunk.EDGE;
     }
 
-    fn inNorthEdge(pos: Chunk.LocalPos) bool {
-        return pos.z == 0;
+    fn inNorthEdge(world_pos: Chunk.LocalPos) bool {
+        return world_pos.z == 0;
     }
 
-    fn inSouthEdge(pos: Chunk.LocalPos) bool {
-        return pos.z == Chunk.EDGE;
+    fn inSouthEdge(world_pos: Chunk.LocalPos) bool {
+        return world_pos.z == Chunk.EDGE;
     }
 
-    fn getWestPos(pos: Chunk.LocalPos) Chunk.LocalPos {
-        var new_pos = pos;
+    fn getWestPos(world_pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = world_pos;
         new_pos.x -= 1;
         return new_pos;
     }
 
-    fn getEastPos(pos: Chunk.LocalPos) Chunk.LocalPos {
-        var new_pos = pos;
+    fn getEastPos(world_pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = world_pos;
         new_pos.x += 1;
         return new_pos;
     }
 
-    fn getBottomPos(pos: Chunk.LocalPos) Chunk.LocalPos {
-        var new_pos = pos;
+    fn getBottomPos(world_pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = world_pos;
         new_pos.y -= 1;
         return new_pos;
     }
 
-    fn getTopPos(pos: Chunk.LocalPos) Chunk.LocalPos {
-        var new_pos = pos;
+    fn getTopPos(world_pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = world_pos;
         new_pos.y += 1;
         return new_pos;
     }
 
-    fn getNorthPos(pos: Chunk.LocalPos) Chunk.LocalPos {
-        var new_pos = pos;
+    fn getNorthPos(world_pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = world_pos;
         new_pos.z -= 1;
         return new_pos;
     }
 
-    fn getSouthPos(pos: Chunk.LocalPos) Chunk.LocalPos {
-        var new_pos = pos;
+    fn getSouthPos(world_pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = world_pos;
         new_pos.z += 1;
         return new_pos;
     }
 
-    fn getWestNeighborPos(pos: Chunk.LocalPos) Chunk.LocalPos {
-        var new_pos = pos;
+    fn getWestNeighborPos(world_pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = world_pos;
         new_pos.x = Chunk.EDGE;
         return new_pos;
     }
 
-    fn getEastNeighborPos(pos: Chunk.LocalPos) Chunk.LocalPos {
-        var new_pos = pos;
+    fn getEastNeighborPos(world_pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = world_pos;
         new_pos.x = 0;
         return new_pos;
     }
 
-    fn getBottomNeighborPos(pos: Chunk.LocalPos) Chunk.LocalPos {
-        var new_pos = pos;
+    fn getBottomNeighborPos(world_pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = world_pos;
         new_pos.y = Chunk.EDGE;
         return new_pos;
     }
 
-    fn getTopNeighborPos(pos: Chunk.LocalPos) Chunk.LocalPos {
-        var new_pos = pos;
+    fn getTopNeighborPos(world_pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = world_pos;
         new_pos.y = 0;
         return new_pos;
     }
 
-    fn getNorthNeighborPos(pos: Chunk.LocalPos) Chunk.LocalPos {
-        var new_pos = pos;
+    fn getNorthNeighborPos(world_pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = world_pos;
         new_pos.z = Chunk.EDGE;
         return new_pos;
     }
 
-    fn getSouthNeighborPos(pos: Chunk.LocalPos) Chunk.LocalPos {
-        var new_pos = pos;
+    fn getSouthNeighborPos(world_pos: Chunk.LocalPos) Chunk.LocalPos {
+        var new_pos = world_pos;
         new_pos.z = 0;
         return new_pos;
     }
@@ -947,41 +948,87 @@ pub fn getNeighborChunks(self: *World, chunk_pos: Chunk.Pos) NeighborChunks {
     return .{ .chunks = chunks };
 }
 
-pub fn propagateLights(self: *World, gpa: std.mem.Allocator, debug: *Debug) !void {
-    while (self.chunks_which_need_to_remove_lights.dequeue()) |chunk_pos| {
-        const chunk = self.getChunkOrNull(chunk_pos) orelse unreachable;
+pub fn addLight(self: *World, world_pos: WorldPos, light: Light) !bool {
+    const chunk_pos = world_pos.toChunkPos();
+    const chunk = self.getChunkOrNull(chunk_pos) orelse return false;
 
-        try self.propagateLightRemoval(gpa, chunk, debug);
-        try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, chunk_pos);
+    const local_pos = world_pos.toLocalPos();
+    const block = chunk.getBlock(local_pos);
+
+    const light_opacity = switch (block.kind.getLightOpacity()) {
+        .translucent => |light_opacity| light_opacity,
+        .@"opaque" => return false,
+    };
+
+    const current_light = chunk.getLight(local_pos);
+    const next_light: Light = .{
+        .red = @max(current_light.red, light.red -| light_opacity.red),
+        .green = @max(current_light.green, light.green -| light_opacity.green),
+        .blue = @max(current_light.blue, light.blue -| light_opacity.blue),
+        .indirect = @max(current_light.indirect, light.indirect -| light_opacity.indirect),
+    };
+
+    try self.light_source_addition_queue.writeItem(.{
+        .world_pos = world_pos,
+        .light = next_light,
+    });
+
+    chunk.setLight(local_pos, next_light);
+
+    return true;
+}
+
+pub fn removeLight(self: *World, world_pos: WorldPos) !bool {
+    const chunk_pos = world_pos.toChunkPos();
+    const chunk = self.getChunkOrNull(chunk_pos) orelse return false;
+
+    const local_pos = world_pos.toLocalPos();
+    switch (chunk.getBlock(local_pos).kind.getLightOpacity()) {
+        .translucent => {},
+        .@"opaque" => return false,
     }
 
-    while (self.chunks_which_need_to_add_lights.dequeue()) |chunk_pos| {
-        const chunk = self.getChunkOrNull(chunk_pos) orelse unreachable;
+    const light = chunk.getLight(local_pos);
+
+    try self.light_source_removal_queue.writeItem(.{
+        .world_pos = world_pos,
+        .light = light,
+    });
+
+    chunk.setLight(local_pos, .zeroed);
+
+    return true;
+}
+
+pub fn propagateLights(self: *World, gpa: std.mem.Allocator, debug: *Debug) !void {
+    while (self.light_source_removal_queue.readItem()) |node| {
+        try self.light_removal_queue.writeItem(node);
+        const chunk = self.getChunkOrNull(node.world_pos.toChunkPos()) orelse unreachable;
+
+        try self.propagateLightRemoval(gpa, chunk, debug);
+    }
+
+    while (self.light_source_addition_queue.readItem()) |node| {
+        try self.light_addition_queue.writeItem(node);
+        const chunk = self.getChunkOrNull(node.world_pos.toChunkPos()) orelse unreachable;
 
         try self.propagateLightAddition(gpa, chunk);
-        try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, chunk_pos);
     }
 }
 
 pub fn propagateLightAddition(self: *World, gpa: std.mem.Allocator, chunk: *Chunk) !void {
-    const neighbor_chunks = self.getNeighborChunks(chunk.pos);
-
-    while (chunk.light_addition_queue.readableLength() > 0) {
-        const node = chunk.light_addition_queue.readItem().?;
-        const world_pos = node.pos;
-        const light = node.light;
+    while (self.light_addition_queue.readItem()) |node| {
+        const world_pos = node.world_pos;
+        const node_light = node.light;
 
         inline for (Dir.values) |dir| skip: {
             const dir_idx = dir.idx();
-            const neighbor_world_pos = world_pos.add(Pos.OFFSETS[dir_idx]);
+            const neighbor_world_pos = world_pos.add(WorldPos.OFFSETS[dir_idx]);
             const neighbor_chunk_pos = neighbor_world_pos.toChunkPos();
-
-            var is_neighbor_chunk = false;
 
             const neighbor_chunk = expr: {
                 if (neighbor_chunk_pos.notEqual(chunk.pos)) {
-                    if (neighbor_chunks.chunks[dir_idx]) |neighbor_chunk| {
-                        is_neighbor_chunk = true;
+                    if (self.getChunkOrNull(neighbor_chunk_pos)) |neighbor_chunk| {
                         break :expr neighbor_chunk;
                     } else break :skip;
                 } else break :expr chunk;
@@ -1000,63 +1047,60 @@ pub fn propagateLightAddition(self: *World, gpa: std.mem.Allocator, chunk: *Chun
             var enqueue = false;
 
             inline for ([_]Light.Color{ .red, .green, .blue }) |color| {
-                if (@as(u5, @intCast(neighbor_light.get(color))) + 1 < light.get(color)) {
+                const next_light = node_light.get(color) -| (neighbor_light_opacity.get(color) +| 1);
+
+                if (neighbor_light.get(color) < next_light) {
                     enqueue = true;
-                    const light_to_subtract = neighbor_light_opacity.get(color) +| 1;
-                    const max_light = @max(neighbor_light.get(color), light.get(color));
-                    light_to_enqueue_and_set.set(color, max_light -| light_to_subtract);
+
+                    light_to_enqueue_and_set.set(color, next_light);
 
                     neighbor_chunk.setLight(neighbor_local_pos, light_to_enqueue_and_set);
                 }
             }
 
-            if (dir == .bottom) {
-                if (light.indirect == 15 and neighbor_light_opacity.indirect == 0) {
+            {
+                const next_light = node_light.indirect -| (neighbor_light_opacity.indirect +| 1);
+
+                if (dir == .bottom and node_light.indirect == 15 and neighbor_light_opacity.indirect == 0) {
                     enqueue = true;
-                    light_to_enqueue_and_set.indirect = @max(neighbor_light.indirect, light.indirect);
+
+                    light_to_enqueue_and_set.indirect = 15;
+
                     neighbor_chunk.setLight(neighbor_local_pos, light_to_enqueue_and_set);
-                }
-            } else {
-                if (@as(u5, @intCast(neighbor_light.indirect)) + 1 < light.indirect) {
+                } else if (neighbor_light.indirect < next_light) {
                     enqueue = true;
-                    const max_light = @max(neighbor_light.indirect, light.indirect);
-                    light_to_enqueue_and_set.indirect = max_light -| (neighbor_light_opacity.indirect +| 1);
+
+                    light_to_enqueue_and_set.indirect = next_light;
 
                     neighbor_chunk.setLight(neighbor_local_pos, light_to_enqueue_and_set);
                 }
             }
 
             if (enqueue) {
-                try neighbor_chunk.light_addition_queue.writeItem(.{
-                    .pos = neighbor_world_pos,
+                try self.light_addition_queue.writeItem(.{
+                    .world_pos = neighbor_world_pos,
                     .light = light_to_enqueue_and_set,
                 });
 
-                if (is_neighbor_chunk) try self.chunks_which_need_to_add_lights.enqueue(gpa, neighbor_chunk_pos);
+                try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_chunk.pos);
             }
         }
     }
 }
 
 pub fn propagateLightRemoval(self: *World, gpa: std.mem.Allocator, chunk: *Chunk, debug: *Debug) !void {
-    const neighbor_chunks = self.getNeighborChunks(chunk.pos);
-
-    while (chunk.light_removal_queue.readItem()) |node| {
-        const world_pos = node.pos;
-        const local_pos = world_pos.toLocalPos();
+    while (self.light_removal_queue.readItem()) |node| {
+        const world_pos = node.world_pos;
         const node_light = node.light;
 
         inline for (Dir.values) |dir| skip: {
             const dir_idx = dir.idx();
-            const neighbor_world_pos = world_pos.add(Pos.OFFSETS[dir_idx]);
+            const neighbor_world_pos = world_pos.add(WorldPos.OFFSETS[dir_idx]);
             const neighbor_chunk_pos = neighbor_world_pos.toChunkPos();
 
-            var is_neighbor_chunk = false;
-
             const neighbor_chunk = expr: {
-                if (World.NeighborChunks.inEdge[dir_idx](local_pos)) {
-                    if (neighbor_chunks.chunks[dir_idx]) |neighbor_chunk| {
-                        is_neighbor_chunk = true;
+                if (neighbor_chunk_pos.notEqual(chunk.pos)) {
+                    if (self.getChunkOrNull(neighbor_chunk_pos)) |neighbor_chunk| {
                         break :expr neighbor_chunk;
                     } else break :skip;
                 } else break :expr chunk;
@@ -1081,12 +1125,12 @@ pub fn propagateLightRemoval(self: *World, gpa: std.mem.Allocator, chunk: *Chunk
             inline for ([_]Light.Color{ .red, .green, .blue, .indirect }) |color| {
                 const next_light = node_light.get(color) -| (neighbor_light_opacity.get(color) +| 1);
 
-                if (neighbor_light.get(color) > 0 and neighbor_light.get(color) == next_light) {
+                if (neighbor_light.get(color) > 0 and (neighbor_light.get(color) == next_light or neighbor_light.get(color) == node_light.get(color))) {
                     enqueue_removal = true;
 
                     light_to_set_at_removal.set(color, 0);
                     neighbor_chunk.setLight(neighbor_local_pos, light_to_set_at_removal);
-                } else if (neighbor_light.get(color) > next_light) {
+                } else if (neighbor_light.get(color) > node_light.get(color)) {
                     enqueue_addition = true;
 
                     light_to_enqueue_at_addition.set(color, neighbor_light.get(color));
@@ -1094,26 +1138,28 @@ pub fn propagateLightRemoval(self: *World, gpa: std.mem.Allocator, chunk: *Chunk
             }
 
             if (enqueue_removal) {
-                try neighbor_chunk.light_removal_queue.writeItem(.{
-                    .pos = neighbor_world_pos,
+                try self.light_removal_queue.writeItem(.{
+                    .world_pos = neighbor_world_pos,
                     .light = neighbor_light,
                 });
 
-                if (is_neighbor_chunk) try self.chunks_which_need_to_remove_lights.enqueue(gpa, neighbor_chunk_pos);
+                try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_chunk.pos);
 
-                try debug.removal_nodes.data.append(gpa, world_pos.toVec3f());
+                try debug.removal_nodes.data.append(gpa, neighbor_world_pos.toVec3f());
             }
 
             if (enqueue_addition) {
-                try neighbor_chunk.light_addition_queue.writeItem(.{
-                    .pos = neighbor_world_pos,
+                try self.light_addition_queue.writeItem(.{
+                    .world_pos = neighbor_world_pos,
                     .light = light_to_enqueue_at_addition,
                 });
 
-                try self.chunks_which_need_to_add_lights.enqueue(gpa, neighbor_chunk_pos);
+                try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_chunk.pos);
 
-                try debug.addition_nodes.data.append(gpa, world_pos.toVec3f());
+                try debug.addition_nodes.data.append(gpa, neighbor_world_pos.toVec3f());
             }
         }
     }
+
+    try self.propagateLightAddition(gpa, chunk);
 }

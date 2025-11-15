@@ -1,7 +1,6 @@
 const std = @import("std");
 const Block = @import("block.zig").Block;
 const Light = @import("light.zig").Light;
-const LightNode = @import("light.zig").LightNode;
 const World = @import("World.zig");
 const Vec3f = @import("vec3f.zig").Vec3f;
 
@@ -24,16 +23,10 @@ blocks: []u8,
 index_bit_size: u4,
 
 light: *[VOLUME]Light,
-light_addition_queue: Queue(LightNode),
-light_removal_queue: Queue(LightNode),
 
 air_bitset: *[AREA]u32,
 water_bitset: *[AREA]u32,
 num_of_air: u16,
-
-pub fn Queue(comptime T: type) type {
-    return std.fifo.LinearFifo(T, .Dynamic);
-}
 
 pub const Pos = struct {
     x: i11,
@@ -118,9 +111,6 @@ pub fn init(gpa: std.mem.Allocator, pos: Pos) !Chunk {
     const light = try gpa.create([VOLUME]Light);
     @memset(light, .{ .red = 0, .green = 0, .blue = 0, .indirect = 0 });
 
-    const light_addition_queue = Queue(LightNode).init(gpa);
-    const light_removal_queue = Queue(LightNode).init(gpa);
-
     const air_bitset = try gpa.create([AREA]u32);
     @memset(air_bitset, 0);
 
@@ -136,9 +126,6 @@ pub fn init(gpa: std.mem.Allocator, pos: Pos) !Chunk {
         .index_bit_size = 0,
 
         .light = light,
-
-        .light_addition_queue = light_addition_queue,
-        .light_removal_queue = light_removal_queue,
 
         .air_bitset = air_bitset,
         .water_bitset = water_bitset,
