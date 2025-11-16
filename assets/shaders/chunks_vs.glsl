@@ -76,15 +76,6 @@ vec2 unpackTextureUV(uint data) {
     return vec2(u, v);
 }
 
-const float[6] normalLight = float[](
-    0.6,
-    0.6,
-    0.4,
-    1.0,
-    0.8,
-    0.8
-);
-
 layout (binding = 0, std140) uniform ubo0 {
     mat4 uViewProjection;
     vec3 uSelectedBlockPosition;
@@ -92,7 +83,7 @@ layout (binding = 0, std140) uniform ubo0 {
 
 out vec2 pTextureUV;
 flat out uint pTextureIdx;
-flat out float pNormalLight;
+flat out uint pNormal;
 flat out vec3 pLight;
 
 out vec3 pVertexPosition;
@@ -116,8 +107,8 @@ void main() {
     
     pTextureUV = textureUV;
     pTextureIdx = textureIdx;
-
-    pNormalLight = normalLight[normal];
+    pNormal = normal;
+    
     vec3 indirectLight = sIndirectLight[indirectLightIdx];
 
     pLight = vec3(

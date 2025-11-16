@@ -1,6 +1,7 @@
 const std = @import("std");
 const gl = @import("gl");
 const glfw = @import("glfw");
+const Input = @import("Input.zig");
 
 const NewWindowSize = struct {
     window_width: gl.sizei,
@@ -12,63 +13,46 @@ const NewCursorPos = struct {
     cursor_y: gl.float,
 };
 
-const NewKeyAction = struct {
-    key: glfw.Key,
-    action: glfw.Action,
-    mods: glfw.Mods,
-};
-
-const NewButtonAction = struct {
-    button: glfw.MouseButton,
-    action: glfw.Action,
-    mods: glfw.Mods,
-};
-
-pub const UserData = struct {
+pub const CallbackData = struct {
+    input: *Input,
     new_window_size: ?NewWindowSize,
     new_cursor_pos: ?NewCursorPos,
-    new_key_action: ?NewKeyAction,
-    new_button_action: ?NewButtonAction,
 
-    pub const default: UserData = .{
-        .new_window_size = null,
-        .new_cursor_pos = null,
-        .new_key_action = null,
-        .new_button_action = null,
-    };
+    pub fn init(input: *Input) CallbackData {
+        return .{
+            .input = input,
+            .new_window_size = null,
+            .new_cursor_pos = null,
+        };
+    }
 };
 
 pub fn errorCallback(error_code: glfw.ErrorCode, description: [:0]const u8) void {
-    std.log.err("glfw: {}: {s}\n", .{ error_code, description });
+    std.log.err("glfw: {}: {s}", .{ error_code, description });
 }
 
 pub fn keyCallback(window: glfw.Window, key: glfw.Key, scancode: i32, action: glfw.Action, mods: glfw.Mods) void {
     _ = scancode;
+    _ = mods;
 
-    window.getUserPointer(UserData).?.new_key_action = .{
-        .key = key,
-        .action = action,
-        .mods = mods,
-    };
+    window.getUserPointer(CallbackData).?.input.set(.{ .key = key }, action);
 }
 
 pub fn buttonCallback(window: glfw.Window, button: glfw.MouseButton, action: glfw.Action, mods: glfw.Mods) void {
-    window.getUserPointer(UserData).?.new_button_action = .{
-        .button = button,
-        .action = action,
-        .mods = mods,
-    };
+    _ = mods;
+
+    window.getUserPointer(CallbackData).?.input.set(.{ .button = button }, action);
 }
 
 pub fn cursorCallback(window: glfw.Window, cursor_x: f64, cursor_y: f64) void {
-    window.getUserPointer(UserData).?.new_cursor_pos = .{
+    window.getUserPointer(CallbackData).?.new_cursor_pos = .{
         .cursor_x = @floatCast(cursor_x),
         .cursor_y = @floatCast(cursor_y),
     };
 }
 
 pub fn framebufferSizeCallback(window: glfw.Window, window_width: u32, window_height: u32) void {
-    window.getUserPointer(UserData).?.new_window_size = .{
+    window.getUserPointer(CallbackData).?.new_window_size = .{
         .window_width = @intCast(window_width),
         .window_height = @intCast(window_height),
     };

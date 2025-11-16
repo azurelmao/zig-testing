@@ -554,6 +554,7 @@ pub fn generateNoise3D(self: *World, gpa: std.mem.Allocator, chunk: *Chunk, gen:
                         try self.light_source_addition_queue.writeItem(.{
                             .world_pos = light_pos,
                             .light = light,
+                            .ttl = undefined,
                         });
 
                         chunk.setLight(local_pos, light);
@@ -606,24 +607,27 @@ pub fn continueIndirectLight(self: *World, chunk: *Chunk, indirect_light_bitset:
                 const water_column = chunk.water_bitset[idx];
 
                 if (((water_column >> Chunk.EDGE) & 1) == 1) {
-                    // const world_pos = WorldPos.from(
-                    //     chunk.pos,
-                    //     .{
-                    //         .x = @intCast(x),
-                    //         .y = Chunk.EDGE,
-                    //         .z = @intCast(z),
-                    //     },
-                    // );
+                    const world_pos = WorldPos.from(
+                        chunk.pos,
+                        .{
+                            .x = @intCast(x),
+                            .y = Chunk.EDGE,
+                            .z = @intCast(z),
+                        },
+                    );
 
-                    // const light = Light{
-                    //     .red = 0,
-                    //     .green = 0,
-                    //     .blue = 0,
-                    //     .indirect = 15,
-                    // };
+                    const light = Light{
+                        .red = 0,
+                        .green = 0,
+                        .blue = 0,
+                        .indirect = 15,
+                    };
 
-                    // _ = try self.addLight(world_pos, light);
-                    _ = self;
+                    try self.light_source_addition_queue.writeItem(.{
+                        .world_pos = world_pos,
+                        .light = light,
+                        .ttl = undefined,
+                    });
                 }
 
                 indirect_light_column = air_column;
@@ -723,6 +727,7 @@ pub fn fillChunkWithIndirectLight(self: *World, chunk: *Chunk, indirect_light_bi
                         try self.light_source_addition_queue.writeItem(.{
                             .world_pos = WorldPos.from(chunk.pos, local_pos),
                             .light = light,
+                            .ttl = undefined,
                         });
                     }
                 }
@@ -747,68 +752,6 @@ pub fn setLight(self: *World, world_pos: WorldPos, light: Light) !void {
     const chunk = try self.getChunk(world_pos.toChunkPos());
 
     chunk.setLight(world_pos.toLocalPos(), light);
-}
-
-pub fn fillLightFromNeighbors(self: *World, world_pos: WorldPos) !void {
-    const local_pos = world_pos.toLocalPos();
-    const chunk_pos = world_pos.toChunkPos();
-    const chunk = try self.getChunk(chunk_pos);
-
-    const neighbor_chunks = self.getNeighborChunks(chunk_pos);
-
-    const block = chunk.getBlock(local_pos);
-    const light_opacity = switch (block.kind.getLightOpacity()) {
-        .translucent => |light_opacity| light_opacity,
-        .@"opaque" => return,
-    };
-
-    var next_light: Light = .zeroed;
-
-    inline for (Dir.values) |dir| skip: {
-        const dir_idx = dir.idx();
-        const neighbor_world_pos = world_pos.add(WorldPos.OFFSETS[dir_idx]);
-        const neighbor_local_pos = neighbor_world_pos.toLocalPos();
-
-        const neighbor_chunk = expr: {
-            if (World.NeighborChunks.inEdge[dir_idx](local_pos)) {
-                if (neighbor_chunks.chunks[dir_idx]) |neighbor_chunk| {
-                    break :expr neighbor_chunk;
-                } else {
-                    break :skip;
-                }
-            } else {
-                break :expr chunk;
-            }
-        };
-
-        switch (neighbor_chunk.getBlock(neighbor_local_pos).kind.getLightOpacity()) {
-            .translucent => {},
-            .@"opaque" => break :skip,
-        }
-
-        const neighbor_light = neighbor_chunk.getLight(neighbor_local_pos);
-
-        var indirect_light_falloff: u1 = 1;
-        if (dir == .top) {
-            if (neighbor_light.indirect == 15) {
-                indirect_light_falloff = 0;
-            }
-        }
-
-        next_light = .{
-            .red = @max(next_light.red, neighbor_light.red -| (light_opacity.red +| 1)),
-            .green = @max(next_light.green, neighbor_light.green -| (light_opacity.green +| 1)),
-            .blue = @max(next_light.blue, neighbor_light.blue -| (light_opacity.blue +| 1)),
-            .indirect = @max(next_light.indirect, neighbor_light.indirect -| (light_opacity.indirect +| indirect_light_falloff)),
-        };
-    }
-
-    try self.light_source_addition_queue.writeItem(.{
-        .world_pos = world_pos,
-        .light = next_light,
-    });
-
-    chunk.setLight(local_pos, next_light);
 }
 
 pub const NeighborChunks = struct {
@@ -971,6 +914,7 @@ pub fn addLight(self: *World, world_pos: WorldPos, light: Light) !bool {
     try self.light_source_addition_queue.writeItem(.{
         .world_pos = world_pos,
         .light = next_light,
+        .ttl = undefined,
     });
 
     chunk.setLight(local_pos, next_light);
@@ -993,6 +937,7 @@ pub fn removeLight(self: *World, world_pos: WorldPos) !bool {
     try self.light_source_removal_queue.writeItem(.{
         .world_pos = world_pos,
         .light = light,
+        .ttl = @max(light.red, light.green, light.blue, light.indirect),
     });
 
     chunk.setLight(local_pos, .zeroed);
@@ -1080,6 +1025,7 @@ pub fn propagateLightAddition(self: *World, gpa: std.mem.Allocator, chunk: *Chun
                 try self.light_addition_queue.writeItem(.{
                     .world_pos = neighbor_world_pos,
                     .light = light_to_enqueue_and_set,
+                    .ttl = undefined,
                 });
 
                 try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_chunk.pos);
@@ -1137,10 +1083,11 @@ pub fn propagateLightRemoval(self: *World, gpa: std.mem.Allocator, chunk: *Chunk
                 }
             }
 
-            if (enqueue_removal) {
+            if (enqueue_removal and node.ttl > 0) {
                 try self.light_removal_queue.writeItem(.{
                     .world_pos = neighbor_world_pos,
                     .light = neighbor_light,
+                    .ttl = node.ttl - 1,
                 });
 
                 try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_chunk.pos);
@@ -1152,6 +1099,7 @@ pub fn propagateLightRemoval(self: *World, gpa: std.mem.Allocator, chunk: *Chunk
                 try self.light_addition_queue.writeItem(.{
                     .world_pos = neighbor_world_pos,
                     .light = light_to_enqueue_at_addition,
+                    .ttl = undefined,
                 });
 
                 try self.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_chunk.pos);

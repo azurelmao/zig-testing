@@ -43,4 +43,5 @@ pub const Light = packed struct(u16) {
 pub const LightNode = packed struct {
     world_pos: World.Pos,
     light: Light,
+    ttl: u4,
 };

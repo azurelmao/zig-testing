@@ -3,6 +3,7 @@ const glfw = @import("glfw");
 const gl = @import("gl");
 const stbi = @import("zstbi");
 const callback = @import("callback.zig");
+const Input = @import("Input.zig");
 const World = @import("World.zig");
 const Chunk = @import("Chunk.zig");
 const Block = @import("block.zig").Block;
@@ -21,8 +22,6 @@ const Dir = @import("dir.zig").Dir;
 const Light = @import("light.zig").Light;
 const ShaderStorageBufferWithArrayList = @import("shader_storage_buffer.zig").ShaderStorageBufferWithArrayList;
 const Vec3f = @import("vec3f.zig").Vec3f;
-
-const c = @import("vma");
 
 pub const std_options: std.Options = .{
     .log_level = .debug,
@@ -51,7 +50,8 @@ const Game = struct {
     screen: Screen,
     camera: Camera,
     window: glfw.Window,
-    callback_user_data: *callback.UserData,
+    input: *Input,
+    callback_data: *callback.CallbackData,
     uniform_buffer: UniformBuffer,
     shader_programs: ShaderPrograms,
     textures: Textures,
@@ -77,9 +77,13 @@ const Game = struct {
         try initGLFW();
         const window = try initWindow(&screen);
 
-        const callback_user_data = try gpa.create(callback.UserData);
-        callback_user_data.* = .default;
-        window.setUserPointer(@ptrCast(callback_user_data));
+        const input = try gpa.create(Input);
+        input.* = try .init(gpa);
+
+        const callback_data = try gpa.create(callback.CallbackData);
+        callback_data.* = .init(input);
+
+        window.setUserPointer(@ptrCast(callback_data));
 
         try initGL();
         var uniform_buffer: UniformBuffer = .init(0);
@@ -114,7 +118,8 @@ const Game = struct {
             .screen = screen,
             .camera = camera,
             .window = window,
-            .callback_user_data = callback_user_data,
+            .input = input,
+            .callback_data = callback_data,
             .uniform_buffer = uniform_buffer,
             .shader_programs = shader_programs,
             .textures = textures,
@@ -134,9 +139,10 @@ const Game = struct {
         };
     }
 
-    fn deinit(self: *Game, gpa: std.mem.Allocator) void {
-        gpa.destroy(self.callback_user_data);
-        self.window.destroy();
+    fn deinit(game: *Game, gpa: std.mem.Allocator) void {
+        gpa.destroy(game.callback_data);
+        gpa.destroy(game.input);
+        game.window.destroy();
         gl.makeProcTableCurrent(null);
         glfw.terminate();
         stbi.deinit();
@@ -225,211 +231,15 @@ const Game = struct {
         return window;
     }
 
-    fn handleInput(self: *Game, gpa: std.mem.Allocator, delta_time: gl.float) !void {
-        const mouse_speed = self.settings.mouse_speed * delta_time;
-        const movement_speed = self.settings.movement_speed * delta_time;
-
-        var calc_view_matrix = false;
-        var calc_projection_matrix = false;
-        var selector_changed = false;
-
-        if (self.callback_user_data.new_key_action) |new_key_action| {
-            if (new_key_action.action == .press) switch (new_key_action.key) {
-                .escape => self.window.setShouldClose(true),
-
-                .F4 => self.settings.chunk_borders = !self.settings.chunk_borders,
-                .F3 => self.settings.light_removal_nodes = !self.settings.light_removal_nodes,
-                .F2 => self.settings.light_addition_nodes = !self.settings.light_addition_nodes,
-                .F1 => self.settings.relative_selector = !self.settings.relative_selector,
-
-                .one => self.selected_slot = 0,
-                .two => self.selected_slot = 1,
-                .three => self.selected_slot = 2,
-                .four => self.selected_slot = 3,
-                .five => self.selected_slot = 4,
-                .six => self.selected_slot = 5,
-                .seven => self.selected_slot = 6,
-
-                .kp_8 => {
-                    self.relative_selector_world_pos.x +|= 1;
-                    selector_changed = true;
-                },
-                .kp_2 => {
-                    self.relative_selector_world_pos.x -|= 1;
-                    selector_changed = true;
-                },
-                .kp_6 => {
-                    self.relative_selector_world_pos.z +|= 1;
-                    selector_changed = true;
-                },
-                .kp_4 => {
-                    self.relative_selector_world_pos.z -|= 1;
-                    selector_changed = true;
-                },
-                .kp_9 => {
-                    self.relative_selector_world_pos.y +|= 1;
-                    selector_changed = true;
-                },
-                .kp_3 => {
-                    self.relative_selector_world_pos.y -|= 1;
-                    selector_changed = true;
-                },
-
-                else => {},
-            };
-
-            self.callback_user_data.new_key_action = null;
-        }
-
-        var action: enum { none, destroy, place } = .none;
-
-        if (self.callback_user_data.new_button_action) |new_button_action| {
-            if (new_button_action.action == .press) switch (new_button_action.button) {
-                .left => action = .destroy,
-                .right => action = .place,
-                else => {},
-            };
-
-            self.callback_user_data.new_button_action = null;
-        }
-
-        if (self.window.getKey(glfw.Key.s) == .press) {
-            self.camera.position.subtractInPlace(self.camera.horizontal_direction.multiplyScalar(movement_speed));
-            calc_view_matrix = true;
-        }
-
-        if (self.window.getKey(glfw.Key.w) == .press) {
-            self.camera.position.addInPlace(self.camera.horizontal_direction.multiplyScalar(movement_speed));
-            calc_view_matrix = true;
-        }
-
-        if (self.window.getKey(glfw.Key.left_shift) == .press) {
-            self.camera.position.subtractInPlace(Camera.up.multiplyScalar(movement_speed));
-            calc_view_matrix = true;
-        }
-
-        if (self.window.getKey(glfw.Key.space) == .press) {
-            self.camera.position.addInPlace(Camera.up.multiplyScalar(movement_speed));
-            calc_view_matrix = true;
-        }
-
-        if (self.window.getKey(glfw.Key.a) == .press) {
-            self.camera.position.subtractInPlace(self.camera.right.multiplyScalar(movement_speed));
-            calc_view_matrix = true;
-        }
-
-        if (self.window.getKey(glfw.Key.d) == .press) {
-            self.camera.position.addInPlace(self.camera.right.multiplyScalar(movement_speed));
-            calc_view_matrix = true;
-        }
-
-        if (self.callback_user_data.new_window_size) |new_window_size| {
-            self.screen.window_width = new_window_size.window_width;
-            self.screen.window_height = new_window_size.window_height;
-            self.screen.window_width_f = @floatFromInt(new_window_size.window_width);
-            self.screen.window_height_f = @floatFromInt(new_window_size.window_height);
-
-            self.screen.calcAspectRatio();
-            self.shader_programs.crosshair.setUniform2f("uWindowSize", self.screen.window_width_f, self.screen.window_height_f);
-
-            gl.Viewport(0, 0, self.screen.window_width, self.screen.window_height);
-
-            try self.offscreen_framebuffer.resizeAndBind(self.screen.window_width, self.screen.window_height, 3);
-
-            calc_projection_matrix = true;
-            self.callback_user_data.new_window_size = null;
-        }
-
-        if (self.callback_user_data.new_cursor_pos) |new_cursor_pos| {
-            const offset_x = (new_cursor_pos.cursor_x - self.screen.prev_cursor_x) * mouse_speed;
-            const offset_y = (self.screen.prev_cursor_y - new_cursor_pos.cursor_y) * mouse_speed;
-
-            self.screen.prev_cursor_x = new_cursor_pos.cursor_x;
-            self.screen.prev_cursor_y = new_cursor_pos.cursor_y;
-
-            self.camera.yaw += offset_x;
-            self.camera.pitch = std.math.clamp(self.camera.pitch + offset_y, -89.0, 89.0);
-
-            self.camera.calcDirectionAndRight();
-
-            calc_view_matrix = true;
-            self.callback_user_data.new_cursor_pos = null;
-        }
-
-        if (calc_view_matrix) {
-            self.camera.calcViewMatrix();
-
-            self.shader_programs.chunks.setUniform3f("uCameraPosition", self.camera.position.x, self.camera.position.y, self.camera.position.z);
-        }
-
-        if (calc_projection_matrix) {
-            self.camera.calcProjectionMatrix(self.screen.aspect_ratio);
-        }
-
-        const calc_view_projection_matrix = calc_view_matrix or calc_projection_matrix or action != .none;
-        if (calc_view_projection_matrix) {
-            self.camera.calcViewProjectionMatrix();
-            self.camera.calcFrustumPlanes();
-            self.uniform_buffer.uploadViewProjectionMatrix(self.camera.view_projection_matrix);
-
-            self.selected_block = self.world.raycast(self.camera.position, self.camera.direction);
-
-            switch (action) {
-                .destroy => if (self.selected_block.block) |block| {
-                    if (block.kind != .air) {
-                        const world_pos = self.selected_block.world_pos;
-
-                        try self.world.breakBlock(gpa, world_pos, block);
-                    }
-                },
-                .place => skip: {
-                    const selected_dir = self.selected_block.dir;
-
-                    if (selected_dir == .out_of_bounds or selected_dir == .inside) break :skip;
-
-                    const world_pos = self.selected_block.world_pos.add(World.Pos.OFFSETS[selected_dir.idx()]);
-                    if (self.world.getChunkOrNull(world_pos.toChunkPos()) == null) break :skip;
-
-                    const block = self.inventory[self.selected_slot];
-                    try self.world.placeBlock(gpa, world_pos, block);
-                },
-                else => {},
-            }
-
-            if (action != .none) {
-                self.selected_block = self.world.raycast(self.camera.position, self.camera.direction);
-            }
-
-            const selected_block_pos = self.selected_block.world_pos.toVec3f();
-            self.uniform_buffer.uploadSelectedBlockPos(selected_block_pos);
-
-            const selected_dir = self.selected_block.dir;
-
-            if (selected_dir != .out_of_bounds and selected_dir != .inside) {
-                if (self.selected_block.block) |block| {
-                    const dir_idx = (block.kind.getModelIdx() * 36) + (selected_dir.idx() * 6);
-                    self.shader_programs.selected_side.setUniform1ui("uFaceIdx", @intCast(dir_idx));
-                }
-            }
-
-            self.camera.changed = true;
-        }
-
-        // if (selector_changed) {
-        const selector_pos = self.selected_block.world_pos.add(self.relative_selector_world_pos).toVec3f();
-        self.uniform_buffer.uploadSelectorPos(selector_pos);
-        // }
-    }
-
-    fn appendRaycastText(self: *Game, gpa: std.mem.Allocator, original_line: i32) !i32 {
-        const world_pos = self.selected_block.world_pos;
-        const dir = self.selected_block.dir;
+    fn appendRaycastText(game: *Game, gpa: std.mem.Allocator, original_line: i32) !i32 {
+        const world_pos = game.selected_block.world_pos;
+        const dir = game.selected_block.dir;
 
         var line = original_line;
 
         switch (dir) {
             else => {
-                try self.text_manager.append(gpa, .{
+                try game.text_manager.append(gpa, .{
                     .pixel_x = 0,
                     .pixel_y = line * 6,
                     .text = try std.fmt.allocPrint(gpa, "looking at: [x: {d} y: {d} z: {d}] on dir: {s}", .{
@@ -441,17 +251,17 @@ const Game = struct {
                 });
                 line += 1;
 
-                try self.text_manager.append(gpa, .{
+                try game.text_manager.append(gpa, .{
                     .pixel_x = 0,
                     .pixel_y = line * 6,
                     .text = try std.fmt.allocPrint(gpa, "block: {s}", .{
-                        if (self.selected_block.block) |block| @tagName(block.kind) else "null",
+                        if (game.selected_block.block) |block| @tagName(block.kind) else "null",
                     }),
                 });
                 line += 1;
 
-                if (self.world.getLight(world_pos.add(World.Pos.OFFSETS[dir.idx()]))) |light| {
-                    try self.text_manager.append(gpa, .{
+                if (game.world.getLight(world_pos.add(World.Pos.OFFSETS[dir.idx()]))) |light| {
+                    try game.text_manager.append(gpa, .{
                         .pixel_x = 0,
                         .pixel_y = line * 6,
                         .text = try std.fmt.allocPrint(gpa, "light: [r: {} g: {} b: {} i: {}]", .{
@@ -463,7 +273,7 @@ const Game = struct {
                     });
                     line += 1;
                 } else |_| {
-                    try self.text_manager.append(gpa, .{
+                    try game.text_manager.append(gpa, .{
                         .pixel_x = 0,
                         .pixel_y = line * 6,
                         .text = try std.fmt.allocPrint(gpa, "light: out_of_bounds", .{}),
@@ -473,9 +283,9 @@ const Game = struct {
             },
 
             .inside => {
-                const light = try self.world.getLight(world_pos);
+                const light = try game.world.getLight(world_pos);
 
-                try self.text_manager.append(gpa, .{
+                try game.text_manager.append(gpa, .{
                     .pixel_x = 0,
                     .pixel_y = line * 6,
                     .text = try std.fmt.allocPrint(gpa, "looking at: [x: {d} y: {d} z: {d}] on dir: {s}", .{
@@ -487,14 +297,14 @@ const Game = struct {
                 });
                 line += 1;
 
-                try self.text_manager.append(gpa, .{
+                try game.text_manager.append(gpa, .{
                     .pixel_x = 0,
                     .pixel_y = line * 6,
-                    .text = try std.fmt.allocPrint(gpa, "block: {s}", .{@tagName(self.selected_block.block.?.kind)}),
+                    .text = try std.fmt.allocPrint(gpa, "block: {s}", .{@tagName(game.selected_block.block.?.kind)}),
                 });
                 line += 1;
 
-                try self.text_manager.append(gpa, .{
+                try game.text_manager.append(gpa, .{
                     .pixel_x = 0,
                     .pixel_y = line * 6,
                     .text = try std.fmt.allocPrint(gpa, "light: [r: {} g: {} b: {} i: {}]", .{
@@ -508,7 +318,7 @@ const Game = struct {
             },
 
             .out_of_bounds => {
-                try self.text_manager.append(gpa, .{
+                try game.text_manager.append(gpa, .{
                     .pixel_x = 0,
                     .pixel_y = line * 6,
                     .text = try std.fmt.allocPrint(gpa, "looking at: [x: {d} y: {d} z: {d}] on dir: {s}", .{
@@ -525,14 +335,14 @@ const Game = struct {
         return line;
     }
 
-    fn appendRelativeSelectorText(self: *Game, gpa: std.mem.Allocator, original_line: i32) !i32 {
-        const world_pos = self.selected_block.world_pos.add(self.relative_selector_world_pos);
+    fn appendRelativeSelectorText(game: *Game, gpa: std.mem.Allocator, original_line: i32) !i32 {
+        const world_pos = game.selected_block.world_pos.add(game.relative_selector_world_pos);
         var line = original_line;
 
-        const block_or_null = self.world.getBlockOrNull(world_pos);
-        const light_or_null = self.world.getLightOrNull(world_pos);
+        const block_or_null = game.world.getBlockOrNull(world_pos);
+        const light_or_null = game.world.getLightOrNull(world_pos);
 
-        try self.text_manager.append(gpa, .{
+        try game.text_manager.append(gpa, .{
             .pixel_x = 0,
             .pixel_y = line * 6,
             .text = try std.fmt.allocPrint(gpa, "selector at: [x: {d} y: {d} z: {d}]", .{
@@ -544,7 +354,7 @@ const Game = struct {
         line += 1;
 
         if (block_or_null) |block| {
-            try self.text_manager.append(gpa, .{
+            try game.text_manager.append(gpa, .{
                 .pixel_x = 0,
                 .pixel_y = line * 6,
                 .text = try std.fmt.allocPrint(gpa, "block: {s}", .{@tagName(block.kind)}),
@@ -553,7 +363,7 @@ const Game = struct {
         }
 
         if (light_or_null) |light| {
-            try self.text_manager.append(gpa, .{
+            try game.text_manager.append(gpa, .{
                 .pixel_x = 0,
                 .pixel_y = line * 6,
                 .text = try std.fmt.allocPrint(gpa, "light: [r: {} g: {} b: {} i: {}]", .{
@@ -569,141 +379,373 @@ const Game = struct {
         return line;
     }
 
-    fn appendText(self: *Game, gpa: std.mem.Allocator) !void {
-        self.text_manager.clear();
+    fn appendText(game: *Game, gpa: std.mem.Allocator) !void {
+        game.text_manager.clear();
 
         var line: i32 = 0;
 
-        try self.text_manager.append(gpa, .{
+        try game.text_manager.append(gpa, .{
             .pixel_x = 0,
             .pixel_y = line * 6,
             .text = TITLE,
         });
         line += 1;
 
-        try self.text_manager.append(gpa, .{
+        try game.text_manager.append(gpa, .{
             .pixel_x = 0,
             .pixel_y = line * 6,
-            .text = try std.fmt.allocPrint(gpa, "visible: {}", .{self.world_mesh.visible_chunk_meshes.items.len}),
+            .text = try std.fmt.allocPrint(gpa, "visible: {}", .{game.world_mesh.visible_chunk_meshes.items.len}),
         });
         line += 1;
 
-        const camera_world_pos = self.camera.position.toWorldPos();
+        const camera_world_pos = game.camera.position.toWorldPos();
         const camera_local_pos = camera_world_pos.toLocalPos();
         const camera_chunk_pos = camera_world_pos.toChunkPos();
 
-        try self.text_manager.append(gpa, .{
+        try game.text_manager.append(gpa, .{
             .pixel_x = 0,
             .pixel_y = line * 6,
             .text = try std.fmt.allocPrint(gpa, "chunk: [x: {} y: {} z: {}]", .{ camera_chunk_pos.x, camera_chunk_pos.y, camera_chunk_pos.z }),
         });
         line += 1;
 
-        try self.text_manager.append(gpa, .{
+        try game.text_manager.append(gpa, .{
             .pixel_x = 0,
             .pixel_y = line * 6,
             .text = try std.fmt.allocPrint(gpa, "local: [x: {} y: {} z: {}]", .{ camera_local_pos.x, camera_local_pos.y, camera_local_pos.z }),
         });
         line += 1;
 
-        try self.text_manager.append(gpa, .{
+        try game.text_manager.append(gpa, .{
             .pixel_x = 0,
             .pixel_y = line * 6,
             .text = try std.fmt.allocPrint(gpa, "world: [x: {} y: {} z: {}]", .{ camera_world_pos.x, camera_world_pos.y, camera_world_pos.z }),
         });
         line += 1;
 
-        try self.text_manager.append(gpa, .{
+        try game.text_manager.append(gpa, .{
             .pixel_x = 0,
             .pixel_y = line * 6,
-            .text = try std.fmt.allocPrint(gpa, "camera: [x: {d:.6} y: {d:.6} z: {d:.6}]", .{ self.camera.position.x, self.camera.position.y, self.camera.position.z }),
+            .text = try std.fmt.allocPrint(gpa, "camera: [x: {d:.6} y: {d:.6} z: {d:.6}]", .{ game.camera.position.x, game.camera.position.y, game.camera.position.z }),
         });
         line += 1;
 
-        try self.text_manager.append(gpa, .{
+        try game.text_manager.append(gpa, .{
             .pixel_x = 0,
             .pixel_y = line * 6,
-            .text = try std.fmt.allocPrint(gpa, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(self.camera.yaw, 360.0), self.camera.pitch }),
+            .text = try std.fmt.allocPrint(gpa, "yaw: {d:.2} pitch: {d:.2}", .{ @mod(game.camera.yaw, 360.0), game.camera.pitch }),
         });
         line += 1;
 
         // make some space between raycast info
         line += 1;
 
-        line = try self.appendRaycastText(gpa, line);
+        line = try game.appendRaycastText(gpa, line);
 
-        if (self.settings.relative_selector) {
+        if (game.settings.relative_selector) {
             // make some space between relative selector info
             line += 1;
 
-            line = try self.appendRelativeSelectorText(gpa, line);
+            line = try game.appendRelativeSelectorText(gpa, line);
         }
 
-        try self.text_manager.build(gpa, self.screen.window_width, self.screen.window_height, self.settings.ui_scale);
+        try game.text_manager.build(gpa, game.screen.window_width, game.screen.window_height, game.settings.ui_scale);
     }
 
-    fn processChanges(self: *Game, gpa: std.mem.Allocator) !void {
-        const upload_nodes = self.world.light_source_removal_queue.readableLength() > 0;
+    pub const SharedFlags = packed struct {
+        calc_projection_matrix: bool,
+        calc_view_matrix: bool,
+        selector_changed: bool,
+        action: enum(u2) { none, primary, secondary },
+    };
 
-        if (upload_nodes) {
-            self.debug.addition_nodes.data.clearRetainingCapacity();
-            self.debug.removal_nodes.data.clearRetainingCapacity();
+    fn processWindowEvents(game: *Game, delta_time: gl.float, shared_flags: *SharedFlags) !void {
+        if (game.callback_data.new_window_size) |new_window_size| {
+            game.screen.window_width = new_window_size.window_width;
+            game.screen.window_height = new_window_size.window_height;
+            game.screen.window_width_f = @floatFromInt(new_window_size.window_width);
+            game.screen.window_height_f = @floatFromInt(new_window_size.window_height);
+
+            game.screen.calcAspectRatio();
+            game.shader_programs.crosshair.setUniform2f("uWindowSize", game.screen.window_width_f, game.screen.window_height_f);
+
+            gl.Viewport(0, 0, game.screen.window_width, game.screen.window_height);
+
+            try game.offscreen_framebuffer.resizeAndBind(game.screen.window_width, game.screen.window_height, 3);
+
+            shared_flags.calc_projection_matrix = true;
+            game.callback_data.new_window_size = null;
         }
 
-        try self.world.propagateLights(gpa, &self.debug);
+        if (game.callback_data.new_cursor_pos) |new_cursor_pos| {
+            const mouse_speed = game.settings.mouse_speed * delta_time;
+
+            const offset_x = (new_cursor_pos.cursor_x - game.screen.prev_cursor_x) * mouse_speed;
+            const offset_y = (game.screen.prev_cursor_y - new_cursor_pos.cursor_y) * mouse_speed;
+
+            game.screen.prev_cursor_x = new_cursor_pos.cursor_x;
+            game.screen.prev_cursor_y = new_cursor_pos.cursor_y;
+
+            game.camera.yaw += offset_x;
+            game.camera.pitch = std.math.clamp(game.camera.pitch + offset_y, -89.0, 89.0);
+
+            game.camera.calcDirectionAndRight();
+
+            shared_flags.calc_view_matrix = true;
+            game.callback_data.new_cursor_pos = null;
+        }
+    }
+
+    fn processInput(game: *Game, delta_time: gl.float, shared_flags: *SharedFlags) void {
+        if (game.input.getUncached(.close_window) == .press) {
+            game.window.setShouldClose(true);
+        }
+
+        if (game.input.getUncached(.toggle_chunk_borders) == .press) {
+            game.settings.chunk_borders = !game.settings.chunk_borders;
+        }
+
+        if (game.input.getUncached(.toggle_light_removal_nodes) == .press) {
+            game.settings.light_removal_nodes = !game.settings.light_removal_nodes;
+        }
+
+        if (game.input.getUncached(.toggle_light_addition_nodes) == .press) {
+            game.settings.light_addition_nodes = !game.settings.light_addition_nodes;
+        }
+
+        if (game.input.getUncached(.toggle_relative_selector) == .press) {
+            game.settings.relative_selector = !game.settings.relative_selector;
+        }
+
+        if (game.input.getUncached(.slot_1) == .press) {
+            game.selected_slot = 0;
+        }
+
+        if (game.input.getUncached(.slot_2) == .press) {
+            game.selected_slot = 1;
+        }
+
+        if (game.input.getUncached(.slot_3) == .press) {
+            game.selected_slot = 2;
+        }
+
+        if (game.input.getUncached(.slot_4) == .press) {
+            game.selected_slot = 3;
+        }
+
+        if (game.input.getUncached(.slot_5) == .press) {
+            game.selected_slot = 4;
+        }
+
+        if (game.input.getUncached(.slot_6) == .press) {
+            game.selected_slot = 5;
+        }
+
+        if (game.input.getUncached(.slot_7) == .press) {
+            game.selected_slot = 6;
+        }
+
+        if (game.input.getUncached(.move_selector_east) == .press) {
+            game.relative_selector_world_pos.x -|= 1;
+            shared_flags.selector_changed = true;
+        }
+
+        if (game.input.getUncached(.move_selector_west) == .press) {
+            game.relative_selector_world_pos.x +|= 1;
+            shared_flags.selector_changed = true;
+        }
+
+        if (game.input.getUncached(.move_selector_down) == .press) {
+            game.relative_selector_world_pos.y -|= 1;
+            shared_flags.selector_changed = true;
+        }
+
+        if (game.input.getUncached(.move_selector_up) == .press) {
+            game.relative_selector_world_pos.y +|= 1;
+            shared_flags.selector_changed = true;
+        }
+
+        if (game.input.getUncached(.move_selector_north) == .press) {
+            game.relative_selector_world_pos.z -|= 1;
+            shared_flags.selector_changed = true;
+        }
+
+        if (game.input.getUncached(.move_selector_south) == .press) {
+            game.relative_selector_world_pos.z +|= 1;
+            shared_flags.selector_changed = true;
+        }
+
+        const movement_speed = game.settings.movement_speed * delta_time;
+
+        if (game.input.getCached(.move_camera_left)) {
+            game.camera.position.subtractInPlace(game.camera.right.multiplyScalar(movement_speed));
+            shared_flags.calc_view_matrix = true;
+        }
+
+        if (game.input.getCached(.move_camera_right)) {
+            game.camera.position.addInPlace(game.camera.right.multiplyScalar(movement_speed));
+            shared_flags.calc_view_matrix = true;
+        }
+
+        if (game.input.getCached(.move_camera_down)) {
+            game.camera.position.subtractInPlace(Camera.up.multiplyScalar(movement_speed));
+            shared_flags.calc_view_matrix = true;
+        }
+
+        if (game.input.getCached(.move_camera_up)) {
+            game.camera.position.addInPlace(Camera.up.multiplyScalar(movement_speed));
+            shared_flags.calc_view_matrix = true;
+        }
+
+        if (game.input.getCached(.move_camera_backward)) {
+            game.camera.position.subtractInPlace(game.camera.horizontal_direction.multiplyScalar(movement_speed));
+            shared_flags.calc_view_matrix = true;
+        }
+
+        if (game.input.getCached(.move_camera_forward)) {
+            game.camera.position.addInPlace(game.camera.horizontal_direction.multiplyScalar(movement_speed));
+            shared_flags.calc_view_matrix = true;
+        }
+
+        if (game.input.getUncached(.primary_action) == .press) {
+            shared_flags.action = .primary;
+        }
+
+        if (game.input.getUncached(.secondary_action) == .press) {
+            shared_flags.action = .secondary;
+        }
+    }
+
+    fn processSharedFlags(game: *Game, gpa: std.mem.Allocator, shared_flags: *SharedFlags) !void {
+        if (shared_flags.calc_view_matrix) {
+            game.camera.calcViewMatrix();
+
+            game.shader_programs.chunks.setUniform3f("uCameraPosition", game.camera.position.x, game.camera.position.y, game.camera.position.z);
+        }
+
+        if (shared_flags.calc_projection_matrix) {
+            game.camera.calcProjectionMatrix(game.screen.aspect_ratio);
+        }
+
+        const calc_view_projection_matrix = shared_flags.calc_view_matrix or shared_flags.calc_projection_matrix;
+        if (calc_view_projection_matrix) {
+            game.camera.calcViewProjectionMatrix();
+            game.camera.calcFrustumPlanes();
+            game.uniform_buffer.uploadViewProjectionMatrix(game.camera.view_projection_matrix);
+        }
+
+        if (calc_view_projection_matrix or shared_flags.action != .none) {
+            game.selected_block = game.world.raycast(game.camera.position, game.camera.direction);
+
+            var raycast_again = false;
+
+            if (shared_flags.action == .primary) skip: {
+                const block = game.selected_block.block orelse break :skip;
+
+                if (block.kind == .air) break :skip;
+
+                const world_pos = game.selected_block.world_pos;
+                try game.world.breakBlock(gpa, world_pos, block);
+
+                raycast_again = true;
+            }
+
+            if (shared_flags.action == .secondary) skip: {
+                const selected_dir = game.selected_block.dir;
+                if (selected_dir == .out_of_bounds or selected_dir == .inside) break :skip;
+
+                const world_pos = game.selected_block.world_pos.add(World.Pos.OFFSETS[selected_dir.idx()]);
+                if (game.world.getChunkOrNull(world_pos.toChunkPos()) == null) break :skip;
+
+                const block = game.inventory[game.selected_slot];
+                try game.world.placeBlock(gpa, world_pos, block);
+
+                raycast_again = true;
+            }
+
+            if (raycast_again) {
+                game.selected_block = game.world.raycast(game.camera.position, game.camera.direction);
+            }
+
+            const selected_block_pos = game.selected_block.world_pos.toVec3f();
+            game.uniform_buffer.uploadSelectedBlockPos(selected_block_pos);
+
+            const selected_dir = game.selected_block.dir;
+
+            if (selected_dir != .out_of_bounds and selected_dir != .inside) {
+                if (game.selected_block.block) |block| {
+                    const dir_idx = (block.kind.getModelIdx() * 36) + (selected_dir.idx() * 6);
+                    game.shader_programs.selected_side.setUniform1ui("uFaceIdx", @intCast(dir_idx));
+                }
+            }
+        }
+
+        if (shared_flags.selector_changed) {
+            const selector_pos = game.selected_block.world_pos.add(game.relative_selector_world_pos).toVec3f();
+            game.uniform_buffer.uploadSelectorPos(selector_pos);
+        }
+    }
+
+    fn processChanges(game: *Game, gpa: std.mem.Allocator, shared_flags: *SharedFlags) !void {
+        const upload_nodes = game.world.light_source_removal_queue.readableLength() > 0;
 
         if (upload_nodes) {
-            self.debug.addition_nodes.ssbo.upload(self.debug.addition_nodes.data.items) catch |err| switch (err) {
+            game.debug.addition_nodes.data.clearRetainingCapacity();
+            game.debug.removal_nodes.data.clearRetainingCapacity();
+        }
+
+        try game.world.propagateLights(gpa, &game.debug);
+
+        if (upload_nodes) {
+            game.debug.addition_nodes.ssbo.upload(game.debug.addition_nodes.data.items) catch |err| switch (err) {
                 error.DataTooLarge => {
-                    self.debug.addition_nodes.ssbo.resize(self.debug.addition_nodes.data.items.len, 0);
-                    self.debug.addition_nodes.ssbo.upload(self.debug.addition_nodes.data.items) catch unreachable;
+                    game.debug.addition_nodes.ssbo.resize(game.debug.addition_nodes.data.items.len, 0);
+                    game.debug.addition_nodes.ssbo.upload(game.debug.addition_nodes.data.items) catch unreachable;
                 },
                 else => unreachable,
             };
 
-            self.debug.removal_nodes.ssbo.upload(self.debug.removal_nodes.data.items) catch |err| switch (err) {
+            game.debug.removal_nodes.ssbo.upload(game.debug.removal_nodes.data.items) catch |err| switch (err) {
                 error.DataTooLarge => {
-                    self.debug.removal_nodes.ssbo.resize(self.debug.removal_nodes.data.items.len, 0);
-                    self.debug.removal_nodes.ssbo.upload(self.debug.removal_nodes.data.items) catch unreachable;
+                    game.debug.removal_nodes.ssbo.resize(game.debug.removal_nodes.data.items.len, 0);
+                    game.debug.removal_nodes.ssbo.upload(game.debug.removal_nodes.data.items) catch unreachable;
                 },
                 else => unreachable,
             };
         }
 
         var upload_mesh = false;
-        while (self.world.chunks_which_need_to_regenerate_meshes.dequeue()) |chunk_pos| {
-            if (self.world.getChunkOrNull(chunk_pos) == null) continue;
+        while (game.world.chunks_which_need_to_regenerate_meshes.dequeue()) |chunk_pos| {
+            if (game.world.getChunkOrNull(chunk_pos) == null) continue;
 
             upload_mesh = true;
 
-            self.world_mesh.invalidateChunkMesh(chunk_pos);
-            try self.world_mesh.generateChunkMesh(gpa, &self.world, chunk_pos);
+            game.world_mesh.invalidateChunkMesh(chunk_pos);
+            try game.world_mesh.generateChunkMesh(gpa, &game.world, chunk_pos);
         }
 
-        if (self.camera.changed) {
-            try self.world_mesh.generateVisibleChunkMeshes(gpa, &self.world, &self.camera);
-            try self.world_mesh.generateCommands(gpa);
-            self.world_mesh.uploadCommands();
+        if (shared_flags.calc_projection_matrix or shared_flags.calc_view_matrix) {
+            try game.world_mesh.generateVisibleChunkMeshes(gpa, &game.world, &game.camera);
+            try game.world_mesh.generateCommands(gpa);
+            game.world_mesh.uploadCommands();
         }
 
         if (upload_mesh) {
-            self.world_mesh.uploadMesh();
+            game.world_mesh.uploadMesh();
         }
-
-        self.camera.changed = false;
     }
 
-    fn render(self: *Game) void {
+    fn render(game: *Game) void {
         gl.ClearColor(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-        self.shader_programs.chunks.bind();
+        game.shader_programs.chunks.bind();
         inline for (BlockLayer.values) |block_layer| skip: {
             if (block_layer == .water) {
                 gl.Disable(gl.CULL_FACE);
             }
 
-            const world_mesh_layer = &self.world_mesh.layers[block_layer.idx()];
+            const world_mesh_layer = &game.world_mesh.layers[block_layer.idx()];
             if (world_mesh_layer.command.data.items.len == 0) {
                 if (block_layer == .water) {
                     gl.Enable(gl.CULL_FACE);
@@ -722,7 +764,7 @@ const Game = struct {
             }
         }
 
-        // self.shader_programs.chunks_bb.bind();
+        // game.shader_programs.chunks_bb.bind();
         // {
         //     gl.Enable(gl.POLYGON_OFFSET_FILL);
         //     defer gl.Disable(gl.POLYGON_OFFSET_FILL);
@@ -737,14 +779,14 @@ const Game = struct {
         //     defer gl.ColorMask(gl.TRUE, gl.TRUE, gl.TRUE, gl.TRUE);
 
         //     gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
-        //     gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(self.world_mesh.pos.data.items.len));
+        //     gl.DrawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(game.world_mesh.pos.data.items.len));
         //     gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
         // }
 
-        gl.BlitNamedFramebuffer(0, self.offscreen_framebuffer.framebuffer_handle, 0, 0, self.screen.window_width, self.screen.window_height, 0, 0, self.screen.window_width, self.screen.window_height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+        gl.BlitNamedFramebuffer(0, game.offscreen_framebuffer.framebuffer_handle, 0, 0, game.screen.window_width, game.screen.window_height, 0, 0, game.screen.window_width, game.screen.window_height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
 
-        if (self.settings.chunk_borders) {
-            self.shader_programs.chunks_debug.bind();
+        if (game.settings.chunk_borders) {
+            game.shader_programs.chunks_debug.bind();
             {
                 gl.Enable(gl.POLYGON_OFFSET_LINE);
                 defer gl.Disable(gl.POLYGON_OFFSET_LINE);
@@ -755,13 +797,13 @@ const Game = struct {
                 gl.Enable(gl.LINE_SMOOTH);
                 defer gl.Disable(gl.LINE_SMOOTH);
 
-                gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(self.world_mesh.visible_chunk_mesh_pos.data.items.len));
+                gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(game.world_mesh.visible_chunk_mesh_pos.data.items.len));
             }
         }
 
-        if (self.selected_block.dir != .out_of_bounds and self.selected_block.dir != .inside) {
-            if (self.selected_block.block) |_| {
-                self.shader_programs.selected_side.bind();
+        if (game.selected_block.dir != .out_of_bounds and game.selected_block.dir != .inside) {
+            if (game.selected_block.block) |_| {
+                game.shader_programs.selected_side.bind();
                 {
                     gl.Enable(gl.POLYGON_OFFSET_FILL);
                     defer gl.Disable(gl.POLYGON_OFFSET_FILL);
@@ -774,8 +816,8 @@ const Game = struct {
             }
         }
 
-        if (self.settings.light_removal_nodes or self.settings.light_addition_nodes) {
-            self.shader_programs.debug_nodes.bind();
+        if (game.settings.light_removal_nodes or game.settings.light_addition_nodes) {
+            game.shader_programs.debug_nodes.bind();
             {
                 gl.Enable(gl.POLYGON_OFFSET_LINE);
                 defer gl.Disable(gl.POLYGON_OFFSET_LINE);
@@ -789,21 +831,21 @@ const Game = struct {
                 gl.DepthFunc(gl.LEQUAL);
                 defer gl.DepthFunc(gl.LESS);
 
-                if (self.settings.light_removal_nodes) {
-                    self.shader_programs.debug_nodes.setUniform3f("uColor", 1, 0, 0);
-                    self.debug.removal_nodes.ssbo.bind(15);
-                    gl.DrawArraysInstanced(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len, @intCast(self.debug.removal_nodes.data.items.len));
+                if (game.settings.light_removal_nodes) {
+                    game.shader_programs.debug_nodes.setUniform3f("uColor", 1, 0, 0);
+                    game.debug.removal_nodes.ssbo.bind(15);
+                    gl.DrawArraysInstanced(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len, @intCast(game.debug.removal_nodes.data.items.len));
                 }
 
-                if (self.settings.light_addition_nodes) {
-                    self.shader_programs.debug_nodes.setUniform3f("uColor", 0, 0, 1);
-                    self.debug.addition_nodes.ssbo.bind(15);
-                    gl.DrawArraysInstanced(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len, @intCast(self.debug.addition_nodes.data.items.len));
+                if (game.settings.light_addition_nodes) {
+                    game.shader_programs.debug_nodes.setUniform3f("uColor", 0, 0, 1);
+                    game.debug.addition_nodes.ssbo.bind(15);
+                    gl.DrawArraysInstanced(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len, @intCast(game.debug.addition_nodes.data.items.len));
                 }
             }
         }
 
-        self.shader_programs.selected_block.bind();
+        game.shader_programs.selected_block.bind();
         {
             gl.Enable(gl.POLYGON_OFFSET_LINE);
             defer gl.Disable(gl.POLYGON_OFFSET_LINE);
@@ -820,8 +862,8 @@ const Game = struct {
             gl.DrawArrays(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len);
         }
 
-        if (self.settings.relative_selector) {
-            self.shader_programs.relative_selector.bind();
+        if (game.settings.relative_selector) {
+            game.shader_programs.relative_selector.bind();
 
             gl.Enable(gl.POLYGON_OFFSET_LINE);
             defer gl.Disable(gl.POLYGON_OFFSET_LINE);
@@ -838,11 +880,11 @@ const Game = struct {
             gl.DrawArrays(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len);
         }
 
-        self.shader_programs.crosshair.bind();
+        game.shader_programs.crosshair.bind();
         gl.DrawArrays(gl.TRIANGLES, 0, 6);
 
-        self.shader_programs.text.bind();
-        gl.DrawArrays(gl.TRIANGLES, 0, @intCast(self.text_manager.vertices.data.items.len));
+        game.shader_programs.text.bind();
+        gl.DrawArrays(gl.TRIANGLES, 0, @intCast(game.text_manager.vertices.data.items.len));
     }
 };
 
@@ -886,16 +928,28 @@ pub fn main() !void {
     var timer: std.time.Timer = try .start();
 
     while (!game.window.shouldClose()) {
-        try game.handleInput(gpa, delta_time);
+        glfw.pollEvents();
+
+        var shared_flags: Game.SharedFlags = .{
+            .calc_projection_matrix = false,
+            .calc_view_matrix = false,
+            .selector_changed = false,
+            .action = .none,
+        };
+
+        try game.processWindowEvents(delta_time, &shared_flags);
+        game.processInput(delta_time, &shared_flags);
+        try game.processSharedFlags(gpa, &shared_flags);
+
         try game.appendText(gpa);
 
-        try game.processChanges(gpa);
+        try game.processChanges(gpa, &shared_flags);
 
         game.render();
 
-        delta_time = @floatCast(@as(f64, @floatFromInt(timer.lap())) / 1_000_000_000.0);
+        game.input.resetUncachedKeys();
 
+        delta_time = @floatCast(@as(f64, @floatFromInt(timer.lap())) / 1_000_000_000.0);
         game.window.swapBuffers();
-        glfw.pollEvents();
     }
 }

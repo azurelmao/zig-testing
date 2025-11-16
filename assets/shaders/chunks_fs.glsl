@@ -3,7 +3,7 @@
 in vec2 pTextureUV;
 flat in uint pTextureIdx;
 
-flat in float pNormalLight;
+flat in uint pNormal;
 flat in vec3 pLight;
 
 in vec3 pVertexPosition;
@@ -23,9 +23,35 @@ vec4 linearFog(vec4 inColor, float vertexDistance, float fogStart, float fogEnd,
 
 const vec4 fogColor = vec4(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
 
+const float[6] NormalLight = float[](
+    0.6,
+    0.6,
+    0.4,
+    1.0,
+    0.8,
+    0.8
+);
+
+const float[6] NormalLightInverted = float[](
+    0.6,
+    0.6,
+    1.0,
+    0.4,
+    0.8,
+    0.8
+);
+
 void main() {
+    float normalLight;
+
+    if (gl_FrontFacing) {
+        normalLight = NormalLight[pNormal];
+    } else {
+        normalLight = NormalLightInverted[pNormal];
+    }
+
     vec4 texColor = texture(uTexture, vec3(pTextureUV, pTextureIdx));
-    vec4 color = vec4(texColor.rgb * pNormalLight * pLight, texColor.a);
+    vec4 color = vec4(texColor.rgb * pLight * normalLight, texColor.a);
 
     oColor = linearFog(color, distance(uCameraPosition, pVertexPosition), 153.6, 691.2, fogColor);
 }

@@ -307,7 +307,8 @@ pub fn generateVisibleChunkMeshes(self: *WorldMesh, gpa: std.mem.Allocator, worl
 }
 
 pub fn generateCommands(self: *WorldMesh, gpa: std.mem.Allocator) !void {
-    for (&self.layers) |*world_mesh_layer| {
+    for (BlockLayer.values) |block_layer| {
+        const world_mesh_layer = &self.layers[block_layer.idx()];
         world_mesh_layer.command.data.clearRetainingCapacity();
         world_mesh_layer.chunk_mesh_pos.data.clearRetainingCapacity();
 
@@ -319,7 +320,7 @@ pub fn generateCommands(self: *WorldMesh, gpa: std.mem.Allocator) !void {
 
             const virtual_alloc_info = world_mesh_layer.virtual_block.allocInfo(suballocation.virtual_alloc);
 
-            const mask: u6 = @bitCast(visibility);
+            const mask: u6 = if (block_layer == .water) comptime std.math.maxInt(u6) else @bitCast(visibility);
             var offset: usize = virtual_alloc_info.offset;
             var starting_offset: usize = 0;
             var total_size: usize = 0;
