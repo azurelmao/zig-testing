@@ -46,12 +46,7 @@ pub const Light = packed struct(u16) {
     }
 };
 
-pub const LightAdditionNode = packed struct {
+pub const LightNode = packed struct {
     world_pos: World.Pos,
     light: Light,
-};
-
-pub const LightRemovalNode = packed struct {
-    world_pos: World.Pos,
-    light: u4,
 };
