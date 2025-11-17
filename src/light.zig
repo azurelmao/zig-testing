@@ -19,6 +19,12 @@ pub const Light = packed struct(u16) {
         green,
         blue,
         indirect,
+
+        pub const values = std.enums.values(Color);
+
+        pub fn idx(self: Color) u2 {
+            return @intFromEnum(self);
+        }
     };
 
     pub inline fn set(self: *Light, comptime color: Color, value: u4) void {
@@ -40,8 +46,12 @@ pub const Light = packed struct(u16) {
     }
 };
 
-pub const LightNode = packed struct {
+pub const LightAdditionNode = packed struct {
     world_pos: World.Pos,
     light: Light,
-    ttl: u4,
+};
+
+pub const LightRemovalNode = packed struct {
+    world_pos: World.Pos,
+    light: u4,
 };

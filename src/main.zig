@@ -113,6 +113,8 @@ const Game = struct {
             inventory[idx] = .init(.lamp, .{ .lamp = .{ .light = light } });
         }
 
+        inventory[6] = .initNone(.stone);
+
         return .{
             .settings = settings,
             .screen = screen,
@@ -687,44 +689,44 @@ const Game = struct {
     }
 
     fn processChanges(game: *Game, gpa: std.mem.Allocator, shared_flags: *SharedFlags) !void {
-        const upload_nodes = game.world.light_source_removal_queue.readableLength() > 0;
+        // const upload_nodes = game.world.light_source_removal_queue.readableLength() > 0;
 
-        if (upload_nodes) {
-            game.debug.addition_nodes.data.clearRetainingCapacity();
-            game.debug.removal_nodes.data.clearRetainingCapacity();
-        }
+        // if (upload_nodes) {
+        //     game.debug.addition_nodes.data.clearRetainingCapacity();
+        //     game.debug.removal_nodes.data.clearRetainingCapacity();
+        // }
 
-        try game.world.propagateLights(gpa, &game.debug);
+        // try game.world.propagateLights(gpa, &game.debug);
 
-        if (upload_nodes) {
-            game.debug.addition_nodes.ssbo.upload(game.debug.addition_nodes.data.items) catch |err| switch (err) {
-                error.DataTooLarge => {
-                    game.debug.addition_nodes.ssbo.resize(game.debug.addition_nodes.data.items.len, 0);
-                    game.debug.addition_nodes.ssbo.upload(game.debug.addition_nodes.data.items) catch unreachable;
-                },
-                else => unreachable,
-            };
+        // if (upload_nodes) {
+        //     game.debug.addition_nodes.ssbo.upload(game.debug.addition_nodes.data.items) catch |err| switch (err) {
+        //         error.DataTooLarge => {
+        //             game.debug.addition_nodes.ssbo.resize(game.debug.addition_nodes.data.items.len, 0);
+        //             game.debug.addition_nodes.ssbo.upload(game.debug.addition_nodes.data.items) catch unreachable;
+        //         },
+        //         else => unreachable,
+        //     };
 
-            game.debug.removal_nodes.ssbo.upload(game.debug.removal_nodes.data.items) catch |err| switch (err) {
-                error.DataTooLarge => {
-                    game.debug.removal_nodes.ssbo.resize(game.debug.removal_nodes.data.items.len, 0);
-                    game.debug.removal_nodes.ssbo.upload(game.debug.removal_nodes.data.items) catch unreachable;
-                },
-                else => unreachable,
-            };
-        }
+        //     game.debug.removal_nodes.ssbo.upload(game.debug.removal_nodes.data.items) catch |err| switch (err) {
+        //         error.DataTooLarge => {
+        //             game.debug.removal_nodes.ssbo.resize(game.debug.removal_nodes.data.items.len, 0);
+        //             game.debug.removal_nodes.ssbo.upload(game.debug.removal_nodes.data.items) catch unreachable;
+        //         },
+        //         else => unreachable,
+        //     };
+        // }
 
         var upload_mesh = false;
         while (game.world.chunks_which_need_to_regenerate_meshes.dequeue()) |chunk_pos| {
             if (game.world.getChunkOrNull(chunk_pos) == null) continue;
 
-            upload_mesh = true;
-
             game.world_mesh.invalidateChunkMesh(chunk_pos);
             try game.world_mesh.generateChunkMesh(gpa, &game.world, chunk_pos);
+
+            upload_mesh = true;
         }
 
-        if (shared_flags.calc_projection_matrix or shared_flags.calc_view_matrix) {
+        if (shared_flags.calc_projection_matrix or shared_flags.calc_view_matrix or shared_flags.action != .none) {
             try game.world_mesh.generateVisibleChunkMeshes(gpa, &game.world, &game.camera);
             try game.world_mesh.generateCommands(gpa);
             game.world_mesh.uploadCommands();
@@ -913,9 +915,10 @@ pub fn main() !void {
     //     }
     // }
 
-    try game.world.propagateLights(gpa, &game.debug);
-    game.debug.removal_nodes.data.clearRetainingCapacity();
-    game.debug.addition_nodes.data.clearRetainingCapacity();
+    // try game.world.propagateLights(gpa, &game.debug);
+    try game.world.propagateLightAddition(gpa);
+    // game.debug.removal_nodes.data.clearRetainingCapacity();
+    // game.debug.addition_nodes.data.clearRetainingCapacity();
 
     try game.world_mesh.generateMesh(gpa, &game.world);
     try game.world_mesh.generateVisibleChunkMeshes(gpa, &game.world, &game.camera);
@@ -939,8 +942,8 @@ pub fn main() !void {
 
         try game.processWindowEvents(delta_time, &shared_flags);
         game.processInput(delta_time, &shared_flags);
-        try game.processSharedFlags(gpa, &shared_flags);
 
+        try game.processSharedFlags(gpa, &shared_flags);
         try game.appendText(gpa);
 
         try game.processChanges(gpa, &shared_flags);
