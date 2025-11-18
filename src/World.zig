@@ -216,7 +216,6 @@ pub fn breakBlock(world: *World, gpa: std.mem.Allocator, world_pos: WorldPos, bl
         else => {},
     }
 
-    // _ = try world.removeLight(world_pos);
     for (Dir.indices) |dir_idx| {
         const neighbor_world_pos = world_pos.add(World.WorldPos.OFFSETS[dir_idx]);
         const neighbor_block = try world.getBlock(neighbor_world_pos);

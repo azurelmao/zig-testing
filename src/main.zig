@@ -42,6 +42,7 @@ const Game = struct {
     const TITLE = "PolyCosm";
     const DEBUG_CONTEXT = true;
 
+    paused: bool,
     settings: Settings,
     screen: Screen,
     camera: Camera,
@@ -111,6 +112,7 @@ const Game = struct {
         inventory[6] = .initNone(.stone);
 
         return .{
+            .paused = false,
             .settings = settings,
             .screen = screen,
             .camera = camera,
@@ -471,20 +473,23 @@ const Game = struct {
         }
 
         if (game.callback_data.new_cursor_pos) |new_cursor_pos| {
-            const mouse_speed = game.settings.mouse_speed * delta_time;
+            if (!game.paused) {
+                const mouse_speed = game.settings.mouse_speed * delta_time;
 
-            const offset_x = (new_cursor_pos.cursor_x - game.screen.prev_cursor_x) * mouse_speed;
-            const offset_y = (game.screen.prev_cursor_y - new_cursor_pos.cursor_y) * mouse_speed;
+                const offset_x = (new_cursor_pos.cursor_x - game.screen.prev_cursor_x) * mouse_speed;
+                const offset_y = (game.screen.prev_cursor_y - new_cursor_pos.cursor_y) * mouse_speed;
 
-            game.screen.prev_cursor_x = new_cursor_pos.cursor_x;
-            game.screen.prev_cursor_y = new_cursor_pos.cursor_y;
+                game.screen.prev_cursor_x = new_cursor_pos.cursor_x;
+                game.screen.prev_cursor_y = new_cursor_pos.cursor_y;
 
-            game.camera.yaw += offset_x;
-            game.camera.pitch = std.math.clamp(game.camera.pitch + offset_y, -89.0, 89.0);
+                game.camera.yaw += offset_x;
+                game.camera.pitch = std.math.clamp(game.camera.pitch + offset_y, -89.0, 89.0);
 
-            game.camera.calcDirectionAndRight();
+                game.camera.calcDirectionAndRight();
 
-            shared_flags.calc_view_matrix = true;
+                shared_flags.calc_view_matrix = true;
+            }
+
             game.callback_data.new_cursor_pos = null;
         }
     }
@@ -492,6 +497,13 @@ const Game = struct {
     fn processInput(game: *Game, delta_time: gl.float, shared_flags: *SharedFlags) void {
         if (game.input.getUncached(.close_window) == .press) {
             game.window.setShouldClose(true);
+        }
+
+        if (game.input.getUncached(.pause) == .press) {
+            game.paused = !game.paused;
+
+            const cursor_mode: glfw.Window.InputModeCursor = if (game.paused) .normal else .disabled;
+            game.window.setInputModeCursor(cursor_mode);
         }
 
         if (game.input.getUncached(.toggle_chunk_borders) == .press) {
@@ -610,7 +622,7 @@ const Game = struct {
     }
 
     fn processSharedFlags(game: *Game, gpa: std.mem.Allocator, shared_flags: *SharedFlags) !void {
-        if (shared_flags.calc_view_matrix) {
+        if (shared_flags.calc_view_matrix and !game.paused) {
             game.camera.calcViewMatrix();
 
             game.shader_programs.chunks.setUniform3f("uCameraPosition", game.camera.position.x, game.camera.position.y, game.camera.position.z);
@@ -626,6 +638,8 @@ const Game = struct {
             game.camera.calcFrustumPlanes();
             game.uniform_buffer.uploadViewProjectionMatrix(game.camera.view_projection_matrix);
         }
+
+        if (game.paused) return;
 
         if (calc_view_projection_matrix or shared_flags.action != .none) {
             game.selected_block = game.world.raycast(game.camera.position, game.camera.direction);
@@ -932,7 +946,8 @@ pub fn main() !void {
         try game.processSharedFlags(gpa, &shared_flags);
         try game.appendText(gpa);
 
-        try game.processChanges(gpa, &shared_flags);
+        if (!game.paused)
+            try game.processChanges(gpa, &shared_flags);
 
         game.render();
 
