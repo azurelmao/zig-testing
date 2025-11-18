@@ -2,6 +2,7 @@ const std = @import("std");
 const glfw = @import("glfw");
 const gl = @import("gl");
 const stbi = @import("zstbi");
+const debug = @import("debug.zig");
 const callback = @import("callback.zig");
 const Input = @import("Input.zig");
 const World = @import("World.zig");
@@ -37,11 +38,6 @@ const Settings = struct {
     relative_selector: bool = false,
 };
 
-pub const Debug = struct {
-    addition_nodes: ShaderStorageBufferWithArrayList(Vec3f),
-    removal_nodes: ShaderStorageBufferWithArrayList(Vec3f),
-};
-
 const Game = struct {
     const TITLE = "PolyCosm";
     const DEBUG_CONTEXT = true;
@@ -64,7 +60,6 @@ const Game = struct {
     relative_selector_world_pos: World.Pos,
     inventory: [7]Block,
     selected_slot: u3,
-    debug: Debug,
 
     fn init(gpa: std.mem.Allocator) !Game {
         const settings: Settings = .{};
@@ -134,10 +129,6 @@ const Game = struct {
             .relative_selector_world_pos = .{ .x = 0, .y = 0, .z = 0 },
             .inventory = inventory,
             .selected_slot = 0,
-            .debug = .{
-                .addition_nodes = try .init(gpa, 10_000, gl.DYNAMIC_STORAGE_BIT),
-                .removal_nodes = try .init(gpa, 10_000, gl.DYNAMIC_STORAGE_BIT),
-            },
         };
     }
 
@@ -175,7 +166,7 @@ const Game = struct {
         const getProcAddress = struct {
             fn getProcAddress(proc_name: [*:0]const u8) callconv(.C) ?glfw.GLProc {
                 if (glfw.getProcAddress(proc_name)) |proc_address| return proc_address;
-                std.log.err("failed to initialize proc: {?s}", .{proc_name});
+                std.log.warn("failed to initialize proc: {?s}", .{proc_name});
                 return null;
             }
         }.getProcAddress;
@@ -689,32 +680,25 @@ const Game = struct {
     }
 
     fn processChanges(game: *Game, gpa: std.mem.Allocator, shared_flags: *SharedFlags) !void {
-        // const upload_nodes = game.world.light_source_removal_queue.readableLength() > 0;
+        if (debug.upload_nodes) {
+            debug.addition_nodes.ssbo.upload(debug.addition_nodes.data.items) catch |err| switch (err) {
+                error.DataTooLarge => {
+                    debug.addition_nodes.ssbo.resize(debug.addition_nodes.data.items.len, 0);
+                    debug.addition_nodes.ssbo.upload(debug.addition_nodes.data.items) catch unreachable;
+                },
+                else => unreachable,
+            };
 
-        // if (upload_nodes) {
-        //     game.debug.addition_nodes.data.clearRetainingCapacity();
-        //     game.debug.removal_nodes.data.clearRetainingCapacity();
-        // }
+            debug.removal_nodes.ssbo.upload(debug.removal_nodes.data.items) catch |err| switch (err) {
+                error.DataTooLarge => {
+                    debug.removal_nodes.ssbo.resize(debug.removal_nodes.data.items.len, 0);
+                    debug.removal_nodes.ssbo.upload(debug.removal_nodes.data.items) catch unreachable;
+                },
+                else => unreachable,
+            };
 
-        // try game.world.propagateLights(gpa, &game.debug);
-
-        // if (upload_nodes) {
-        //     game.debug.addition_nodes.ssbo.upload(game.debug.addition_nodes.data.items) catch |err| switch (err) {
-        //         error.DataTooLarge => {
-        //             game.debug.addition_nodes.ssbo.resize(game.debug.addition_nodes.data.items.len, 0);
-        //             game.debug.addition_nodes.ssbo.upload(game.debug.addition_nodes.data.items) catch unreachable;
-        //         },
-        //         else => unreachable,
-        //     };
-
-        //     game.debug.removal_nodes.ssbo.upload(game.debug.removal_nodes.data.items) catch |err| switch (err) {
-        //         error.DataTooLarge => {
-        //             game.debug.removal_nodes.ssbo.resize(game.debug.removal_nodes.data.items.len, 0);
-        //             game.debug.removal_nodes.ssbo.upload(game.debug.removal_nodes.data.items) catch unreachable;
-        //         },
-        //         else => unreachable,
-        //     };
-        // }
+            debug.upload_nodes = false;
+        }
 
         var upload_mesh = false;
         while (game.world.chunks_which_need_to_regenerate_meshes.dequeue()) |chunk_pos| {
@@ -835,14 +819,14 @@ const Game = struct {
 
                 if (game.settings.light_removal_nodes) {
                     game.shader_programs.debug_nodes.setUniform3f("uColor", 1, 0, 0);
-                    game.debug.removal_nodes.ssbo.bind(15);
-                    gl.DrawArraysInstanced(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len, @intCast(game.debug.removal_nodes.data.items.len));
+                    debug.removal_nodes.ssbo.bind(15);
+                    gl.DrawArraysInstanced(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len, @intCast(debug.removal_nodes.data.items.len));
                 }
 
                 if (game.settings.light_addition_nodes) {
                     game.shader_programs.debug_nodes.setUniform3f("uColor", 0, 0, 1);
-                    game.debug.addition_nodes.ssbo.bind(15);
-                    gl.DrawArraysInstanced(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len, @intCast(game.debug.addition_nodes.data.items.len));
+                    debug.addition_nodes.ssbo.bind(15);
+                    gl.DrawArraysInstanced(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len, @intCast(debug.addition_nodes.data.items.len));
                 }
             }
         }
@@ -901,6 +885,8 @@ pub fn main() !void {
 
     var game: Game = try .init(gpa);
     defer game.deinit(gpa);
+
+    try debug.init(gpa);
 
     try game.world.generate(gpa);
 
