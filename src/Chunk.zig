@@ -28,8 +28,6 @@ air_bitset: *[AREA]u32,
 water_bitset: *[AREA]u32,
 num_of_air: u16,
 
-neighbors: [6]?*Chunk,
-
 pub const Pos = struct {
     x: i11,
     y: i11,
@@ -132,8 +130,6 @@ pub fn init(gpa: std.mem.Allocator, pos: Pos) !Chunk {
         .air_bitset = air_bitset,
         .water_bitset = water_bitset,
         .num_of_air = VOLUME,
-
-        .neighbors = @splat(null),
     };
 }
 

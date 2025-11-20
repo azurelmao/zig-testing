@@ -412,14 +412,6 @@ pub fn generate(world: *World, gpa: std.mem.Allocator) !void {
         }
     }
 
-    var iter = world.chunks.valueIterator();
-    while (iter.next()) |chunk| {
-        for (Dir.indices) |dir_idx| {
-            const neighbor_chunk_pos = chunk.pos.add(Chunk.Pos.OFFSETS[dir_idx]);
-            chunk.neighbors[dir_idx] = world.getChunkOrNull(neighbor_chunk_pos);
-        }
-    }
-
     const indirect_light_bitset = try gpa.create([Chunk.AREA]u32);
     const cave_bitset = try gpa.create([Chunk.AREA]u32);
 

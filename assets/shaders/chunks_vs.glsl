@@ -102,7 +102,7 @@ void main() {
     uint vertexIdx = (modelIdx * 36) + (normal * 6) + (gl_VertexID % 6);
 
     uint perVertexData = sPerVertex[vertexIdx];
-    vec3 modelPosition = unpackModelPosition(perVertexData);
+    vec3 modelPosition = unpackModelPosition(perVertexData) / 16.0;
     vec2 textureUV = unpackTextureUV(perVertexData);
     
     pTextureUV = textureUV;

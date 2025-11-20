@@ -62,9 +62,8 @@ const Game = struct {
     world_mesh: WorldMesh,
     selected_block: World.RaycastResult,
     relative_selector_world_pos: World.Pos,
-    inventory: [7]Block,
+    inventory: []Block,
     selected_slot: u3,
-    debug: Debug,
 
     fn init(gpa: std.mem.Allocator) !Game {
         const settings: Settings = .{};
@@ -100,20 +99,7 @@ const Game = struct {
 
         const world_mesh: WorldMesh = try .init(gpa);
 
-        var inventory: [7]Block = undefined;
-        for (0..inventory.len) |idx| {
-            const light_idx: u4 = @intCast(idx + 1);
-            const light: Light = .{
-                .red = (light_idx & 0b1) * 15,
-                .green = ((light_idx >> 1) & 0b1) * 15,
-                .blue = ((light_idx >> 2) & 0b1) * 15,
-                .indirect = 0,
-            };
-
-            inventory[idx] = .init(.lamp, .{ .lamp = .{ .light = light } });
-        }
-
-        inventory[6] = .initNone(.stone);
+        const inventory = initInventory(gpa);
 
         return .{
             .settings = settings,
@@ -134,10 +120,6 @@ const Game = struct {
             .relative_selector_world_pos = .{ .x = 0, .y = 0, .z = 0 },
             .inventory = inventory,
             .selected_slot = 0,
-            .debug = .{
-                .addition_nodes = try .init(gpa, 10_000, gl.DYNAMIC_STORAGE_BIT),
-                .removal_nodes = try .init(gpa, 10_000, gl.DYNAMIC_STORAGE_BIT),
-            },
         };
     }
 
@@ -231,6 +213,67 @@ const Game = struct {
         window.setMouseButtonCallback(callback.buttonCallback);
 
         return window;
+    }
+
+    fn initInventory(gpa: std.mem.Allocator) []Block {
+        const inventory: std.ArrayListUnmanaged(Block) = .empty;
+
+        // Lamp lights
+        for ([_]Light{
+            .{
+                .red = 15,
+                .green = 0,
+                .blue = 0,
+                .indirect = 0,
+            },
+            .{
+                .red = 0,
+                .green = 15,
+                .blue = 0,
+                .indirect = 0,
+            },
+            .{
+                .red = 0,
+                .green = 0,
+                .blue = 15,
+                .indirect = 0,
+            },
+            .{
+                .red = 15,
+                .green = 15,
+                .blue = 0,
+                .indirect = 0,
+            },
+            .{
+                .red = 15,
+                .green = 0,
+                .blue = 15,
+                .indirect = 0,
+            },
+            .{
+                .red = 0,
+                .green = 15,
+                .blue = 15,
+                .indirect = 0,
+            },
+            .{
+                .red = 15,
+                .green = 15,
+                .blue = 15,
+                .indirect = 0,
+            },
+        }) |light| {
+            inventory.append(gpa, .init(.lamp, .{ .lamp = .{ .light = light } }));
+        }
+
+        inventory.append(gpa, .initNone(.stone));
+        inventory.append(gpa, .initNone(.glass));
+        inventory.append(gpa, .initNone(.ice));
+        inventory.append(gpa, .initNone(.glass_tinted));
+
+        inventory.append(gpa, .initNone(.torch));
+
+        return inventory.items;
     }
 
     fn appendRaycastText(game: *Game, gpa: std.mem.Allocator, original_line: i32) !i32 {

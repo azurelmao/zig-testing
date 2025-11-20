@@ -18,6 +18,7 @@ pub const BlockKind = enum(u16) {
     glass,
     chest,
     lamp,
+    torch,
 
     pub inline fn idx(self: BlockKind) usize {
         return @intFromEnum(self);
@@ -42,6 +43,7 @@ pub const BlockKind = enum(u16) {
         };
     }
 
+    /// Whether other solid blocks should emit a face when facing this block
     pub fn isNotSolid(self: BlockKind) bool {
         return switch (self) {
             .air, .water, .ice, .glass, .glass_tinted => true,
@@ -81,8 +83,8 @@ pub const BlockKind = enum(u16) {
             .water, .ice => .{ .translucent = .{
                 .red = 1,
                 .green = 1,
-                .blue = 0,
-                .indirect = 0,
+                .blue = 1,
+                .indirect = 1,
             } },
 
             .glass_tinted => .{ .translucent = .{
@@ -126,11 +128,7 @@ const ChestBlockData = struct {
     items: [9]u8,
 };
 
-const BlockExtendedDataKind = enum {
-    chest,
-};
-
-pub const BlockExtendedData = union(BlockExtendedDataKind) {
+pub const BlockExtendedData = union(enum) {
     chest: ChestBlockData,
 
     pub fn initChest(items: [9]u8) BlockExtendedData {
@@ -282,10 +280,12 @@ pub const BlockTextureScheme = struct {
 
 pub const BlockModelKind = enum {
     square,
+    torch,
 
-    pub fn getModel(comptime self: BlockModelKind) BlockModel {
+    pub fn getModel(self: BlockModelKind) BlockModel {
         return switch (self) {
             .square => .square,
+            .torch => .torch,
         };
     }
 
@@ -377,6 +377,66 @@ pub const BlockModel = struct {
     };
 
     const square = expr: {
+        var faces: [6][]const PerVertexData = undefined;
+
+        faces[Dir.west.idx()] = &.{
+            .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 0 },
+            .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 0 },
+            .{ .x = 0, .y = 0, .z = 0, .u = 0, .v = 1 },
+            .{ .x = 0, .y = 0, .z = 0, .u = 0, .v = 1 },
+            .{ .x = 0, .y = 0, .z = 1, .u = 1, .v = 1 },
+            .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 0 },
+        };
+
+        faces[Dir.east.idx()] = &.{
+            .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 1 },
+            .{ .x = 1, .y = 1, .z = 0, .u = 1, .v = 0 },
+            .{ .x = 1, .y = 1, .z = 1, .u = 0, .v = 0 },
+            .{ .x = 1, .y = 1, .z = 1, .u = 0, .v = 0 },
+            .{ .x = 1, .y = 0, .z = 1, .u = 0, .v = 1 },
+            .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 1 },
+        };
+
+        faces[Dir.bottom.idx()] = &.{
+            .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
+            .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 0 },
+            .{ .x = 1, .y = 0, .z = 1, .u = 0, .v = 0 },
+            .{ .x = 1, .y = 0, .z = 1, .u = 0, .v = 0 },
+            .{ .x = 0, .y = 0, .z = 1, .u = 0, .v = 1 },
+            .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
+        };
+
+        faces[Dir.top.idx()] = &.{
+            .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
+            .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
+            .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 1 },
+            .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 1 },
+            .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 1 },
+            .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
+        };
+
+        faces[Dir.north.idx()] = &.{
+            .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
+            .{ .x = 0, .y = 1, .z = 0, .u = 1, .v = 0 },
+            .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
+            .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
+            .{ .x = 1, .y = 0, .z = 0, .u = 0, .v = 1 },
+            .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
+        };
+
+        faces[Dir.south.idx()] = &.{
+            .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
+            .{ .x = 0, .y = 1, .z = 1, .u = 0, .v = 0 },
+            .{ .x = 0, .y = 0, .z = 1, .u = 0, .v = 1 },
+            .{ .x = 0, .y = 0, .z = 1, .u = 0, .v = 1 },
+            .{ .x = 1, .y = 0, .z = 1, .u = 1, .v = 1 },
+            .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
+        };
+
+        break :expr BlockModel{ .faces = faces };
+    };
+
+    const torch = expr: {
         var faces: [6][]const PerVertexData = undefined;
 
         faces[Dir.west.idx()] = &.{
