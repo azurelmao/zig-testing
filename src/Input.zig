@@ -18,6 +18,7 @@ uncached_keys: std.EnumArray(KeyAction, glfw.Action),
 pub fn init(gpa: std.mem.Allocator) !Input {
     var bindings: std.AutoHashMapUnmanaged(KeyBinding, KeyAction) = .empty;
     try bindings.put(gpa, .initKey(.escape), .close_window);
+    try bindings.put(gpa, .initKey(.q), .pause);
 
     try bindings.put(gpa, .initKey(.F4), .toggle_chunk_borders);
     try bindings.put(gpa, .initKey(.F3), .toggle_light_removal_nodes);
@@ -103,6 +104,7 @@ const KeyBinding = struct {
 
 const KeyAction = enum {
     close_window,
+    pause,
 
     toggle_chunk_borders,
     toggle_light_removal_nodes,

@@ -93,5 +93,5 @@ pub fn debugCallback(source: gl.@"enum", @"type": gl.@"enum", id: gl.uint, sever
         else => std.log.info(format, args),
     }
 
-    std.debug.panic("err", .{});
+    if (severity == gl.DEBUG_SEVERITY_HIGH) std.debug.panic("err", .{});
 }

@@ -8,7 +8,7 @@ const BlockExtendedData = @import("block.zig").BlockExtendedData;
 const Dir = @import("dir.zig").Dir;
 const DedupQueue = @import("dedup_queue.zig").DedupQueue;
 const Vec3f = @import("vec3f.zig").Vec3f;
-const Debug = @import("main.zig").Debug;
+const debug = @import("debug.zig");
 
 const World = @This();
 
@@ -159,7 +159,23 @@ pub fn addBlockExtendedData(world: *World, gpa: std.mem.Allocator, data: BlockEx
     return index;
 }
 
+pub fn onNeighborUpdate(world: *World, world_pos: WorldPos, block: Block, neighbor_world_pos: WorldPos, neighbor_block: Block) !void {
+    _ = world_pos;
+    _ = neighbor_block;
+
+    switch (block.kind) {
+        .lamp => {
+            _ = try world.addLight(neighbor_world_pos, block.data.lamp.light);
+        },
+        else => {},
+    }
+}
+
 pub fn placeBlock(world: *World, gpa: std.mem.Allocator, world_pos: WorldPos, block: Block) !void {
+    debug.addition_nodes.data.clearRetainingCapacity();
+    debug.removal_nodes.data.clearRetainingCapacity();
+    debug.upload_nodes = true;
+
     _ = try world.removeLight(world_pos);
     try world.propagateLightRemoval(gpa);
 
@@ -184,6 +200,10 @@ pub fn placeBlock(world: *World, gpa: std.mem.Allocator, world_pos: WorldPos, bl
 }
 
 pub fn breakBlock(world: *World, gpa: std.mem.Allocator, world_pos: WorldPos, block: Block) !void {
+    debug.addition_nodes.data.clearRetainingCapacity();
+    debug.removal_nodes.data.clearRetainingCapacity();
+    debug.upload_nodes = true;
+
     try world.setBlock(gpa, world_pos, .initNone(.air));
 
     switch (block.kind) {
@@ -196,7 +216,15 @@ pub fn breakBlock(world: *World, gpa: std.mem.Allocator, world_pos: WorldPos, bl
         else => {},
     }
 
-    _ = try world.removeLight(world_pos);
+    for (Dir.indices) |dir_idx| {
+        const neighbor_world_pos = world_pos.add(World.WorldPos.OFFSETS[dir_idx]);
+        const neighbor_block = try world.getBlock(neighbor_world_pos);
+
+        try world.onNeighborUpdate(neighbor_world_pos, neighbor_block, world_pos, block);
+
+        const neighbor_light = try world.getLight(neighbor_world_pos);
+        _ = try world.addLight(neighbor_world_pos, neighbor_light);
+    }
 
     try world.propagateLightRemoval(gpa);
     try world.propagateLightAddition(gpa);
@@ -1059,7 +1087,7 @@ pub fn propagateLightRemoval(world: *World, gpa: std.mem.Allocator) !void {
 
                     light_to_set_at_removal.set(color, 0);
                     neighbor_chunk.setLight(neighbor_local_pos, light_to_set_at_removal);
-                } else if (neighbor_light.get(color) >= node_light.get(color)) {
+                } else if (node_light.get(color) > 0 and neighbor_light.get(color) >= node_light.get(color)) {
                     enqueue_addition = true;
 
                     light_to_enqueue_at_addition.set(color, neighbor_light.get(color));
@@ -1074,7 +1102,7 @@ pub fn propagateLightRemoval(world: *World, gpa: std.mem.Allocator) !void {
 
                 try world.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_chunk.pos);
 
-                // try debug.removal_nodes.data.append(gpa, neighbor_world_pos.toVec3f());
+                try debug.removal_nodes.data.append(gpa, neighbor_world_pos.toVec3f());
             }
 
             if (enqueue_addition) {
@@ -1085,7 +1113,7 @@ pub fn propagateLightRemoval(world: *World, gpa: std.mem.Allocator) !void {
 
                 try world.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_chunk.pos);
 
-                // try debug.addition_nodes.data.append(gpa, neighbor_world_pos.toVec3f());
+                try debug.addition_nodes.data.append(gpa, neighbor_world_pos.toVec3f());
             }
         }
     }
