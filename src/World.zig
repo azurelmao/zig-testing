@@ -253,6 +253,13 @@ pub const RaycastSide = enum {
     pub inline fn idx(world: RaycastSide) usize {
         return @intFromEnum(world);
     }
+
+    pub fn toDir(self: RaycastSide) Dir {
+        switch (self) {
+            .west, .east, .bottom, .top, .north, .south => return @enumFromInt(self.idx()),
+            else => unreachable,
+        }
+    }
 };
 
 pub const RaycastResult = struct {

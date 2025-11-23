@@ -60,7 +60,7 @@ const Game = struct {
     selected_block: World.RaycastResult,
     relative_selector_world_pos: World.Pos,
     inventory: []Block,
-    selected_slot: u3,
+    selected_slot: usize,
 
     fn init(gpa: std.mem.Allocator) !Game {
         const settings: Settings = .{};
@@ -96,7 +96,7 @@ const Game = struct {
 
         const world_mesh: WorldMesh = try .init(gpa);
 
-        const inventory = initInventory(gpa);
+        const inventory = try initInventory(gpa);
 
         return .{
             .paused = false,
@@ -213,8 +213,8 @@ const Game = struct {
         return window;
     }
 
-    fn initInventory(gpa: std.mem.Allocator) []Block {
-        const inventory: std.ArrayListUnmanaged(Block) = .empty;
+    fn initInventory(gpa: std.mem.Allocator) ![]Block {
+        var inventory: std.ArrayListUnmanaged(Block) = .empty;
 
         // Lamp lights
         for ([_]Light{
@@ -261,15 +261,15 @@ const Game = struct {
                 .indirect = 0,
             },
         }) |light| {
-            inventory.append(gpa, .init(.lamp, .{ .lamp = .{ .light = light } }));
+            try inventory.append(gpa, .init(.lamp, .{ .lamp = .{ .light = light } }));
         }
 
-        inventory.append(gpa, .initNone(.stone));
-        inventory.append(gpa, .initNone(.glass));
-        inventory.append(gpa, .initNone(.ice));
-        inventory.append(gpa, .initNone(.glass_tinted));
+        try inventory.append(gpa, .initNone(.stone));
+        try inventory.append(gpa, .initNone(.glass));
+        try inventory.append(gpa, .initNone(.ice));
+        try inventory.append(gpa, .initNone(.glass_tinted));
 
-        inventory.append(gpa, .initNone(.torch));
+        try inventory.append(gpa, .initNone(.torch));
 
         return inventory.items;
     }
@@ -571,32 +571,32 @@ const Game = struct {
         }
 
         if (game.input.getUncached(.slot_1) == .press) {
-            game.selected_slot = 0;
+            game.selected_slot -|= 1;
         }
 
         if (game.input.getUncached(.slot_2) == .press) {
-            game.selected_slot = 1;
+            if (game.selected_slot +| 1 < game.inventory.len) game.selected_slot += 1;
         }
 
-        if (game.input.getUncached(.slot_3) == .press) {
-            game.selected_slot = 2;
-        }
+        // if (game.input.getUncached(.slot_3) == .press) {
+        //     game.selected_slot = 2;
+        // }
 
-        if (game.input.getUncached(.slot_4) == .press) {
-            game.selected_slot = 3;
-        }
+        // if (game.input.getUncached(.slot_4) == .press) {
+        //     game.selected_slot = 3;
+        // }
 
-        if (game.input.getUncached(.slot_5) == .press) {
-            game.selected_slot = 4;
-        }
+        // if (game.input.getUncached(.slot_5) == .press) {
+        //     game.selected_slot = 4;
+        // }
 
-        if (game.input.getUncached(.slot_6) == .press) {
-            game.selected_slot = 5;
-        }
+        // if (game.input.getUncached(.slot_6) == .press) {
+        //     game.selected_slot = 5;
+        // }
 
-        if (game.input.getUncached(.slot_7) == .press) {
-            game.selected_slot = 6;
-        }
+        // if (game.input.getUncached(.slot_7) == .press) {
+        //     game.selected_slot = 6;
+        // }
 
         if (game.input.getUncached(.move_selector_east) == .press) {
             game.relative_selector_world_pos.x -|= 1;
@@ -729,8 +729,8 @@ const Game = struct {
 
             if (selected_dir != .out_of_bounds and selected_dir != .inside) {
                 if (game.selected_block.block) |block| {
-                    const dir_idx = (block.kind.getModelIdx() * 36) + (selected_dir.idx() * 6);
-                    game.shader_programs.selected_side.setUniform1ui("uFaceIdx", @intCast(dir_idx));
+                    const block_model_face_indices = block.kind.getModel().faces.get(selected_dir.toDir());
+                    game.shader_programs.selected_side.setUniform1ui("uFaceIdx", @intCast(block_model_face_indices[0]));
                 }
             }
         }
@@ -789,27 +789,17 @@ const Game = struct {
 
         game.shader_programs.chunks.bind();
         inline for (BlockLayer.values) |block_layer| skip: {
-            if (block_layer == .water) {
-                gl.Disable(gl.CULL_FACE);
-            }
+            if (block_layer == .water) gl.Disable(gl.CULL_FACE);
+            defer if (block_layer == .water) gl.Enable(gl.CULL_FACE);
 
             const world_mesh_layer = &game.world_mesh.layers[block_layer.idx()];
-            if (world_mesh_layer.command.data.items.len == 0) {
-                if (block_layer == .water) {
-                    gl.Enable(gl.CULL_FACE);
-                }
-                break :skip;
-            }
+            if (world_mesh_layer.command.data.items.len == 0) break :skip;
 
             world_mesh_layer.mesh.ssbo.bind(1);
             world_mesh_layer.chunk_mesh_pos.ssbo.bind(2);
             world_mesh_layer.command.ssbo.bindAsIndirectBuffer();
 
             gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(world_mesh_layer.command.data.items.len), 0);
-
-            if (block_layer == .water) {
-                gl.Enable(gl.CULL_FACE);
-            }
         }
 
         // game.shader_programs.chunks_bb.bind();

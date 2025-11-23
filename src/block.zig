@@ -32,10 +32,6 @@ pub const BlockKind = enum(u16) {
         };
     }
 
-    pub fn getModelIdx(self: BlockKind) BlockModel.Index {
-        return BlockModel.BLOCK_KIND_TO_MODEL_IDX[self.idx()];
-    }
-
     pub fn isInteractable(self: BlockKind) bool {
         return switch (self) {
             .air, .water, .lava => false,
@@ -43,11 +39,26 @@ pub const BlockKind = enum(u16) {
         };
     }
 
-    /// Whether other solid blocks should emit a face when facing this block
-    pub fn isNotSolid(self: BlockKind) bool {
+    /// Meshing related flags
+    const MeshFlags = packed struct {
+        makes_neighbor_blocks_emit_mesh: bool,
+        makes_same_kind_neighbor_blocks_emit_mesh: bool,
+    };
+
+    pub fn getMeshFlags(self: BlockKind) MeshFlags {
         return switch (self) {
-            .air, .water, .ice, .glass, .glass_tinted => true,
-            else => false,
+            .air, .water, .ice, .glass, .glass_tinted => .{
+                .makes_neighbor_blocks_emit_mesh = true,
+                .makes_same_kind_neighbor_blocks_emit_mesh = false,
+            },
+            .torch => .{
+                .makes_neighbor_blocks_emit_mesh = true,
+                .makes_same_kind_neighbor_blocks_emit_mesh = true,
+            },
+            else => .{
+                .makes_neighbor_blocks_emit_mesh = false,
+                .makes_same_kind_neighbor_blocks_emit_mesh = false,
+            },
         };
     }
 
@@ -73,7 +84,7 @@ pub const BlockKind = enum(u16) {
 
     pub fn getLightOpacity(self: BlockKind) LightOpacity {
         return switch (self) {
-            .air, .glass => .{ .translucent = .{
+            .air, .glass, .torch => .{ .translucent = .{
                 .red = 0,
                 .green = 0,
                 .blue = 0,
@@ -101,7 +112,7 @@ pub const BlockKind = enum(u16) {
     pub fn getTextureScheme(self: BlockKind) BlockTextureScheme {
         return switch (self) {
             .stone => .allSides(.stone),
-            .grass => .grass(.grass_top, .dirt, .grass_side),
+            .grass => .grass(.dirt, .grass_top, .grass_side),
             .bedrock => .allSides(.bedrock),
             .sand => .allSides(.sand),
             .bricks => .allSides(.bricks),
@@ -112,15 +123,21 @@ pub const BlockKind = enum(u16) {
             .glass => .allSides(.glass),
             .chest => .allSides(.chest),
             .lamp => .allSides(.lamp),
+            .torch => .torch(.torch),
             else => std.debug.panic("Block kind \"{s}\" is missing a texture scheme", .{@tagName(self)}),
         };
     }
 
-    pub fn getModel(self: BlockKind) ?BlockModelKind {
+    pub fn getModelScheme(self: BlockKind) ?BlockModelScheme {
         return switch (self) {
             .air => null,
-            else => .square,
+            .torch => .torch,
+            else => .cube,
         };
+    }
+
+    pub inline fn getModel(self: BlockKind) *const BlockModel {
+        return &BlockModel.BLOCK_KIND_TO_BLOCK_MODEL.get(self);
     }
 };
 
@@ -255,6 +272,7 @@ pub const BlockTextureKind = enum(u11) {
     glass_tinted,
     chest,
     lamp,
+    torch,
 
     pub inline fn idx(self: BlockTextureKind) u11 {
         return @intFromEnum(self);
@@ -262,84 +280,389 @@ pub const BlockTextureKind = enum(u11) {
 };
 
 pub const BlockTextureScheme = struct {
-    faces: [6]BlockTextureKind,
+    faces: std.EnumArray(Dir, []const TextureFace),
 
-    pub fn allSides(texture_index: BlockTextureKind) BlockTextureScheme {
-        return .{ .faces = @splat(texture_index) };
+    const empty: BlockTextureScheme = .{
+        .faces = .initFill(&.{}),
+    };
+
+    fn addFace(self: *BlockTextureScheme, dir: Dir, face: TextureFace) void {
+        self.faces.set(dir, self.faces.get(dir) ++ .{face});
     }
 
-    pub fn grass(top: BlockTextureKind, bottom: BlockTextureKind, sides: BlockTextureKind) BlockTextureScheme {
-        var faces: [6]BlockTextureKind = @splat(sides);
+    pub fn allSides(texture: BlockTextureKind) BlockTextureScheme {
+        var scheme: BlockTextureScheme = .empty;
 
-        faces[Dir.top.idx()] = top;
-        faces[Dir.bottom.idx()] = bottom;
+        scheme.addFace(.west, .emitWest(.{ .u = 0, .v = 0 }, .{ .u = 16, .v = 16 }, texture));
+        scheme.addFace(.east, .emitEast(.{ .u = 0, .v = 0 }, .{ .u = 16, .v = 16 }, texture));
+        scheme.addFace(.bottom, .emitBottom(.{ .u = 0, .v = 0 }, .{ .u = 16, .v = 16 }, texture));
+        scheme.addFace(.top, .emitTop(.{ .u = 0, .v = 0 }, .{ .u = 16, .v = 16 }, texture));
+        scheme.addFace(.north, .emitNorth(.{ .u = 0, .v = 0 }, .{ .u = 16, .v = 16 }, texture));
+        scheme.addFace(.south, .emitSouth(.{ .u = 0, .v = 0 }, .{ .u = 16, .v = 16 }, texture));
 
-        return .{ .faces = faces };
+        return scheme;
     }
-};
 
-pub const BlockModelKind = enum {
-    square,
-    torch,
+    pub fn grass(bottom: BlockTextureKind, top: BlockTextureKind, sides: BlockTextureKind) BlockTextureScheme {
+        var scheme: BlockTextureScheme = .empty;
 
-    pub fn getModel(self: BlockModelKind) BlockModel {
-        return switch (self) {
-            .square => .square,
-            .torch => .torch,
+        scheme.addFace(.west, .emitWest(.{ .u = 0, .v = 0 }, .{ .u = 16, .v = 16 }, sides));
+        scheme.addFace(.east, .emitEast(.{ .u = 0, .v = 0 }, .{ .u = 16, .v = 16 }, sides));
+        scheme.addFace(.bottom, .emitBottom(.{ .u = 0, .v = 0 }, .{ .u = 16, .v = 16 }, bottom));
+        scheme.addFace(.top, .emitTop(.{ .u = 0, .v = 0 }, .{ .u = 16, .v = 16 }, top));
+        scheme.addFace(.north, .emitNorth(.{ .u = 0, .v = 0 }, .{ .u = 16, .v = 16 }, sides));
+        scheme.addFace(.south, .emitSouth(.{ .u = 0, .v = 0 }, .{ .u = 16, .v = 16 }, sides));
+
+        return scheme;
+    }
+
+    pub fn torch(texture: BlockTextureKind) BlockTextureScheme {
+        var scheme: BlockTextureScheme = .empty;
+
+        scheme.addFace(.west, .emitWest(.{ .u = 7, .v = 6 }, .{ .u = 9, .v = 16 }, texture));
+        scheme.addFace(.east, .emitEast(.{ .u = 7, .v = 6 }, .{ .u = 9, .v = 16 }, texture));
+        scheme.addFace(.bottom, .emitBottom(.{ .u = 7, .v = 14 }, .{ .u = 9, .v = 16 }, texture));
+        scheme.addFace(.top, .emitTop(.{ .u = 7, .v = 6 }, .{ .u = 9, .v = 8 }, texture));
+        scheme.addFace(.north, .emitNorth(.{ .u = 7, .v = 6 }, .{ .u = 9, .v = 16 }, texture));
+        scheme.addFace(.south, .emitSouth(.{ .u = 7, .v = 6 }, .{ .u = 9, .v = 16 }, texture));
+
+        return scheme;
+    }
+
+    const Vec2u5 = struct {
+        u: u5,
+        v: u5,
+    };
+
+    const TextureFace = struct {
+        vertices: [6]Data,
+        texture_idx: BlockTextureKind,
+
+        const Data = struct {
+            u: u5,
+            v: u5,
         };
-    }
 
-    pub inline fn idx(self: BlockModelKind) usize {
-        return @intFromEnum(self);
-    }
+        pub fn emitWest(min: Vec2u5, max: Vec2u5, texture_idx: BlockTextureKind) TextureFace {
+            return .{
+                .vertices = .{
+                    .{ .u = max.u, .v = min.v },
+                    .{ .u = min.u, .v = min.v },
+                    .{ .u = min.u, .v = max.v },
+                    .{ .u = min.u, .v = max.v },
+                    .{ .u = max.u, .v = max.v },
+                    .{ .u = max.u, .v = min.v },
+                },
+                .texture_idx = texture_idx,
+            };
+        }
+
+        pub fn emitEast(min: Vec2u5, max: Vec2u5, texture_idx: BlockTextureKind) TextureFace {
+            return .{
+                .vertices = .{
+                    .{ .u = max.u, .v = max.v },
+                    .{ .u = max.u, .v = min.v },
+                    .{ .u = min.u, .v = min.v },
+                    .{ .u = min.u, .v = min.v },
+                    .{ .u = min.u, .v = max.v },
+                    .{ .u = max.u, .v = max.v },
+                },
+                .texture_idx = texture_idx,
+            };
+        }
+
+        pub fn emitBottom(min: Vec2u5, max: Vec2u5, texture_idx: BlockTextureKind) TextureFace {
+            return .{
+                .vertices = .{
+                    .{ .u = max.u, .v = max.v },
+                    .{ .u = max.u, .v = min.v },
+                    .{ .u = min.u, .v = min.v },
+                    .{ .u = min.u, .v = min.v },
+                    .{ .u = min.u, .v = max.v },
+                    .{ .u = max.u, .v = max.v },
+                },
+                .texture_idx = texture_idx,
+            };
+        }
+
+        pub fn emitTop(min: Vec2u5, max: Vec2u5, texture_idx: BlockTextureKind) TextureFace {
+            return .{
+                .vertices = .{
+                    .{ .u = max.u, .v = min.v },
+                    .{ .u = min.u, .v = min.v },
+                    .{ .u = min.u, .v = max.v },
+                    .{ .u = min.u, .v = max.v },
+                    .{ .u = max.u, .v = max.v },
+                    .{ .u = max.u, .v = min.v },
+                },
+                .texture_idx = texture_idx,
+            };
+        }
+
+        pub fn emitNorth(min: Vec2u5, max: Vec2u5, texture_idx: BlockTextureKind) TextureFace {
+            return .{
+                .vertices = .{
+                    .{ .u = max.u, .v = max.v },
+                    .{ .u = max.u, .v = min.v },
+                    .{ .u = min.u, .v = min.v },
+                    .{ .u = min.u, .v = min.v },
+                    .{ .u = min.u, .v = max.v },
+                    .{ .u = max.u, .v = max.v },
+                },
+                .texture_idx = texture_idx,
+            };
+        }
+
+        pub fn emitSouth(min: Vec2u5, max: Vec2u5, texture_idx: BlockTextureKind) TextureFace {
+            return .{
+                .vertices = .{
+                    .{ .u = max.u, .v = min.v },
+                    .{ .u = min.u, .v = min.v },
+                    .{ .u = min.u, .v = max.v },
+                    .{ .u = min.u, .v = max.v },
+                    .{ .u = max.u, .v = max.v },
+                    .{ .u = max.u, .v = min.v },
+                },
+                .texture_idx = texture_idx,
+            };
+        }
+    };
 };
 
-pub const BlockModel = struct {
-    faces: [6][]const PerVertexData,
+pub const BlockModelScheme = struct {
+    faces: std.EnumArray(Dir, []const ModelFace),
 
-    pub const PerVertexData = packed struct(u32) {
+    const cube: BlockModelScheme = expr: {
+        var scheme: BlockModelScheme = .empty;
+        scheme.addCuboid(.{ .x = 0, .y = 0, .z = 0 }, .{ .x = 16, .y = 16, .z = 16 });
+        break :expr scheme;
+    };
+
+    const torch: BlockModelScheme = expr: {
+        var scheme: BlockModelScheme = .empty;
+        scheme.addCuboid(.{ .x = 7, .y = 0, .z = 7 }, .{ .x = 9, .y = 11, .z = 9 });
+        break :expr scheme;
+    };
+
+    const empty: BlockModelScheme = .{
+        .faces = .initFill(&.{}),
+    };
+
+    fn addFace(self: *BlockModelScheme, dir: Dir, face: ModelFace) void {
+        self.faces.set(dir, self.faces.get(dir) ++ .{face});
+    }
+
+    const Vec3u5 = struct {
         x: u5,
         y: u5,
         z: u5,
-        u: u5,
-        v: u5,
-        _: u7 = 0,
     };
 
-    const Index = u17;
+    const Vec2u5 = struct {
+        min: u5,
+        max: u5,
+    };
 
-    const tmp = expr: {
-        const block_model_kinds = std.enums.values(BlockModelKind);
-        const block_kinds = std.enums.values(BlockKind);
+    fn addCuboid(self: *BlockModelScheme, min: Vec3u5, max: Vec3u5) void {
+        self.addFace(.west, .emitWest(
+            min.x,
+            .{ .min = min.y, .max = max.y },
+            .{ .min = min.z, .max = max.z },
+        ));
 
-        var per_vertex_buffer: []const PerVertexData = &.{};
-        var block_model_kind_to_model_idx: [block_model_kinds.len]Index = undefined;
+        self.addFace(.east, .emitEast(
+            max.x,
+            .{ .min = min.y, .max = max.y },
+            .{ .min = min.z, .max = max.z },
+        ));
 
-        for (block_model_kinds) |block_model_kind| {
-            const block_model = block_model_kind.getModel();
-            const model_idx = per_vertex_buffer.len;
+        self.addFace(.bottom, .emitBottom(
+            min.y,
+            .{ .min = min.x, .max = max.z },
+            .{ .min = min.z, .max = max.z },
+        ));
 
-            for (block_model.faces) |block_model_face| {
-                per_vertex_buffer = per_vertex_buffer ++ block_model_face;
-            }
+        self.addFace(.top, .emitTop(
+            max.y,
+            .{ .min = min.x, .max = max.z },
+            .{ .min = min.z, .max = max.z },
+        ));
 
-            block_model_kind_to_model_idx[block_model_kind.idx()] = model_idx;
+        self.addFace(.north, .emitNorth(
+            min.z,
+            .{ .min = min.x, .max = max.z },
+            .{ .min = min.y, .max = max.y },
+        ));
+
+        self.addFace(.south, .emitSouth(
+            max.z,
+            .{ .min = min.x, .max = max.z },
+            .{ .min = min.y, .max = max.y },
+        ));
+    }
+
+    const ModelFace = struct {
+        vertices: [6]Data,
+
+        const Data = struct {
+            x: u5,
+            y: u5,
+            z: u5,
+        };
+
+        fn emitWest(x: u5, y: Vec2u5, z: Vec2u5) ModelFace {
+            return .{
+                .vertices = .{
+                    .{ .x = x, .y = y.max, .z = z.max },
+                    .{ .x = x, .y = y.max, .z = z.min },
+                    .{ .x = x, .y = y.min, .z = z.min },
+                    .{ .x = x, .y = y.min, .z = z.min },
+                    .{ .x = x, .y = y.min, .z = z.max },
+                    .{ .x = x, .y = y.max, .z = z.max },
+                },
+            };
         }
 
-        var block_kind_to_model_idx: [block_kinds.len]Index = undefined;
+        fn emitEast(x: u5, y: Vec2u5, z: Vec2u5) ModelFace {
+            return .{
+                .vertices = .{
+                    .{ .x = x, .y = y.min, .z = z.min },
+                    .{ .x = x, .y = y.max, .z = z.min },
+                    .{ .x = x, .y = y.max, .z = z.max },
+                    .{ .x = x, .y = y.max, .z = z.max },
+                    .{ .x = x, .y = y.min, .z = z.max },
+                    .{ .x = x, .y = y.min, .z = z.min },
+                },
+            };
+        }
 
-        for (block_kinds) |block_kind| if (block_kind.getModel()) |block_model_kind| {
-            block_kind_to_model_idx[block_kind.idx()] = block_model_kind_to_model_idx[block_model_kind.idx()];
-        };
+        fn emitBottom(y: u5, x: Vec2u5, z: Vec2u5) ModelFace {
+            return .{
+                .vertices = .{
+                    .{ .x = x.min, .y = y, .z = z.min },
+                    .{ .x = x.max, .y = y, .z = z.min },
+                    .{ .x = x.max, .y = y, .z = z.max },
+                    .{ .x = x.max, .y = y, .z = z.max },
+                    .{ .x = x.min, .y = y, .z = z.max },
+                    .{ .x = x.min, .y = y, .z = z.min },
+                },
+            };
+        }
+
+        fn emitTop(y: u5, x: Vec2u5, z: Vec2u5) ModelFace {
+            return .{
+                .vertices = .{
+                    .{ .x = x.max, .y = y, .z = z.max },
+                    .{ .x = x.max, .y = y, .z = z.min },
+                    .{ .x = x.min, .y = y, .z = z.min },
+                    .{ .x = x.min, .y = y, .z = z.min },
+                    .{ .x = x.min, .y = y, .z = z.max },
+                    .{ .x = x.max, .y = y, .z = z.max },
+                },
+            };
+        }
+
+        fn emitNorth(z: u5, x: Vec2u5, y: Vec2u5) ModelFace {
+            return .{
+                .vertices = .{
+                    .{ .x = x.min, .y = y.min, .z = z },
+                    .{ .x = x.min, .y = y.max, .z = z },
+                    .{ .x = x.max, .y = y.max, .z = z },
+                    .{ .x = x.max, .y = y.max, .z = z },
+                    .{ .x = x.max, .y = y.min, .z = z },
+                    .{ .x = x.min, .y = y.min, .z = z },
+                },
+            };
+        }
+
+        fn emitSouth(z: u5, x: Vec2u5, y: Vec2u5) ModelFace {
+            return .{
+                .vertices = .{
+                    .{ .x = x.max, .y = y.max, .z = z },
+                    .{ .x = x.min, .y = y.max, .z = z },
+                    .{ .x = x.min, .y = y.min, .z = z },
+                    .{ .x = x.min, .y = y.min, .z = z },
+                    .{ .x = x.max, .y = y.min, .z = z },
+                    .{ .x = x.max, .y = y.max, .z = z },
+                },
+            };
+        }
+    };
+};
+
+pub const BlockModel = struct {
+    faces: std.EnumArray(Dir, []const ModelFaceIdx),
+
+    pub const PerVertexData = packed union {
+        vertex: packed struct(u32) {
+            x: u5,
+            y: u5,
+            z: u5,
+            u: u5,
+            v: u5,
+            _: u7 = 0,
+        },
+        texture_idx: BlockTextureKind,
+    };
+
+    const ModelFaceIdx = u17;
+
+    const tmp = expr: {
+        @setEvalBranchQuota(10_000);
+
+        const block_kinds: []const BlockKind = std.enums.values(BlockKind);
+
+        var per_vertex_buffer: []const PerVertexData = &.{};
+        var block_kind_to_block_model: std.EnumArray(BlockKind, BlockModel) = .initUndefined();
+
+        for (block_kinds) |block_kind| {
+            const model_scheme = block_kind.getModelScheme() orelse continue;
+            const texture_scheme = block_kind.getTextureScheme();
+
+            var block_model: BlockModel = .{ .faces = .initFill(&.{}) };
+
+            for (Dir.values) |dir| {
+                const model_faces = model_scheme.faces.get(dir);
+                const texture_faces = texture_scheme.faces.get(dir);
+
+                if (model_faces.len == 0 and texture_faces.len == 0) continue;
+
+                std.debug.assert(model_faces.len == texture_faces.len);
+                std.debug.assert(model_faces.len > 0);
+
+                for (model_faces, texture_faces) |model_face, texture_face| {
+                    var vertices: [7]PerVertexData = undefined;
+
+                    for (0..6) |idx| {
+                        vertices[idx] = .{ .vertex = .{
+                            .x = model_face.vertices[idx].x,
+                            .y = model_face.vertices[idx].y,
+                            .z = model_face.vertices[idx].z,
+                            .u = texture_face.vertices[idx].u,
+                            .v = texture_face.vertices[idx].v,
+                        } };
+                    }
+
+                    vertices[6] = .{ .texture_idx = texture_face.texture_idx };
+
+                    const block_model_face_idx = per_vertex_buffer.len;
+                    block_model.faces.set(dir, block_model.faces.get(dir) ++ .{block_model_face_idx});
+
+                    per_vertex_buffer = per_vertex_buffer ++ vertices;
+                }
+            }
+
+            block_kind_to_block_model.set(block_kind, block_model);
+        }
 
         break :expr .{
             .per_vertex_buffer = per_vertex_buffer,
-            .block_kind_to_model_idx = block_kind_to_model_idx,
+            .block_kind_to_block_model = block_kind_to_block_model,
         };
     };
 
     pub const PER_VERTEX_BUFFER = tmp.per_vertex_buffer;
-    const BLOCK_KIND_TO_MODEL_IDX = tmp.block_kind_to_model_idx;
+    const BLOCK_KIND_TO_BLOCK_MODEL = tmp.block_kind_to_block_model;
 
     pub const BOUNDING_BOX_LINES_BUFFER: []const Vec3f = &.{
         .{ .x = 0, .y = 0, .z = 0 },
@@ -374,125 +697,5 @@ pub const BlockModel = struct {
 
         .{ .x = 1, .y = 0, .z = 1 },
         .{ .x = 1, .y = 1, .z = 1 },
-    };
-
-    const square = expr: {
-        var faces: [6][]const PerVertexData = undefined;
-
-        faces[Dir.west.idx()] = &.{
-            .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 0 },
-            .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 0 },
-            .{ .x = 0, .y = 0, .z = 0, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 0, .z = 0, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 0, .z = 1, .u = 1, .v = 1 },
-            .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 0 },
-        };
-
-        faces[Dir.east.idx()] = &.{
-            .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 1 },
-            .{ .x = 1, .y = 1, .z = 0, .u = 1, .v = 0 },
-            .{ .x = 1, .y = 1, .z = 1, .u = 0, .v = 0 },
-            .{ .x = 1, .y = 1, .z = 1, .u = 0, .v = 0 },
-            .{ .x = 1, .y = 0, .z = 1, .u = 0, .v = 1 },
-            .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 1 },
-        };
-
-        faces[Dir.bottom.idx()] = &.{
-            .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
-            .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 0 },
-            .{ .x = 1, .y = 0, .z = 1, .u = 0, .v = 0 },
-            .{ .x = 1, .y = 0, .z = 1, .u = 0, .v = 0 },
-            .{ .x = 0, .y = 0, .z = 1, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
-        };
-
-        faces[Dir.top.idx()] = &.{
-            .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
-            .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
-            .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 1 },
-            .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
-        };
-
-        faces[Dir.north.idx()] = &.{
-            .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
-            .{ .x = 0, .y = 1, .z = 0, .u = 1, .v = 0 },
-            .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
-            .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
-            .{ .x = 1, .y = 0, .z = 0, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
-        };
-
-        faces[Dir.south.idx()] = &.{
-            .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
-            .{ .x = 0, .y = 1, .z = 1, .u = 0, .v = 0 },
-            .{ .x = 0, .y = 0, .z = 1, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 0, .z = 1, .u = 0, .v = 1 },
-            .{ .x = 1, .y = 0, .z = 1, .u = 1, .v = 1 },
-            .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
-        };
-
-        break :expr BlockModel{ .faces = faces };
-    };
-
-    const torch = expr: {
-        var faces: [6][]const PerVertexData = undefined;
-
-        faces[Dir.west.idx()] = &.{
-            .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 0 },
-            .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 0 },
-            .{ .x = 0, .y = 0, .z = 0, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 0, .z = 0, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 0, .z = 1, .u = 1, .v = 1 },
-            .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 0 },
-        };
-
-        faces[Dir.east.idx()] = &.{
-            .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 1 },
-            .{ .x = 1, .y = 1, .z = 0, .u = 1, .v = 0 },
-            .{ .x = 1, .y = 1, .z = 1, .u = 0, .v = 0 },
-            .{ .x = 1, .y = 1, .z = 1, .u = 0, .v = 0 },
-            .{ .x = 1, .y = 0, .z = 1, .u = 0, .v = 1 },
-            .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 1 },
-        };
-
-        faces[Dir.bottom.idx()] = &.{
-            .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
-            .{ .x = 1, .y = 0, .z = 0, .u = 1, .v = 0 },
-            .{ .x = 1, .y = 0, .z = 1, .u = 0, .v = 0 },
-            .{ .x = 1, .y = 0, .z = 1, .u = 0, .v = 0 },
-            .{ .x = 0, .y = 0, .z = 1, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
-        };
-
-        faces[Dir.top.idx()] = &.{
-            .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
-            .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
-            .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 1, .z = 0, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 1, .z = 1, .u = 1, .v = 1 },
-            .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
-        };
-
-        faces[Dir.north.idx()] = &.{
-            .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
-            .{ .x = 0, .y = 1, .z = 0, .u = 1, .v = 0 },
-            .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
-            .{ .x = 1, .y = 1, .z = 0, .u = 0, .v = 0 },
-            .{ .x = 1, .y = 0, .z = 0, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 0, .z = 0, .u = 1, .v = 1 },
-        };
-
-        faces[Dir.south.idx()] = &.{
-            .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
-            .{ .x = 0, .y = 1, .z = 1, .u = 0, .v = 0 },
-            .{ .x = 0, .y = 0, .z = 1, .u = 0, .v = 1 },
-            .{ .x = 0, .y = 0, .z = 1, .u = 0, .v = 1 },
-            .{ .x = 1, .y = 0, .z = 1, .u = 1, .v = 1 },
-            .{ .x = 1, .y = 1, .z = 1, .u = 1, .v = 0 },
-        };
-
-        break :expr BlockModel{ .faces = faces };
     };
 };

@@ -34,8 +34,8 @@ pub fn init(gpa: std.mem.Allocator, raycast_result: World.RaycastResult, screen:
 
     if (raycast_result.dir != .out_of_bounds and raycast_result.dir != .inside) {
         if (raycast_result.block) |block| {
-            const dir_idx = block.kind.getModelIdx() + raycast_result.dir.idx();
-            selected_side.setUniform1ui("uFaceIdx", @intCast(dir_idx));
+            const block_model_face_indices = block.kind.getModel().faces.get(raycast_result.dir.toDir());
+            selected_side.setUniform1ui("uFaceIdx", @intCast(block_model_face_indices[0])); // TODO: a way to highlight all faces not just the first
         }
     }
 

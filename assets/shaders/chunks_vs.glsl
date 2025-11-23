@@ -29,10 +29,10 @@ vec3 unpackLocalPosition(uint data) {
     return vec3(x, y, z);
 }
 
-uint unpackModelIdx(uint data) {
-    uint modelIdx = bitfieldExtract(data, 15, 17);
+uint unpackModelFaceIdx(uint data) {
+    uint modelFaceIdx = bitfieldExtract(data, 15, 17);
 
-    return modelIdx;
+    return modelFaceIdx;
 }
 
 vec3 unpackBlockLight(uint data) {
@@ -55,12 +55,6 @@ uint unpackNormal(uint data) {
     return normal;
 }
 
-uint unpackTextureIdx(uint data) {
-    uint textureIdx = bitfieldExtract(data, 20, 11);
-
-    return textureIdx;
-}
-
 vec3 unpackModelPosition(uint data) {
     float x = bitfieldExtract(data, 0, 5);
     float y = bitfieldExtract(data, 5, 5);
@@ -74,6 +68,12 @@ vec2 unpackTextureUV(uint data) {
     float v = bitfieldExtract(data, 20, 5);
 
     return vec2(u, v);
+}
+
+uint unpackTextureIdx(uint data) {
+    uint textureIdx = bitfieldExtract(data, 0, 11);
+
+    return textureIdx;
 }
 
 layout (binding = 0, std140) uniform ubo0 {
@@ -93,19 +93,19 @@ void main() {
     PerFaceData perFaceData = sPerFace[faceIdx];
     
     vec3 localPosition = unpackLocalPosition(perFaceData.data1);
-    uint modelIdx = unpackModelIdx(perFaceData.data1);
+    uint modelFaceIdx = unpackModelFaceIdx(perFaceData.data1);
     vec3 blockLight = unpackBlockLight(perFaceData.data2);
     uint indirectLightIdx = unpackIndirectLightIdx(perFaceData.data2);
     uint normal = unpackNormal(perFaceData.data2);
-    uint textureIdx = unpackTextureIdx(perFaceData.data2);
 
-    uint vertexIdx = (modelIdx * 36) + (normal * 6) + (gl_VertexID % 6);
+    uint vertexIdx = modelFaceIdx + (gl_VertexID % 6);
 
     uint perVertexData = sPerVertex[vertexIdx];
     vec3 modelPosition = unpackModelPosition(perVertexData) / 16.0;
     vec2 textureUV = unpackTextureUV(perVertexData);
+    uint textureIdx = unpackTextureIdx(sPerVertex[modelFaceIdx + 6]); // because textureIdx is the 7th value for every face
     
-    pTextureUV = textureUV;
+    pTextureUV = textureUV / 16.0;
     pTextureIdx = textureIdx;
     pNormal = normal;
     

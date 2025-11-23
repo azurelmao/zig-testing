@@ -23,12 +23,11 @@ pub const PerFaceData = packed struct(u64) {
     x: u5,
     y: u5,
     z: u5,
-    model_idx: u17,
+    model_face_idx: u17,
     light: Light,
     indirect_light_color: u1,
     normal: Dir,
-    texture_idx: u11,
-    _: u1 = 0,
+    _: u12 = 0,
 };
 
 pub const empty: ChunkMesh = .{ .layers = @splat(.empty) };
@@ -42,55 +41,59 @@ pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, n
                 const pos = LocalPos{ .x = @intCast(x), .y = @intCast(y), .z = @intCast(z) };
                 const block = chunk.getBlock(pos);
 
-                if (block.kind == .air) {
-                    continue;
-                }
+                if (block.kind.getModelScheme() == null) continue;
 
                 chunk_mesh_layer = &chunk_mesh.layers[block.kind.getLayer().idx()];
 
-                const model_idx = block.kind.getModelIdx();
-                const texture_scheme = block.kind.getTextureScheme();
+                const block_model = block.kind.getModel();
 
-                inline for (Dir.values) |dir| {
+                inline for (Dir.values) |dir| skip: {
                     const dir_idx = dir.idx();
+                    const block_model_indices = block_model.faces.get(dir);
+
+                    if (block_model_indices.len == 0) break :skip;
 
                     if (NeighborChunks.inEdge[dir_idx](pos)) {
                         if (neighbor_chunks.chunks[dir_idx]) |neighbor_chunk| {
                             const neighbor_pos = NeighborChunks.getNeighborPos[dir_idx](pos);
                             const neighbor_block = neighbor_chunk.getBlock(neighbor_pos);
+                            const mesh_flags = neighbor_block.kind.getMeshFlags();
 
-                            if (neighbor_block.kind.isNotSolid() and neighbor_block.kind != block.kind) {
+                            if (mesh_flags.makes_neighbor_blocks_emit_mesh and (neighbor_block.kind != block.kind or mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh)) {
                                 const neighbor_light = neighbor_chunk.getLight(neighbor_pos);
 
-                                try chunk_mesh_layer.faces[dir_idx].append(gpa, .{
-                                    .x = pos.x,
-                                    .y = pos.y,
-                                    .z = pos.z,
-                                    .model_idx = model_idx,
-                                    .light = neighbor_light,
-                                    .indirect_light_color = if (neighbor_block.kind == .water) 1 else 0,
-                                    .normal = dir,
-                                    .texture_idx = texture_scheme.faces[dir_idx].idx(),
-                                });
+                                for (block_model_indices) |block_model_face_idx| {
+                                    try chunk_mesh_layer.faces[dir_idx].append(gpa, .{
+                                        .x = pos.x,
+                                        .y = pos.y,
+                                        .z = pos.z,
+                                        .model_face_idx = block_model_face_idx,
+                                        .light = neighbor_light,
+                                        .indirect_light_color = if (neighbor_block.kind == .water) 1 else 0,
+                                        .normal = dir,
+                                    });
+                                }
                             }
                         }
                     } else {
                         const neighbor_pos = NeighborChunks.getPos[dir_idx](pos);
                         const neighbor_block = chunk.getBlock(neighbor_pos);
+                        const mesh_flags = neighbor_block.kind.getMeshFlags();
 
-                        if (neighbor_block.kind.isNotSolid() and neighbor_block.kind != block.kind) {
+                        if (mesh_flags.makes_neighbor_blocks_emit_mesh and (neighbor_block.kind != block.kind or mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh)) {
                             const neighbor_light = chunk.getLight(neighbor_pos);
 
-                            try chunk_mesh_layer.faces[dir_idx].append(gpa, .{
-                                .x = pos.x,
-                                .y = pos.y,
-                                .z = pos.z,
-                                .model_idx = model_idx,
-                                .light = neighbor_light,
-                                .indirect_light_color = if (neighbor_block.kind == .water) 1 else 0,
-                                .normal = dir,
-                                .texture_idx = texture_scheme.faces[dir_idx].idx(),
-                            });
+                            for (block_model_indices) |block_model_face_idx| {
+                                try chunk_mesh_layer.faces[dir_idx].append(gpa, .{
+                                    .x = pos.x,
+                                    .y = pos.y,
+                                    .z = pos.z,
+                                    .model_face_idx = block_model_face_idx,
+                                    .light = neighbor_light,
+                                    .indirect_light_color = if (neighbor_block.kind == .water) 1 else 0,
+                                    .normal = dir,
+                                });
+                            }
                         }
                     }
                 }

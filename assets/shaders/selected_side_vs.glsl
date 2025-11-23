@@ -23,7 +23,7 @@ void main() {
     uint vertexIdx = uFaceIdx + (gl_VertexID % 6);
 
     uint perVertexData = sPerVertex[vertexIdx];
-    vec3 modelPosition = unpackModelPosition(perVertexData);
+    vec3 modelPosition = unpackModelPosition(perVertexData) / 16.0;
 
     vec4 worldPosition = vec4(uSelectedBlockPosition + modelPosition, 1.0);
 
