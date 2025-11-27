@@ -65,7 +65,7 @@ const Game = struct {
     fn init(gpa: std.mem.Allocator) !Game {
         const settings: Settings = .{};
         const screen: Screen = .{};
-        const camera: Camera = .init(.new(0, 0, 0), 0, 0, screen.aspect_ratio);
+        const camera: Camera = .init(.init(0, 0, 0), 0, 0, screen.aspect_ratio);
 
         const world: World = try .init(gpa, 30);
         const selected_block = world.raycast(camera.position, camera.direction);
@@ -216,58 +216,58 @@ const Game = struct {
     fn initInventory(gpa: std.mem.Allocator) ![]Block {
         var inventory: std.ArrayListUnmanaged(Block) = .empty;
 
-        // Lamp lights
-        for ([_]Light{
-            .{
-                .red = 15,
-                .green = 0,
-                .blue = 0,
-                .indirect = 0,
-            },
-            .{
-                .red = 0,
-                .green = 15,
-                .blue = 0,
-                .indirect = 0,
-            },
-            .{
-                .red = 0,
-                .green = 0,
-                .blue = 15,
-                .indirect = 0,
-            },
-            .{
-                .red = 15,
-                .green = 15,
-                .blue = 0,
-                .indirect = 0,
-            },
-            .{
-                .red = 15,
-                .green = 0,
-                .blue = 15,
-                .indirect = 0,
-            },
-            .{
-                .red = 0,
-                .green = 15,
-                .blue = 15,
-                .indirect = 0,
-            },
-            .{
-                .red = 15,
-                .green = 15,
-                .blue = 15,
-                .indirect = 0,
-            },
-        }) |light| {
-            try inventory.append(gpa, .init(.lamp, .{ .lamp = .{ .light = light } }));
-        }
+        // // Lamp lights
+        // for ([_]Light{
+        //     .{
+        //         .red = 15,
+        //         .green = 0,
+        //         .blue = 0,
+        //         .indirect = 0,
+        //     },
+        //     .{
+        //         .red = 0,
+        //         .green = 15,
+        //         .blue = 0,
+        //         .indirect = 0,
+        //     },
+        //     .{
+        //         .red = 0,
+        //         .green = 0,
+        //         .blue = 15,
+        //         .indirect = 0,
+        //     },
+        //     .{
+        //         .red = 15,
+        //         .green = 15,
+        //         .blue = 0,
+        //         .indirect = 0,
+        //     },
+        //     .{
+        //         .red = 15,
+        //         .green = 0,
+        //         .blue = 15,
+        //         .indirect = 0,
+        //     },
+        //     .{
+        //         .red = 0,
+        //         .green = 15,
+        //         .blue = 15,
+        //         .indirect = 0,
+        //     },
+        //     .{
+        //         .red = 15,
+        //         .green = 15,
+        //         .blue = 15,
+        //         .indirect = 0,
+        //     },
+        // }) |light| {
+        //     try inventory.append(gpa, .init(.lamp, .{ .lamp = .{ .light = light } }));
+        // }
 
-        try inventory.append(gpa, .initNone(.stone));
-        try inventory.append(gpa, .initNone(.glass));
-        try inventory.append(gpa, .initNone(.ice));
-        try inventory.append(gpa, .initNone(.glass_tinted));
+        // try inventory.append(gpa, .initNone(.stone));
+        // try inventory.append(gpa, .initNone(.glass));
+        // try inventory.append(gpa, .initNone(.ice));
+        // try inventory.append(gpa, .initNone(.glass_tinted));
 
         try inventory.append(gpa, .initNone(.torch));
 

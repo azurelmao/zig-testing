@@ -32,13 +32,6 @@ pub const BlockKind = enum(u16) {
         };
     }
 
-    pub fn isInteractable(self: BlockKind) bool {
-        return switch (self) {
-            .air, .water, .lava => false,
-            else => true,
-        };
-    }
-
     /// Meshing related flags
     const MeshFlags = packed struct {
         makes_neighbor_blocks_emit_mesh: bool,
@@ -138,6 +131,14 @@ pub const BlockKind = enum(u16) {
 
     pub inline fn getModel(self: BlockKind) *const BlockModel {
         return &BlockModel.BLOCK_KIND_TO_BLOCK_MODEL.get(self);
+    }
+
+    pub fn getVolume(self: BlockKind) BlockVolume {
+        return switch (self) {
+            .air, .water, .lava => .none,
+            .torch => .{ .detailed = .torch },
+            else => .full,
+        };
     }
 };
 
@@ -276,6 +277,85 @@ pub const BlockTextureKind = enum(u11) {
 
     pub inline fn idx(self: BlockTextureKind) u11 {
         return @intFromEnum(self);
+    }
+};
+
+pub const BlockVolume = union(enum) {
+    none,
+    full,
+    detailed: BlockVolumeScheme,
+};
+
+pub fn Bitset(comptime T: type) type {
+    return struct {
+        mask: T,
+
+        const empty: Self = .{
+            .mask = 0,
+        };
+
+        const Self = @This();
+        const Index = std.math.Log2Int(T);
+
+        pub fn get(self: *const Self, index: Index) bool {
+            return ((self.mask >> index) & 1) == 1;
+        }
+
+        pub fn setOne(self: *Self, index: Index) void {
+            self.mask |= (@as(u32, 1) << index);
+        }
+
+        pub fn setZero(self: *Self, index: Index) void {
+            self.mask &= ~(@as(u32, 1) << index);
+        }
+    };
+}
+
+pub const BlockVolumeScheme = struct {
+    columns: [16 * 16]Bitset(u16),
+
+    const torch: BlockVolumeScheme = expr: {
+        var scheme: BlockVolumeScheme = .empty;
+        // scheme.setCuboid(.{ .x = 7, .y = 0, .z = 7 }, .{ .x = 9, .y = 11, .z = 9 });
+
+        scheme.setCuboid(.{ .x = 0, .y = 0, .z = 0 }, .{ .x = 15, .y = 15, .z = 15 });
+
+        break :expr scheme;
+    };
+
+    const empty: BlockVolumeScheme = .{
+        .columns = @splat(.empty),
+    };
+
+    pub const Vec3u4 = struct {
+        x: u4,
+        y: u4,
+        z: u4,
+    };
+
+    pub fn get(self: *const BlockVolumeScheme, pos: Vec3u4) bool {
+        const idx = @as(usize, pos.x) + @as(usize, pos.z) * 16;
+        return self.columns[idx].get(pos.y);
+    }
+
+    fn set(self: *BlockVolumeScheme, pos: Vec3u4) void {
+        const idx = @as(usize, pos.x) + @as(usize, pos.z) * 16;
+        self.columns[idx].setOne(pos.y);
+    }
+
+    fn setCuboid(self: *BlockVolumeScheme, min: Vec3u4, max: Vec3u4) void {
+        var x: u5 = min.x;
+        var y: u5 = min.y;
+        var z: u5 = min.z;
+
+        while (x <= max.x) : (x += 1) {
+            while (z <= max.z) : (z += 1) {
+                while (y <= max.y) : (y += 1) {
+                    const pos: Vec3u4 = .{ .x = @intCast(x), .y = @intCast(y), .z = @intCast(z) };
+                    self.set(pos);
+                }
+            }
+        }
     }
 };
 

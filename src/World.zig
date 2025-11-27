@@ -5,6 +5,7 @@ const Light = @import("light.zig").Light;
 const LightNode = @import("light.zig").LightNode;
 const Block = @import("block.zig").Block;
 const BlockExtendedData = @import("block.zig").BlockExtendedData;
+const BlockVolumeScheme = @import("block.zig").BlockVolumeScheme;
 const Dir = @import("dir.zig").Dir;
 const DedupQueue = @import("dedup_queue.zig").DedupQueue;
 const Vec3f = @import("vec3f.zig").Vec3f;
@@ -268,10 +269,12 @@ pub const RaycastResult = struct {
     block: ?Block,
 };
 
+const MAX_RAYCAST_STEPS = 120;
+
 pub fn raycast(world: World, origin: Vec3f, direction: Vec3f) RaycastResult {
     var moving_position = origin.floor();
 
-    const step = Vec3f.new(std.math.sign(direction.x), std.math.sign(direction.y), std.math.sign(direction.z));
+    const step: Vec3f = .init(std.math.sign(direction.x), std.math.sign(direction.y), std.math.sign(direction.z));
     const delta_distance = Vec3f.fromScalar(direction.magnitude()).divide(direction).abs();
     var side_distance = step.multiply(moving_position.subtract(origin)).add(step.multiplyScalar(0.5).addScalar(0.5)).multiply(delta_distance);
 
@@ -285,41 +288,65 @@ pub fn raycast(world: World, origin: Vec3f, direction: Vec3f) RaycastResult {
         .z = false,
     };
 
-    for (0..120) |_| {
+    for (0..MAX_RAYCAST_STEPS) |_| {
         const block_world_pos = moving_position.toWorldPos();
         const block_or_null = world.getBlockOrNull(block_world_pos);
 
         if (block_or_null) |block| {
-            if (block.kind.isInteractable()) {
-                const dir: RaycastSide = expr: {
-                    if (mask.x) {
-                        if (step.x > 0) {
-                            break :expr .west;
-                        } else if (step.x < 0) {
-                            break :expr .east;
+            const block_volume = block.kind.getVolume();
+
+            switch (block_volume) {
+                .none => {},
+                .full => {
+                    const dir: RaycastSide = expr: {
+                        if (mask.x) {
+                            if (step.x > 0) {
+                                break :expr .west;
+                            } else if (step.x < 0) {
+                                break :expr .east;
+                            }
+                        } else if (mask.y) {
+                            if (step.y > 0) {
+                                break :expr .bottom;
+                            } else if (step.y < 0) {
+                                break :expr .top;
+                            }
+                        } else if (mask.z) {
+                            if (step.z > 0) {
+                                break :expr .north;
+                            } else if (step.z < 0) {
+                                break :expr .south;
+                            }
                         }
-                    } else if (mask.y) {
-                        if (step.y > 0) {
-                            break :expr .bottom;
-                        } else if (step.y < 0) {
-                            break :expr .top;
-                        }
-                    } else if (mask.z) {
-                        if (step.z > 0) {
-                            break :expr .north;
-                        } else if (step.z < 0) {
-                            break :expr .south;
-                        }
+
+                        break :expr .inside;
+                    };
+
+                    return .{
+                        .world_pos = block_world_pos,
+                        .dir = dir,
+                        .block = block,
+                    };
+                },
+                .detailed => |block_volume_scheme| {
+                    const world_pos = moving_position.toWorldPos();
+                    // const new_origin: Vec3f = .{
+                    //     .x = @mod(moving_position.x, 16) / 16.0,
+                    //     .y = @mod(moving_position.y, 16) / 16.0,
+                    //     .z = @mod(moving_position.z, 16) / 16.0,
+                    // };
+                    const new_origin = moving_position;
+
+                    const raycast_side = detailedRaycast(&block_volume_scheme, new_origin, direction);
+
+                    if (raycast_side != .out_of_bounds) {
+                        return .{
+                            .world_pos = world_pos,
+                            .dir = raycast_side,
+                            .block = block,
+                        };
                     }
-
-                    break :expr .inside;
-                };
-
-                return .{
-                    .world_pos = block_world_pos,
-                    .dir = dir,
-                    .block = block,
-                };
+                },
             }
         }
 
@@ -351,6 +378,95 @@ pub fn raycast(world: World, origin: Vec3f, direction: Vec3f) RaycastResult {
         .dir = .out_of_bounds,
         .block = null,
     };
+}
+
+fn detailedRaycast(block_volume_scheme: *const BlockVolumeScheme, origin: Vec3f, direction: Vec3f) RaycastSide {
+    var moving_position = origin.floor();
+
+    const step: Vec3f = .init(std.math.sign(direction.x), std.math.sign(direction.y), std.math.sign(direction.z));
+    const delta_distance = Vec3f.fromScalar(direction.magnitude()).divide(direction).abs();
+    var side_distance = step.multiply(moving_position.subtract(origin)).add(step.multiplyScalar(0.5).addScalar(0.5)).multiply(delta_distance);
+
+    var mask = packed struct {
+        x: bool,
+        y: bool,
+        z: bool,
+    }{
+        .x = false,
+        .y = false,
+        .z = false,
+    };
+
+    std.log.debug("=====", .{});
+
+    for (0..MAX_RAYCAST_STEPS) |_| {
+        const temp_pos = moving_position.floor();
+
+        std.log.debug("origin: [{} {} {}] tmp_pos: [{} {} {}]", .{ origin.x, origin.y, origin.z, temp_pos.x, temp_pos.y, temp_pos.z });
+
+        if (temp_pos.x >= 0.0 and temp_pos.x < 16.0 and
+            temp_pos.y >= 0.0 and temp_pos.y < 16.0 and
+            temp_pos.z >= 0.0 and temp_pos.z < 16.0)
+        {
+            const volume_pos: BlockVolumeScheme.Vec3u4 = .{
+                .x = @intFromFloat(temp_pos.x),
+                .y = @intFromFloat(temp_pos.y),
+                .z = @intFromFloat(temp_pos.z),
+            };
+
+            if (block_volume_scheme.get(volume_pos)) {
+                const dir: RaycastSide = expr: {
+                    if (mask.x) {
+                        if (step.x > 0) {
+                            break :expr .west;
+                        } else if (step.x < 0) {
+                            break :expr .east;
+                        }
+                    } else if (mask.y) {
+                        if (step.y > 0) {
+                            break :expr .bottom;
+                        } else if (step.y < 0) {
+                            break :expr .top;
+                        }
+                    } else if (mask.z) {
+                        if (step.z > 0) {
+                            break :expr .north;
+                        } else if (step.z < 0) {
+                            break :expr .south;
+                        }
+                    }
+
+                    break :expr .inside;
+                };
+
+                return dir;
+            }
+        }
+
+        if (side_distance.x < side_distance.y) {
+            if (side_distance.x < side_distance.z) {
+                side_distance.x += delta_distance.x;
+                moving_position.x += step.x;
+                mask = .{ .x = true, .y = false, .z = false };
+            } else {
+                side_distance.z += delta_distance.z;
+                moving_position.z += step.z;
+                mask = .{ .x = false, .y = false, .z = true };
+            }
+        } else {
+            if (side_distance.y < side_distance.z) {
+                side_distance.y += delta_distance.y;
+                moving_position.y += step.y;
+                mask = .{ .x = false, .y = true, .z = false };
+            } else {
+                side_distance.z += delta_distance.z;
+                moving_position.z += step.z;
+                mask = .{ .x = false, .y = false, .z = true };
+            }
+        }
+    }
+
+    return .out_of_bounds;
 }
 
 pub fn generate(world: *World, gpa: std.mem.Allocator) !void {

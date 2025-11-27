@@ -27,7 +27,7 @@ plane_right: [4]gl.float,
 plane_bottom: [4]gl.float,
 plane_top: [4]gl.float,
 
-pub const up: Vec3f = Vec3f.new(0.0, 1.0, 0.0);
+pub const up: Vec3f = Vec3f.init(0.0, 1.0, 0.0);
 const DEG_TO_RAD: gl.float = std.math.pi / 180.0;
 
 pub fn init(position: Vec3f, yaw: gl.float, pitch: gl.float, aspect_ratio: gl.float) Camera {
@@ -39,8 +39,8 @@ pub fn init(position: Vec3f, yaw: gl.float, pitch: gl.float, aspect_ratio: gl.fl
     const y = std.math.sin(pitch_rads);
     const z = xz_len * std.math.sin(yaw_rads);
 
-    const direction = Vec3f.new(x, y, z).normalize();
-    const horizontal_direction = Vec3f.new(x, 0, z).normalize();
+    const direction = Vec3f.init(x, y, z).normalize();
+    const horizontal_direction = Vec3f.init(x, 0, z).normalize();
     const right = horizontal_direction.cross(up).normalize();
 
     const fov_x: gl.float = 90.0;
@@ -92,8 +92,8 @@ pub fn calcDirectionAndRight(self: *Camera) void {
     const y = std.math.sin(pitch_rads);
     const z = xz_len * std.math.sin(yaw_rads);
 
-    self.direction = Vec3f.new(x, y, z).normalize();
-    self.horizontal_direction = Vec3f.new(x, 0, z).normalize();
+    self.direction = Vec3f.init(x, y, z).normalize();
+    self.horizontal_direction = Vec3f.init(x, 0, z).normalize();
     self.right = self.horizontal_direction.cross(up).normalize();
 }
 

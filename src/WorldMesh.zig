@@ -229,10 +229,10 @@ pub fn generateVisibleChunkMeshes(self: *WorldMesh, gpa: std.mem.Allocator, worl
     self.visible_chunk_meshes.clearRetainingCapacity();
     self.visible_chunk_mesh_pos.data.clearRetainingCapacity();
 
-    const left_nrm = Vec3f.new(camera.plane_left[0], camera.plane_left[1], camera.plane_left[2]).normalize();
-    const right_nrm = Vec3f.new(camera.plane_right[0], camera.plane_right[1], camera.plane_right[2]).normalize();
-    const bottom_nrm = Vec3f.new(camera.plane_bottom[0], camera.plane_bottom[1], camera.plane_bottom[2]).normalize();
-    const top_nrm = Vec3f.new(camera.plane_top[0], camera.plane_top[1], camera.plane_top[2]).normalize();
+    const left_nrm = Vec3f.init(camera.plane_left[0], camera.plane_left[1], camera.plane_left[2]).normalize();
+    const right_nrm = Vec3f.init(camera.plane_right[0], camera.plane_right[1], camera.plane_right[2]).normalize();
+    const bottom_nrm = Vec3f.init(camera.plane_bottom[0], camera.plane_bottom[1], camera.plane_bottom[2]).normalize();
+    const top_nrm = Vec3f.init(camera.plane_top[0], camera.plane_top[1], camera.plane_top[2]).normalize();
 
     const camera_chunk_pos = camera.position.toChunkPos();
 
