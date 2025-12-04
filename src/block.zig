@@ -1,5 +1,6 @@
 const std = @import("std");
 const Dir = @import("dir.zig").Dir;
+const Normal = @import("normal.zig").Normal;
 const Light = @import("light.zig").Light;
 const Vec3f = @import("vec3f.zig").Vec3f;
 const World = @import("World.zig");
@@ -136,7 +137,7 @@ pub const BlockKind = enum(u16) {
     pub fn getVolume(self: BlockKind) BlockVolume {
         return switch (self) {
             .air, .water, .lava => .none,
-            .torch => .{ .detailed = .torch },
+            .torch => .{ .detailed = &.torch },
             else => .full,
         };
     }
@@ -283,80 +284,95 @@ pub const BlockTextureKind = enum(u11) {
 pub const BlockVolume = union(enum) {
     none,
     full,
-    detailed: BlockVolumeScheme,
+    detailed: *const BlockVolumeScheme,
 };
 
-pub fn Bitset(comptime T: type) type {
-    return struct {
-        mask: T,
-
-        const empty: Self = .{
-            .mask = 0,
-        };
-
-        const Self = @This();
-        const Index = std.math.Log2Int(T);
-
-        pub fn get(self: *const Self, index: Index) bool {
-            return ((self.mask >> index) & 1) == 1;
-        }
-
-        pub fn setOne(self: *Self, index: Index) void {
-            self.mask |= (@as(u32, 1) << index);
-        }
-
-        pub fn setZero(self: *Self, index: Index) void {
-            self.mask &= ~(@as(u32, 1) << index);
-        }
-    };
-}
-
 pub const BlockVolumeScheme = struct {
-    columns: [16 * 16]Bitset(u16),
+    cuboids: []const Cuboid,
 
     const torch: BlockVolumeScheme = expr: {
         var scheme: BlockVolumeScheme = .empty;
-        // scheme.setCuboid(.{ .x = 7, .y = 0, .z = 7 }, .{ .x = 9, .y = 11, .z = 9 });
 
-        scheme.setCuboid(.{ .x = 0, .y = 0, .z = 0 }, .{ .x = 15, .y = 15, .z = 15 });
+        scheme.addCuboid(.{ .x = 0, .y = 0, .z = 0 }, .{ .x = 16, .y = 16, .z = 16 });
 
         break :expr scheme;
     };
 
     const empty: BlockVolumeScheme = .{
-        .columns = @splat(.empty),
+        .cuboids = &.{},
     };
 
-    pub const Vec3u4 = struct {
-        x: u4,
-        y: u4,
-        z: u4,
+    fn addCuboid(self: *BlockVolumeScheme, min: Vec3u5, max: Vec3u5) void {
+        const cuboid: Cuboid = .{ .min = min, .max = max };
+        self.cuboids = self.cuboids ++ .{cuboid};
+    }
+
+    const IntersectionResult = struct {
+        hit_t: f32,
+        normal: Normal,
     };
 
-    pub fn get(self: *const BlockVolumeScheme, pos: Vec3u4) bool {
-        const idx = @as(usize, pos.x) + @as(usize, pos.z) * 16;
-        return self.columns[idx].get(pos.y);
-    }
+    pub fn intersect(self: *const BlockVolumeScheme, origin: Vec3f, direction: Vec3f) ?IntersectionResult {
+        for (self.cuboids) |cuboid| {
+            const min: Vec3f = .{
+                .x = @as(f32, @floatFromInt(cuboid.min.x)) / 16.0,
+                .y = @as(f32, @floatFromInt(cuboid.min.y)) / 16.0,
+                .z = @as(f32, @floatFromInt(cuboid.min.z)) / 16.0,
+            };
 
-    fn set(self: *BlockVolumeScheme, pos: Vec3u4) void {
-        const idx = @as(usize, pos.x) + @as(usize, pos.z) * 16;
-        self.columns[idx].setOne(pos.y);
-    }
+            const max: Vec3f = .{
+                .x = @as(f32, @floatFromInt(cuboid.max.x)) / 16.0,
+                .y = @as(f32, @floatFromInt(cuboid.max.y)) / 16.0,
+                .z = @as(f32, @floatFromInt(cuboid.max.z)) / 16.0,
+            };
 
-    fn setCuboid(self: *BlockVolumeScheme, min: Vec3u4, max: Vec3u4) void {
-        var x: u5 = min.x;
-        var y: u5 = min.y;
-        var z: u5 = min.z;
+            const t1 = (min.x - origin.x) / direction.x;
+            const t2 = (max.x - origin.x) / direction.x;
+            const t3 = (min.y - origin.y) / direction.y;
+            const t4 = (max.y - origin.y) / direction.y;
+            const t5 = (min.z - origin.z) / direction.z;
+            const t6 = (max.z - origin.z) / direction.z;
 
-        while (x <= max.x) : (x += 1) {
-            while (z <= max.z) : (z += 1) {
-                while (y <= max.y) : (y += 1) {
-                    const pos: Vec3u4 = .{ .x = @intCast(x), .y = @intCast(y), .z = @intCast(z) };
-                    self.set(pos);
-                }
+            const t_min = @max(@min(t1, t2), @min(t3, t4), @min(t5, t6));
+            const t_max = @min(@max(t1, t2), @max(t3, t4), @max(t5, t6));
+
+            if (t_max < 0.001 or t_min > t_max) {
+                continue;
             }
+
+            const hit_t = if (t_min < 0.001) t_max else t_min;
+
+            var normal: Normal = .neither;
+            if (@abs(hit_t - t1) < 0.01) {
+                normal = .west;
+            } else if (@abs(hit_t - t2) < 0.01) {
+                normal = .east;
+            } else if (@abs(hit_t - t3) < 0.01) {
+                normal = .bottom;
+            } else if (@abs(hit_t - t4) < 0.01) {
+                normal = .top;
+            } else if (@abs(hit_t - t5) < 0.01) {
+                normal = .north;
+            } else if (@abs(hit_t - t6) < 0.01) {
+                normal = .south;
+            }
+
+            return .{ .hit_t = hit_t, .normal = normal };
         }
+
+        return null;
     }
+
+    pub const Vec3u5 = struct {
+        x: u5,
+        y: u5,
+        z: u5,
+    };
+
+    const Cuboid = struct {
+        min: Vec3u5,
+        max: Vec3u5,
+    };
 };
 
 pub const BlockTextureScheme = struct {
