@@ -10,6 +10,7 @@ const Chunk = @import("Chunk.zig");
 const Block = @import("block.zig").Block;
 const BlockLayer = @import("block.zig").BlockLayer;
 const BlockModel = @import("block.zig").BlockModel;
+const BlockVolumeScheme = @import("block.zig").BlockVolumeScheme;
 const Camera = @import("Camera.zig");
 const Screen = @import("Screen.zig");
 const WorldMesh = @import("WorldMesh.zig");
@@ -872,19 +873,20 @@ const Game = struct {
                 if (game.settings.light_removal_nodes) {
                     game.shader_programs.debug_nodes.setUniform3f("uColor", 1, 0, 0);
                     debug.removal_nodes.ssbo.bind(15);
-                    gl.DrawArraysInstanced(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len, @intCast(debug.removal_nodes.data.items.len));
+                    gl.DrawArraysInstanced(gl.LINES, 0, BlockVolumeScheme.FULL_LEN, @intCast(debug.removal_nodes.data.items.len));
                 }
 
                 if (game.settings.light_addition_nodes) {
                     game.shader_programs.debug_nodes.setUniform3f("uColor", 0, 0, 1);
                     debug.addition_nodes.ssbo.bind(15);
-                    gl.DrawArraysInstanced(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len, @intCast(debug.addition_nodes.data.items.len));
+                    gl.DrawArraysInstanced(gl.LINES, 0, BlockVolumeScheme.FULL_LEN, @intCast(debug.addition_nodes.data.items.len));
                 }
             }
         }
 
-        game.shader_programs.selected_block.bind();
-        {
+        if (game.selected_block.block) |block| {
+            game.shader_programs.selected_block.bind();
+
             gl.Enable(gl.POLYGON_OFFSET_LINE);
             defer gl.Disable(gl.POLYGON_OFFSET_LINE);
 
@@ -897,7 +899,9 @@ const Game = struct {
             gl.DepthFunc(gl.LEQUAL);
             defer gl.DepthFunc(gl.LESS);
 
-            gl.DrawArrays(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len);
+            const index_and_len = block.kind.getVolumeIndexAndLen();
+
+            gl.DrawArrays(gl.LINES, @intCast(index_and_len.index), @intCast(index_and_len.len));
         }
 
         if (game.settings.relative_selector) {
@@ -915,7 +919,7 @@ const Game = struct {
             gl.DepthFunc(gl.LEQUAL);
             defer gl.DepthFunc(gl.LESS);
 
-            gl.DrawArrays(gl.LINES, 0, BlockModel.BOUNDING_BOX_LINES_BUFFER.len);
+            gl.DrawArrays(gl.LINES, 0, BlockVolumeScheme.FULL_LEN);
         }
 
         game.shader_programs.crosshair.bind();

@@ -6,6 +6,7 @@ const ShaderStorageBuffer = @import("shader_storage_buffer.zig").ShaderStorageBu
 const Vec3f = @import("vec3f.zig").Vec3f;
 const BlockKind = @import("block.zig").BlockKind;
 const BlockModel = @import("block.zig").BlockModel;
+const BlockVolumeScheme = @import("block.zig").BlockVolumeScheme;
 
 const ShaderStorageBuffers = @This();
 
@@ -28,7 +29,7 @@ pub fn init() !ShaderStorageBuffers {
     const chunk_bounding_box_lines: ShaderStorageBuffer(Vec3f) = .initFromSliceAndBind(11, ChunkMesh.BOUNDING_BOX_LINES_BUFFER, gl.DYNAMIC_STORAGE_BIT);
     chunk_bounding_box_lines.label("Chunk Bounding Box Lines Buffer");
 
-    const selected_block: ShaderStorageBuffer(Vec3f) = .initFromSliceAndBind(13, BlockModel.BOUNDING_BOX_LINES_BUFFER, gl.DYNAMIC_STORAGE_BIT);
+    const selected_block: ShaderStorageBuffer(Vec3f) = .initFromSliceAndBind(13, BlockVolumeScheme.BLOCK_VOLUME_BUFFER, gl.DYNAMIC_STORAGE_BIT);
     selected_block.label("Selected Block Buffer");
 
     return .{

@@ -241,7 +241,7 @@ pub fn getBlockExtendedData(world: *World, index: usize) BlockExtendedData {
     return world.block_extended_data_store[index];
 }
 
-pub const RaycastSide = enum {
+pub const RaycastDir = enum {
     west,
     east,
     bottom,
@@ -251,11 +251,11 @@ pub const RaycastSide = enum {
     inside,
     out_of_bounds,
 
-    pub inline fn idx(world: RaycastSide) usize {
+    pub inline fn idx(world: RaycastDir) usize {
         return @intFromEnum(world);
     }
 
-    pub fn toDir(self: RaycastSide) Dir {
+    pub fn toDir(self: RaycastDir) Dir {
         switch (self) {
             .west, .east, .bottom, .top, .north, .south => return @enumFromInt(self.idx()),
             else => unreachable,
@@ -265,7 +265,7 @@ pub const RaycastSide = enum {
 
 pub const RaycastResult = struct {
     world_pos: WorldPos,
-    dir: RaycastSide,
+    dir: RaycastDir,
     block: ?Block,
 };
 
@@ -298,7 +298,7 @@ pub fn raycast(world: World, origin: Vec3f, direction: Vec3f) RaycastResult {
             switch (block_volume) {
                 .none => {},
                 .full => {
-                    const dir: RaycastSide = expr: {
+                    const dir: RaycastDir = expr: {
                         if (mask.x) {
                             if (step.x > 0) {
                                 break :expr .west;
@@ -329,14 +329,15 @@ pub fn raycast(world: World, origin: Vec3f, direction: Vec3f) RaycastResult {
                     };
                 },
                 .detailed => |block_volume_scheme| skip: {
-                    const intersection_result = block_volume_scheme.intersect(origin, direction) orelse break :skip;
+                    const dir = block_volume_scheme.intersect(block_world_pos.toVec3f(), origin, direction);
+                    if (dir == .out_of_bounds) break :skip;
 
-                    const hit_pos = origin.add(origin).multiplyScalar(intersection_result.hit_t);
-                    _ = hit_pos;
+                    // const hit_pos = origin.add(direction).multiplyScalar(intersection_result.hit_time);
+                    // _ = hit_pos;
 
                     return .{
                         .world_pos = block_world_pos,
-                        .dir = intersection_result.normal.toRaycastSide(),
+                        .dir = dir,
                         .block = block,
                     };
                 },

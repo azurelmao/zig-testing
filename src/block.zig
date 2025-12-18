@@ -1,6 +1,6 @@
 const std = @import("std");
 const Dir = @import("dir.zig").Dir;
-const Normal = @import("normal.zig").Normal;
+const RaycastDir = @import("World.zig").RaycastDir;
 const Light = @import("light.zig").Light;
 const Vec3f = @import("vec3f.zig").Vec3f;
 const World = @import("World.zig");
@@ -140,6 +140,10 @@ pub const BlockKind = enum(u16) {
             .torch => .{ .detailed = &.torch },
             else => .full,
         };
+    }
+
+    pub fn getVolumeIndexAndLen(self: BlockKind) BlockVolumeScheme.IndexAndLen {
+        return BlockVolumeScheme.BLOCK_KIND_TO_BLOCK_VOLUME_INDEX_AND_LEN.get(self);
     }
 };
 
@@ -292,11 +296,55 @@ pub const BlockVolumeScheme = struct {
 
     const torch: BlockVolumeScheme = expr: {
         var scheme: BlockVolumeScheme = .empty;
-
-        scheme.addCuboid(.{ .x = 0, .y = 0, .z = 0 }, .{ .x = 16, .y = 16, .z = 16 });
-
+        scheme.addCuboid(.{ .x = 7, .y = 0, .z = 7 }, .{ .x = 9, .y = 11, .z = 9 });
         break :expr scheme;
     };
+
+    pub const IndexAndLen = struct {
+        index: usize,
+        len: usize,
+    };
+
+    const tmp = expr: {
+        @setEvalBranchQuota(10_000);
+
+        const block_kinds = std.enums.values(BlockKind);
+        var block_volume_buffer: []const Vec3f = &.{};
+        var block_kind_to_block_volume_index_and_len: std.EnumArray(BlockKind, IndexAndLen) = .initUndefined();
+
+        block_volume_buffer = block_volume_buffer ++ emitLines(.{ .x = 0, .y = 0, .z = 0 }, .{ .x = 16, .y = 16, .z = 16 });
+        const full_len = block_volume_buffer.len;
+
+        for (block_kinds) |block_kind| {
+            const index_and_len: BlockVolumeScheme.IndexAndLen = switch (block_kind.getVolume()) {
+                .none => continue,
+                .full => .{ .index = 0, .len = full_len },
+                .detailed => |block_volume_scheme| expr2: {
+                    const index = block_volume_buffer.len;
+
+                    for (block_volume_scheme.cuboids) |cuboid| {
+                        block_volume_buffer = block_volume_buffer ++ emitLines(cuboid.min, cuboid.max);
+                    }
+
+                    const len = block_volume_buffer.len - index;
+
+                    break :expr2 .{ .index = index, .len = len };
+                },
+            };
+
+            block_kind_to_block_volume_index_and_len.set(block_kind, index_and_len);
+        }
+
+        break :expr .{
+            .block_volume_buffer = block_volume_buffer,
+            .block_kind_to_block_volume_index_and_len = block_kind_to_block_volume_index_and_len,
+            .full_len = full_len,
+        };
+    };
+
+    pub const BLOCK_VOLUME_BUFFER = tmp.block_volume_buffer;
+    const BLOCK_KIND_TO_BLOCK_VOLUME_INDEX_AND_LEN = tmp.block_kind_to_block_volume_index_and_len;
+    pub const FULL_LEN = tmp.full_len;
 
     const empty: BlockVolumeScheme = .{
         .cuboids = &.{},
@@ -307,23 +355,67 @@ pub const BlockVolumeScheme = struct {
         self.cuboids = self.cuboids ++ .{cuboid};
     }
 
-    const IntersectionResult = struct {
-        hit_t: f32,
-        normal: Normal,
-    };
+    fn emitLines(min: Vec3u5, max: Vec3u5) []const Vec3f {
+        const min_f: Vec3f = .{
+            .x = @as(f32, @floatFromInt(min.x)) / 16.0,
+            .y = @as(f32, @floatFromInt(min.y)) / 16.0,
+            .z = @as(f32, @floatFromInt(min.z)) / 16.0,
+        };
 
-    pub fn intersect(self: *const BlockVolumeScheme, origin: Vec3f, direction: Vec3f) ?IntersectionResult {
+        const max_f: Vec3f = .{
+            .x = @as(f32, @floatFromInt(max.x)) / 16.0,
+            .y = @as(f32, @floatFromInt(max.y)) / 16.0,
+            .z = @as(f32, @floatFromInt(max.z)) / 16.0,
+        };
+
+        return &.{
+            .{ .x = min_f.x, .y = min_f.y, .z = min_f.z },
+            .{ .x = min_f.x, .y = min_f.y, .z = max_f.z },
+            .{ .x = max_f.x, .y = min_f.y, .z = min_f.z },
+            .{ .x = max_f.x, .y = min_f.y, .z = max_f.z },
+
+            .{ .x = min_f.x, .y = min_f.y, .z = min_f.z },
+            .{ .x = max_f.x, .y = min_f.y, .z = min_f.z },
+            .{ .x = min_f.x, .y = min_f.y, .z = max_f.z },
+            .{ .x = max_f.x, .y = min_f.y, .z = max_f.z },
+
+            .{ .x = min_f.x, .y = max_f.y, .z = min_f.z },
+            .{ .x = min_f.x, .y = max_f.y, .z = max_f.z },
+            .{ .x = max_f.x, .y = max_f.y, .z = min_f.z },
+            .{ .x = max_f.x, .y = max_f.y, .z = max_f.z },
+
+            .{ .x = min_f.x, .y = max_f.y, .z = min_f.z },
+            .{ .x = max_f.x, .y = max_f.y, .z = min_f.z },
+            .{ .x = min_f.x, .y = max_f.y, .z = max_f.z },
+            .{ .x = max_f.x, .y = max_f.y, .z = max_f.z },
+
+            // vertical
+            .{ .x = min_f.x, .y = min_f.y, .z = min_f.z },
+            .{ .x = min_f.x, .y = max_f.y, .z = min_f.z },
+
+            .{ .x = min_f.x, .y = min_f.y, .z = max_f.z },
+            .{ .x = min_f.x, .y = max_f.y, .z = max_f.z },
+
+            .{ .x = max_f.x, .y = min_f.y, .z = min_f.z },
+            .{ .x = max_f.x, .y = max_f.y, .z = min_f.z },
+
+            .{ .x = max_f.x, .y = min_f.y, .z = max_f.z },
+            .{ .x = max_f.x, .y = max_f.y, .z = max_f.z },
+        };
+    }
+
+    pub fn intersect(self: *const BlockVolumeScheme, block_pos: Vec3f, origin: Vec3f, direction: Vec3f) RaycastDir {
         for (self.cuboids) |cuboid| {
             const min: Vec3f = .{
-                .x = @as(f32, @floatFromInt(cuboid.min.x)) / 16.0,
-                .y = @as(f32, @floatFromInt(cuboid.min.y)) / 16.0,
-                .z = @as(f32, @floatFromInt(cuboid.min.z)) / 16.0,
+                .x = @as(f32, @floatFromInt(cuboid.min.x)) / 16.0 + block_pos.x,
+                .y = @as(f32, @floatFromInt(cuboid.min.y)) / 16.0 + block_pos.y,
+                .z = @as(f32, @floatFromInt(cuboid.min.z)) / 16.0 + block_pos.z,
             };
 
             const max: Vec3f = .{
-                .x = @as(f32, @floatFromInt(cuboid.max.x)) / 16.0,
-                .y = @as(f32, @floatFromInt(cuboid.max.y)) / 16.0,
-                .z = @as(f32, @floatFromInt(cuboid.max.z)) / 16.0,
+                .x = @as(f32, @floatFromInt(cuboid.max.x)) / 16.0 + block_pos.x,
+                .y = @as(f32, @floatFromInt(cuboid.max.y)) / 16.0 + block_pos.y,
+                .z = @as(f32, @floatFromInt(cuboid.max.z)) / 16.0 + block_pos.z,
             };
 
             const t1 = (min.x - origin.x) / direction.x;
@@ -333,34 +425,32 @@ pub const BlockVolumeScheme = struct {
             const t5 = (min.z - origin.z) / direction.z;
             const t6 = (max.z - origin.z) / direction.z;
 
-            const t_min = @max(@min(t1, t2), @min(t3, t4), @min(t5, t6));
-            const t_max = @min(@max(t1, t2), @max(t3, t4), @max(t5, t6));
+            const min_time = @max(@min(t1, t2), @min(t3, t4), @min(t5, t6));
+            const max_time = @min(@max(t1, t2), @max(t3, t4), @max(t5, t6));
 
-            if (t_max < 0.001 or t_min > t_max) {
-                continue;
+            if (max_time < 0.001 or min_time > max_time) continue;
+
+            const hit_time = if (min_time < 0.001) max_time else min_time;
+
+            var dir: RaycastDir = .out_of_bounds;
+            if (@abs(hit_time - t1) < 0.01) {
+                dir = .west;
+            } else if (@abs(hit_time - t2) < 0.01) {
+                dir = .east;
+            } else if (@abs(hit_time - t3) < 0.01) {
+                dir = .bottom;
+            } else if (@abs(hit_time - t4) < 0.01) {
+                dir = .top;
+            } else if (@abs(hit_time - t5) < 0.01) {
+                dir = .north;
+            } else if (@abs(hit_time - t6) < 0.01) {
+                dir = .south;
             }
 
-            const hit_t = if (t_min < 0.001) t_max else t_min;
-
-            var normal: Normal = .neither;
-            if (@abs(hit_t - t1) < 0.01) {
-                normal = .west;
-            } else if (@abs(hit_t - t2) < 0.01) {
-                normal = .east;
-            } else if (@abs(hit_t - t3) < 0.01) {
-                normal = .bottom;
-            } else if (@abs(hit_t - t4) < 0.01) {
-                normal = .top;
-            } else if (@abs(hit_t - t5) < 0.01) {
-                normal = .north;
-            } else if (@abs(hit_t - t6) < 0.01) {
-                normal = .south;
-            }
-
-            return .{ .hit_t = hit_t, .normal = normal };
+            return dir;
         }
 
-        return null;
+        return .out_of_bounds;
     }
 
     pub const Vec3u5 = struct {
@@ -759,39 +849,4 @@ pub const BlockModel = struct {
 
     pub const PER_VERTEX_BUFFER = tmp.per_vertex_buffer;
     const BLOCK_KIND_TO_BLOCK_MODEL = tmp.block_kind_to_block_model;
-
-    pub const BOUNDING_BOX_LINES_BUFFER: []const Vec3f = &.{
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = 0, .y = 0, .z = 1 },
-        .{ .x = 1, .y = 0, .z = 0 },
-        .{ .x = 1, .y = 0, .z = 1 },
-
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = 1, .y = 0, .z = 0 },
-        .{ .x = 0, .y = 0, .z = 1 },
-        .{ .x = 1, .y = 0, .z = 1 },
-
-        .{ .x = 0, .y = 1, .z = 0 },
-        .{ .x = 0, .y = 1, .z = 1 },
-        .{ .x = 1, .y = 1, .z = 0 },
-        .{ .x = 1, .y = 1, .z = 1 },
-
-        .{ .x = 0, .y = 1, .z = 0 },
-        .{ .x = 1, .y = 1, .z = 0 },
-        .{ .x = 0, .y = 1, .z = 1 },
-        .{ .x = 1, .y = 1, .z = 1 },
-
-        // vertical
-        .{ .x = 0, .y = 0, .z = 0 },
-        .{ .x = 0, .y = 1, .z = 0 },
-
-        .{ .x = 0, .y = 0, .z = 1 },
-        .{ .x = 0, .y = 1, .z = 1 },
-
-        .{ .x = 1, .y = 0, .z = 0 },
-        .{ .x = 1, .y = 1, .z = 0 },
-
-        .{ .x = 1, .y = 0, .z = 1 },
-        .{ .x = 1, .y = 1, .z = 1 },
-    };
 };

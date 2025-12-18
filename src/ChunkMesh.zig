@@ -38,14 +38,17 @@ pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, n
     for (0..Chunk.SIZE) |x| {
         for (0..Chunk.SIZE) |y| {
             for (0..Chunk.SIZE) |z| {
-                const pos = LocalPos{ .x = @intCast(x), .y = @intCast(y), .z = @intCast(z) };
-                const block = chunk.getBlock(pos);
+                const local_pos = LocalPos{ .x = @intCast(x), .y = @intCast(y), .z = @intCast(z) };
+                const block = chunk.getBlock(local_pos);
 
                 if (block.kind.getModelScheme() == null) continue;
 
                 chunk_mesh_layer = &chunk_mesh.layers[block.kind.getLayer().idx()];
 
                 const block_model = block.kind.getModel();
+                const mesh_flags = block.kind.getMeshFlags();
+
+                const light: Light = if (mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh) chunk.getLight(local_pos) else undefined;
 
                 inline for (Dir.values) |dir| skip: {
                     const dir_idx = dir.idx();
@@ -53,20 +56,23 @@ pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, n
 
                     if (block_model_indices.len == 0) break :skip;
 
-                    if (NeighborChunks.inEdge[dir_idx](pos)) {
+                    if (NeighborChunks.inEdge[dir_idx](local_pos)) {
                         if (neighbor_chunks.chunks[dir_idx]) |neighbor_chunk| {
-                            const neighbor_pos = NeighborChunks.getNeighborPos[dir_idx](pos);
+                            const neighbor_pos = NeighborChunks.getNeighborPos[dir_idx](local_pos);
                             const neighbor_block = neighbor_chunk.getBlock(neighbor_pos);
-                            const mesh_flags = neighbor_block.kind.getMeshFlags();
+                            const neighbor_mesh_flags = neighbor_block.kind.getMeshFlags();
 
-                            if (mesh_flags.makes_neighbor_blocks_emit_mesh and (neighbor_block.kind != block.kind or mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh)) {
-                                const neighbor_light = neighbor_chunk.getLight(neighbor_pos);
+                            if (mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh or
+                                (neighbor_mesh_flags.makes_neighbor_blocks_emit_mesh and
+                                    (neighbor_block.kind != block.kind or neighbor_mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh)))
+                            {
+                                const neighbor_light = if (mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh) light else neighbor_chunk.getLight(neighbor_pos);
 
                                 for (block_model_indices) |block_model_face_idx| {
                                     try chunk_mesh_layer.faces[dir_idx].append(gpa, .{
-                                        .x = pos.x,
-                                        .y = pos.y,
-                                        .z = pos.z,
+                                        .x = local_pos.x,
+                                        .y = local_pos.y,
+                                        .z = local_pos.z,
                                         .model_face_idx = block_model_face_idx,
                                         .light = neighbor_light,
                                         .indirect_light_color = if (neighbor_block.kind == .water) 1 else 0,
@@ -76,18 +82,21 @@ pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, n
                             }
                         }
                     } else {
-                        const neighbor_pos = NeighborChunks.getPos[dir_idx](pos);
+                        const neighbor_pos = NeighborChunks.getPos[dir_idx](local_pos);
                         const neighbor_block = chunk.getBlock(neighbor_pos);
-                        const mesh_flags = neighbor_block.kind.getMeshFlags();
+                        const neighbor_mesh_flags = neighbor_block.kind.getMeshFlags();
 
-                        if (mesh_flags.makes_neighbor_blocks_emit_mesh and (neighbor_block.kind != block.kind or mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh)) {
-                            const neighbor_light = chunk.getLight(neighbor_pos);
+                        if (mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh or
+                            (neighbor_mesh_flags.makes_neighbor_blocks_emit_mesh and
+                                (neighbor_block.kind != block.kind or neighbor_mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh)))
+                        {
+                            const neighbor_light = if (mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh) light else chunk.getLight(neighbor_pos);
 
                             for (block_model_indices) |block_model_face_idx| {
                                 try chunk_mesh_layer.faces[dir_idx].append(gpa, .{
-                                    .x = pos.x,
-                                    .y = pos.y,
-                                    .z = pos.z,
+                                    .x = local_pos.x,
+                                    .y = local_pos.y,
+                                    .z = local_pos.z,
                                     .model_face_idx = block_model_face_idx,
                                     .light = neighbor_light,
                                     .indirect_light_color = if (neighbor_block.kind == .water) 1 else 0,
