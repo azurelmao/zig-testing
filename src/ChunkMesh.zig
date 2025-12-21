@@ -24,10 +24,9 @@ pub const PerFaceData = packed struct(u64) {
     y: u5,
     z: u5,
     model_face_idx: u17,
-    light: Light,
-    indirect_light_color: u1,
+    indirect_light_tint: u1,
     normal: Dir,
-    _: u12 = 0,
+    _: u28 = 0,
 };
 
 pub const empty: ChunkMesh = .{ .layers = @splat(.empty) };
@@ -48,8 +47,6 @@ pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, n
                 const block_model = block.kind.getModel();
                 const mesh_flags = block.kind.getMeshFlags();
 
-                const light: Light = if (mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh) chunk.getLight(local_pos) else undefined;
-
                 inline for (Dir.values) |dir| skip: {
                     const dir_idx = dir.idx();
                     const block_model_indices = block_model.faces.get(dir);
@@ -66,16 +63,13 @@ pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, n
                                 (neighbor_mesh_flags.makes_neighbor_blocks_emit_mesh and
                                     (neighbor_block.kind != block.kind or neighbor_mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh)))
                             {
-                                const neighbor_light = if (mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh) light else neighbor_chunk.getLight(neighbor_pos);
-
                                 for (block_model_indices) |block_model_face_idx| {
                                     try chunk_mesh_layer.faces[dir_idx].append(gpa, .{
                                         .x = local_pos.x,
                                         .y = local_pos.y,
                                         .z = local_pos.z,
                                         .model_face_idx = block_model_face_idx,
-                                        .light = neighbor_light,
-                                        .indirect_light_color = if (neighbor_block.kind == .water) 1 else 0,
+                                        .indirect_light_tint = if (neighbor_block.kind == .water) 1 else 0,
                                         .normal = dir,
                                     });
                                 }
@@ -90,16 +84,13 @@ pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, n
                             (neighbor_mesh_flags.makes_neighbor_blocks_emit_mesh and
                                 (neighbor_block.kind != block.kind or neighbor_mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh)))
                         {
-                            const neighbor_light = if (mesh_flags.makes_same_kind_neighbor_blocks_emit_mesh) light else chunk.getLight(neighbor_pos);
-
                             for (block_model_indices) |block_model_face_idx| {
                                 try chunk_mesh_layer.faces[dir_idx].append(gpa, .{
                                     .x = local_pos.x,
                                     .y = local_pos.y,
                                     .z = local_pos.z,
                                     .model_face_idx = block_model_face_idx,
-                                    .light = neighbor_light,
-                                    .indirect_light_color = if (neighbor_block.kind == .water) 1 else 0,
+                                    .indirect_light_tint = if (neighbor_block.kind == .water) 1 else 0,
                                     .normal = dir,
                                 });
                             }

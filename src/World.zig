@@ -219,7 +219,7 @@ pub fn breakBlock(world: *World, gpa: std.mem.Allocator, world_pos: WorldPos, bl
 
     for (Dir.indices) |dir_idx| {
         const neighbor_world_pos = world_pos.add(World.WorldPos.OFFSETS[dir_idx]);
-        const neighbor_block = try world.getBlock(neighbor_world_pos);
+        const neighbor_block = world.getBlockOrNull(neighbor_world_pos) orelse continue;
 
         try world.onNeighborUpdate(neighbor_world_pos, neighbor_block, world_pos, block);
 
@@ -628,13 +628,14 @@ pub fn generateNoise3D(world: *World, gpa: std.mem.Allocator, chunk: *Chunk, gen
                         if (prev_block.kind != .water and prev_block.kind != .sand) {
                             try chunk.setBlock(gpa, local_pos, .initNone(.air));
 
-                            _ = random;
-                            // if (random.uintAtMost(u32, 1000) == 0) {
-                            //     try chunk.light_addition_queue.writeItem(.{
-                            //         .light = .{ .red = random.uintAtMost(u4, 15), .green = random.uintAtMost(u4, 15), .blue = random.uintAtMost(u4, 15), .indirect = 0 },
-                            //         .world_pos = world_pos,
-                            //     });
-                            // }
+                            if (random.uintAtMost(u32, 1000) == 0) {
+                                _ = try world.addLight(world_pos, .{
+                                    .red = random.uintAtMost(u4, 15),
+                                    .green = random.uintAtMost(u4, 15),
+                                    .blue = random.uintAtMost(u4, 15),
+                                    .indirect = 0,
+                                });
+                            }
                         }
                     }
                 }
@@ -672,11 +673,14 @@ pub fn continueIndirectLight(world: *World, chunk: *Chunk, indirect_light_bitset
                 const water_column = chunk.water_bitset[idx];
 
                 if (((water_column >> Chunk.EDGE) & 1) == 1) {
+                    var up_neighbor_chunk_pos = chunk.pos;
+                    up_neighbor_chunk_pos.y += 1;
+
                     const world_pos = WorldPos.from(
-                        chunk.pos,
+                        up_neighbor_chunk_pos,
                         .{
                             .x = @intCast(x),
-                            .y = Chunk.EDGE,
+                            .y = 0,
                             .z = @intCast(z),
                         },
                     );
@@ -688,10 +692,7 @@ pub fn continueIndirectLight(world: *World, chunk: *Chunk, indirect_light_bitset
                         .indirect = 15,
                     };
 
-                    try world.light_addition_queue.writeItem(.{
-                        .world_pos = world_pos,
-                        .light = light,
-                    });
+                    _ = try world.addLight(world_pos, light);
                 }
 
                 indirect_light_column = air_column;

@@ -17,6 +17,7 @@ chunk_mesh: ChunkMesh,
 layers: [BlockLayer.len]WorldMeshLayer,
 visible_chunk_meshes: std.ArrayListUnmanaged(VisibleChunkMesh),
 visible_chunk_mesh_pos: ShaderStorageBufferWithArrayList(Vec3f),
+chunk_pos_to_light_texture: std.AutoHashMapUnmanaged(Chunk.Pos, gl.uint64),
 
 const VisibleChunkMesh = struct {
     pos: Chunk.Pos,
@@ -53,6 +54,7 @@ pub fn init(gpa: std.mem.Allocator) !WorldMesh {
         .layers = layers,
         .visible_chunk_meshes = .empty,
         .visible_chunk_mesh_pos = try .initAndBind(gpa, 12, WorldMeshLayer.INITIAL_COMMAND_SIZE, gl.DYNAMIC_STORAGE_BIT),
+        .chunk_pos_to_light_texture = .empty,
     };
 }
 
@@ -61,6 +63,7 @@ pub const WorldMeshLayer = struct {
     chunk_pos_to_suballoc: std.AutoArrayHashMapUnmanaged(Chunk.Pos, Suballocation),
     mesh: ShaderStorageBufferWithArrayList(ChunkMesh.PerFaceData),
     command: ShaderStorageBufferWithArrayList(DrawArraysIndirectCommand),
+    light_textures: ShaderStorageBufferWithArrayList(gl.uint64),
     chunk_mesh_pos: ShaderStorageBufferWithArrayList(Vec3f),
 
     const SIX_CHUNK_MESHES = 6;
@@ -83,6 +86,7 @@ pub const WorldMeshLayer = struct {
             .chunk_pos_to_suballoc = .empty,
             .mesh = try .init(gpa, INITIAL_MESH_SIZE, gl.DYNAMIC_STORAGE_BIT),
             .command = try .init(gpa, INITIAL_COMMAND_SIZE, gl.DYNAMIC_STORAGE_BIT | gl.MAP_READ_BIT | gl.MAP_WRITE_BIT),
+            .light_textures = try .init(gpa, INITIAL_COMMAND_SIZE, gl.DYNAMIC_STORAGE_BIT),
             .chunk_mesh_pos = try .init(gpa, INITIAL_COMMAND_SIZE, gl.DYNAMIC_STORAGE_BIT),
         };
     }
@@ -306,21 +310,66 @@ pub fn generateVisibleChunkMeshes(self: *WorldMesh, gpa: std.mem.Allocator, worl
     };
 }
 
+pub fn generateLightTextures(self: *WorldMesh, gpa: std.mem.Allocator, world: *const World) !void {
+    // handle making non-resident when prev len != 0
+
+    self.chunk_pos_to_light_texture.clearRetainingCapacity();
+
+    var iter = world.chunks.valueIterator();
+    while (iter.next()) |chunk| {
+        var handle: gl.uint = undefined;
+        gl.CreateTextures(gl.TEXTURE_3D, 1, @ptrCast(&handle));
+        gl.TextureStorage3D(handle, 1, gl.RGBA4, Chunk.SIZE, Chunk.SIZE, Chunk.SIZE);
+        gl.TextureSubImage3D(
+            handle,
+            0,
+            0,
+            0,
+            0,
+            Chunk.SIZE,
+            Chunk.SIZE,
+            Chunk.SIZE,
+            gl.RGBA,
+            gl.UNSIGNED_SHORT_4_4_4_4,
+            @ptrCast(chunk.light),
+        );
+
+        gl.TextureParameteri(handle, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.TextureParameteri(handle, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.TextureParameteri(handle, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+        gl.TextureParameteri(handle, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.TextureParameteri(handle, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+        // gl.BindTextureUnit(3, handle);
+
+        const descriptor = gl.GetTextureHandleARB(handle);
+        if (descriptor == 0) std.debug.panic("Failed to create texture descriptor", .{});
+
+        gl.MakeTextureHandleResidentARB(descriptor);
+
+        try self.chunk_pos_to_light_texture.put(gpa, chunk.pos, descriptor);
+    }
+}
+
 pub fn generateCommands(self: *WorldMesh, gpa: std.mem.Allocator) !void {
     for (BlockLayer.values) |block_layer| {
         const world_mesh_layer = &self.layers[block_layer.idx()];
         world_mesh_layer.command.data.clearRetainingCapacity();
         world_mesh_layer.chunk_mesh_pos.data.clearRetainingCapacity();
+        world_mesh_layer.light_textures.data.clearRetainingCapacity();
 
         for (self.visible_chunk_meshes.items) |visible_chunk_mesh| {
             const chunk_pos = visible_chunk_mesh.pos;
             const chunk_mesh_pos = chunk_pos.toVec3f();
             const visibility = visible_chunk_mesh.visibility;
-            const suballocation = world_mesh_layer.chunk_pos_to_suballoc.get(chunk_pos) orelse continue;
 
+            const light_texture = self.chunk_pos_to_light_texture.get(chunk_pos) orelse unreachable;
+
+            const suballocation = world_mesh_layer.chunk_pos_to_suballoc.get(chunk_pos) orelse continue;
             const virtual_alloc_info = world_mesh_layer.virtual_block.allocInfo(suballocation.virtual_alloc);
 
             const mask: u6 = if (block_layer == .water) comptime std.math.maxInt(u6) else @bitCast(visibility);
+
             var offset: usize = virtual_alloc_info.offset;
             var starting_offset: usize = 0;
             var total_size: usize = 0;
@@ -339,6 +388,7 @@ pub fn generateCommands(self: *WorldMesh, gpa: std.mem.Allocator) !void {
 
                     try world_mesh_layer.command.data.append(gpa, command);
                     try world_mesh_layer.chunk_mesh_pos.data.append(gpa, chunk_mesh_pos);
+                    try world_mesh_layer.light_textures.data.append(gpa, light_texture);
 
                     starting_offset = 0;
                     total_size = 0;
@@ -355,6 +405,7 @@ pub fn generateCommands(self: *WorldMesh, gpa: std.mem.Allocator) !void {
 
                 try world_mesh_layer.command.data.append(gpa, command);
                 try world_mesh_layer.chunk_mesh_pos.data.append(gpa, chunk_mesh_pos);
+                try world_mesh_layer.light_textures.data.append(gpa, light_texture);
             }
         }
     }
@@ -381,13 +432,12 @@ pub fn uploadCommands(self: *WorldMesh) void {
 
                 world_mesh_layer.command.ssbo.resize(new_len, extra_capacity);
                 world_mesh_layer.chunk_mesh_pos.ssbo.resize(new_len, extra_capacity);
-
-                world_mesh_layer.command.ssbo.upload(world_mesh_layer.command.data.items) catch unreachable;
-                world_mesh_layer.chunk_mesh_pos.ssbo.upload(world_mesh_layer.chunk_mesh_pos.data.items) catch unreachable;
+                world_mesh_layer.light_textures.ssbo.resize(new_len, extra_capacity);
             },
             else => unreachable,
         };
         world_mesh_layer.chunk_mesh_pos.ssbo.upload(world_mesh_layer.chunk_mesh_pos.data.items) catch unreachable;
+        world_mesh_layer.light_textures.ssbo.upload(world_mesh_layer.light_textures.data.items) catch unreachable;
 
         // for chunks_bb frag shader
         // world_mesh_layer.command.bind(6 + layer_idx);

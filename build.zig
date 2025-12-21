@@ -79,7 +79,7 @@ pub fn build(b: *std.Build) void {
         .api = .gl,
         .version = .@"4.6",
         .profile = .core,
-        .extensions = &.{.ARB_bindless_texture},
+        .extensions = &.{ .ARB_bindless_texture, .ARB_shader_ballot },
     });
     exe.root_module.addImport("gl", gl_bindings);
 

@@ -4,8 +4,8 @@ const glfw = @import("glfw");
 const Input = @import("Input.zig");
 
 const NewWindowSize = struct {
-    window_width: gl.sizei,
-    window_height: gl.sizei,
+    width: gl.sizei,
+    height: gl.sizei,
 };
 
 const NewCursorPos = struct {
@@ -51,10 +51,10 @@ pub fn cursorCallback(window: glfw.Window, cursor_x: f64, cursor_y: f64) void {
     };
 }
 
-pub fn framebufferSizeCallback(window: glfw.Window, window_width: u32, window_height: u32) void {
+pub fn framebufferSizeCallback(window: glfw.Window, width: u32, height: u32) void {
     window.getUserPointer(CallbackData).?.new_window_size = .{
-        .window_width = @intCast(window_width),
-        .window_height = @intCast(window_height),
+        .width = @intCast(width),
+        .height = @intCast(height),
     };
 }
 

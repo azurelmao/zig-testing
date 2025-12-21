@@ -1,15 +1,23 @@
 #version 460 core
 
+#extension GL_ARB_bindless_texture : require
+
+layout (binding = 16, std430) readonly buffer ssbo16 {
+    sampler3D sLightTextures[];
+};
+
 in vec2 pTextureUV;
 flat in uint pTextureIdx;
-
+flat in uint pIndirectLightTint;
 flat in uint pNormal;
-flat in vec3 pLight;
+flat in int pDrawId;
 
-in vec3 pVertexPosition;
+in vec3 pLocalModelPosition;
+in vec3 pWorldPosition;
 
 layout (location = 0) out vec4 oColor;
 layout (binding = 0) uniform sampler2DArray uTexture;
+layout (binding = 4) uniform sampler2D uIndirectLightTexture;
 uniform vec3 uCameraPosition;
 
 vec4 linearFog(vec4 inColor, float vertexDistance, float fogStart, float fogEnd, vec4 fogColor) {
@@ -21,7 +29,7 @@ vec4 linearFog(vec4 inColor, float vertexDistance, float fogStart, float fogEnd,
     return vec4(mix(inColor.rgb, fogColor.rgb, fogValue * fogColor.a), inColor.a);
 }
 
-const vec4 fogColor = vec4(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
+const vec4 FogColor = vec4(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
 
 const float[6] NormalLight = float[](
     0.6,
@@ -41,6 +49,26 @@ const float[6] NormalLightInverted = float[](
     0.8
 );
 
+const vec3[6] AmbientOcclusionNormalOffset = vec3[](
+    vec3(-0.5, 0, 0), // west
+    vec3(0.5, 0, 0), // east
+    vec3(0, -0.5, 0), // bottom
+    vec3(0.0, 0.5, 0), // top
+    vec3(0.0, 0.0, -0.5), // north
+    vec3(0, 0.0, 0.5) // south
+);
+
+const vec3[6] IndirectLightNormalOffset = vec3[](
+    vec3(-0.5, 0.5, 0.5), // west
+    vec3(0.5, 0.5, 0.5), // east
+    vec3(0.5, 0.5, 0.5), // bottom
+    vec3(0.5, 0.5, 0.5), // top
+    vec3(0.5, 0.5, -0.5), // north
+    vec3(0.5, 0.5, 0.5) // south
+);
+
+const float CHUNK_SIZE_INVERSE = 1.0 / 32.0;
+
 void main() {
     float normalLight;
 
@@ -51,9 +79,15 @@ void main() {
     }
 
     vec4 texColor = texture(uTexture, vec3(pTextureUV, pTextureIdx));
-    vec4 color = vec4(texColor.rgb * pLight * normalLight, texColor.a);
+    vec4 light = texture(sLightTextures[pDrawId], (pLocalModelPosition + AmbientOcclusionNormalOffset[pNormal]) * CHUNK_SIZE_INVERSE, 0).abgr;
 
-    oColor = linearFog(color, distance(uCameraPosition, pVertexPosition), 153.6, 691.2, fogColor);
+    vec3 blockLight = light.rgb;
+    vec3 indirectLight = light.aaa;
+    vec3 newLight = max(blockLight, indirectLight);
+
+    vec4 color = vec4(texColor.rgb * newLight * normalLight, texColor.a);
+
+    oColor = linearFog(color, distance(uCameraPosition, pWorldPosition), 153.6, 691.2, FogColor);
 }
 
 // oXXX for output

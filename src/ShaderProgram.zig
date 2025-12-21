@@ -44,7 +44,42 @@ pub fn init(gpa: std.mem.Allocator, vertex_shader_path: []const gl.char, fragmen
     return .{ .handle = handle, .uniforms = uniforms };
 }
 
-fn readAndCompileShader(gpa: std.mem.Allocator, shader_path: []const gl.char, @"type": gl.@"enum") !gl.uint {
+pub fn init2(gpa: std.mem.Allocator, shader_handles: []const gl.uint) !ShaderProgram {
+    const handle = gl.CreateProgram();
+
+    for (shader_handles) |shader_handle| {
+        gl.AttachShader(handle, shader_handle);
+    }
+
+    gl.LinkProgram(handle);
+
+    var compiled: gl.int = undefined;
+    gl.GetProgramiv(handle, gl.LINK_STATUS, &compiled);
+
+    if (compiled == 0) {
+        return error.ShaderLinkingFailed;
+    }
+
+    var count_uniforms: gl.int = undefined;
+    var uniform_max_len: gl.int = undefined;
+    gl.GetProgramiv(handle, gl.ACTIVE_UNIFORMS, &count_uniforms);
+    gl.GetProgramiv(handle, gl.ACTIVE_UNIFORM_MAX_LENGTH, &uniform_max_len);
+
+    var uniforms = std.StringHashMapUnmanaged(gl.int).empty;
+    for (0..@intCast(count_uniforms)) |i| {
+        const uniform_name = try gpa.alloc(gl.char, @intCast(uniform_max_len));
+
+        var uniform_len: gl.sizei = undefined;
+        gl.GetActiveUniformName(handle, @intCast(i), uniform_max_len, &uniform_len, uniform_name.ptr);
+
+        const uniform_location = gl.GetUniformLocation(handle, @ptrCast(uniform_name.ptr));
+        try uniforms.put(gpa, uniform_name[0..@intCast(uniform_len)], uniform_location);
+    }
+
+    return .{ .handle = handle, .uniforms = uniforms };
+}
+
+pub fn readAndCompileShader(gpa: std.mem.Allocator, shader_path: []const gl.char, @"type": gl.@"enum") !gl.uint {
     const shader_source: []const gl.char = try std.fs.cwd().readFileAllocOptions(gpa, shader_path, std.math.maxInt(u16), null, @alignOf(u8), 0);
     defer gpa.free(shader_source);
 

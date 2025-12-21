@@ -1,5 +1,7 @@
 #version 460 core
 
+#extension GL_ARB_bindless_texture : require
+
 layout (binding = 0, std430) readonly buffer ssbo0 {
     uint sPerVertex[];
 };
@@ -17,10 +19,6 @@ layout (binding = 2, std430) readonly buffer ssbo2 {
     vec3 sChunkMeshPos[];
 };
 
-layout (binding = 3, std430) readonly buffer ssbo3 {
-    vec3 sIndirectLight[];
-};
-
 vec3 unpackLocalPosition(uint data) {
     float x = bitfieldExtract(data, 0, 5);
     float y = bitfieldExtract(data, 5, 5);
@@ -35,22 +33,14 @@ uint unpackModelFaceIdx(uint data) {
     return modelFaceIdx;
 }
 
-vec3 unpackBlockLight(uint data) {
-    float red = bitfieldExtract(data, 0, 4);
-    float green = bitfieldExtract(data, 4, 4);
-    float blue = bitfieldExtract(data, 8, 4);
+uint unpackIndirectLightTint(uint data) {
+    uint indirectLightTint = bitfieldExtract(data, 0, 1);
 
-    return vec3(red, green, blue) / 15.0;
-}
-
-uint unpackIndirectLightIdx(uint data) {
-    uint indirectLightIdx = bitfieldExtract(data, 12, 5);
-
-    return indirectLightIdx;
+    return indirectLightTint;
 }
 
 uint unpackNormal(uint data) {
-    uint normal = bitfieldExtract(data, 17, 3);
+    uint normal = bitfieldExtract(data, 1, 3);
 
     return normal;
 }
@@ -84,9 +74,12 @@ layout (binding = 0, std140) uniform ubo0 {
 out vec2 pTextureUV;
 flat out uint pTextureIdx;
 flat out uint pNormal;
-flat out vec3 pLight;
+flat out uint pIndirectLightTint;
+flat out uint pLightTextureIdx;
+flat out int pDrawId;
 
-out vec3 pVertexPosition;
+out vec3 pLocalModelPosition;
+out vec3 pWorldPosition;
 
 void main() {
     uint faceIdx = gl_VertexID / 6;
@@ -94,8 +87,7 @@ void main() {
     
     vec3 localPosition = unpackLocalPosition(perFaceData.data1);
     uint modelFaceIdx = unpackModelFaceIdx(perFaceData.data1);
-    vec3 blockLight = unpackBlockLight(perFaceData.data2);
-    uint indirectLightIdx = unpackIndirectLightIdx(perFaceData.data2);
+    uint indirectLightTint = unpackIndirectLightTint(perFaceData.data2);
     uint normal = unpackNormal(perFaceData.data2);
 
     uint vertexIdx = modelFaceIdx + (gl_VertexID % 6);
@@ -107,19 +99,15 @@ void main() {
     
     pTextureUV = textureUV / 16.0;
     pTextureIdx = textureIdx;
+    pIndirectLightTint = indirectLightTint;
+    pLightTextureIdx = gl_BaseInstance;
     pNormal = normal;
-    
-    vec3 indirectLight = sIndirectLight[indirectLightIdx];
-
-    pLight = vec3(
-        max(blockLight.r, indirectLight.r), 
-        max(blockLight.g, indirectLight.g), 
-        max(blockLight.b, indirectLight.b)
-    );
+    pDrawId = gl_DrawID;
 
     vec4 worldPosition = vec4(modelPosition + localPosition + sChunkMeshPos[gl_DrawID], 1.0);
 
-    pVertexPosition = worldPosition.xyz;
+    pLocalModelPosition = modelPosition + localPosition;
+    pWorldPosition = worldPosition.xyz;
     gl_Position = uViewProjection * worldPosition;
 }
 

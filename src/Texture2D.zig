@@ -48,7 +48,7 @@ const Options = struct {
 
 handle: gl.uint,
 
-pub fn init(unit: gl.uint, image: stbi.Image, options: Options) Texture2D {
+pub fn initFromImage(unit: gl.uint, image: stbi.Image, options: Options) Texture2D {
     var handle: gl.uint = undefined;
     gl.CreateTextures(gl.TEXTURE_2D, 1, @ptrCast(&handle));
     gl.TextureStorage2D(handle, 1, @intFromEnum(options.texture_format), @intCast(image.width), @intCast(image.height));

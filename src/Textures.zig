@@ -11,16 +11,19 @@ const Textures = @This();
 block: TextureArray2D,
 font: TextureArray2D,
 crosshair: Texture2D,
+indirect_light: Texture2D,
 
 pub fn init() !Textures {
     const block = try initBlockTextures();
     const font = try initFontTextures();
     const crosshair = try initCrosshairTexture();
+    const indirect_light = try initIndirectLightTexture();
 
     return .{
         .block = block,
         .font = font,
         .crosshair = crosshair,
+        .indirect_light = indirect_light,
     };
 }
 
@@ -46,7 +49,7 @@ fn initBlockTextures() !TextureArray2D {
 }
 
 fn initFontTextures() !TextureArray2D {
-    var font_image = try stbi.Image.loadFromFile(assets.texturePath("font"), 1);
+    var font_image: stbi.Image = try .loadFromFile(assets.texturePath("font"), 1);
     defer font_image.deinit();
 
     var glyph_images: [Glyph.len]stbi.Image = undefined;
@@ -54,7 +57,7 @@ fn initFontTextures() !TextureArray2D {
     inline for (0..Glyph.len) |glyph_idx| {
         const base_x = glyph_idx * 6;
 
-        var glyph_image = try stbi.Image.createEmpty(6, 6, 1, .{});
+        var glyph_image: stbi.Image = try .createEmpty(6, 6, 1, .{});
 
         var data_idx: usize = 0;
         for (0..6) |y| {
@@ -83,11 +86,25 @@ fn initFontTextures() !TextureArray2D {
 }
 
 fn initCrosshairTexture() !Texture2D {
-    var crosshair_image = try stbi.Image.loadFromFile(assets.texturePath("crosshair"), 1);
+    var crosshair_image: stbi.Image = try .loadFromFile(assets.texturePath("crosshair"), 1);
     defer crosshair_image.deinit();
 
-    return Texture2D.init(2, crosshair_image, .{
+    return Texture2D.initFromImage(2, crosshair_image, .{
         .texture_format = .r8,
         .data_format = .r,
+    });
+}
+
+fn initIndirectLightTexture() !Texture2D {
+    var indirect_light_image: stbi.Image = try .loadFromFile(assets.texturePath("indirect_light"), 4);
+    defer indirect_light_image.deinit();
+
+    return Texture2D.initFromImage(4, indirect_light_image, .{
+        .wrap_s = .clamp_to_edge,
+        .wrap_t = .clamp_to_edge,
+        .min_filter = .linear,
+        .mag_filter = .linear,
+        .texture_format = .rgba8,
+        .data_format = .rgba,
     });
 }

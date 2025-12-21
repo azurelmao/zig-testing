@@ -12,7 +12,7 @@ const BlockLayer = @import("block.zig").BlockLayer;
 const BlockModel = @import("block.zig").BlockModel;
 const BlockVolumeScheme = @import("block.zig").BlockVolumeScheme;
 const Camera = @import("Camera.zig");
-const Screen = @import("Screen.zig");
+const Window = @import("Window.zig");
 const WorldMesh = @import("WorldMesh.zig");
 const UniformBuffer = @import("UniformBuffer.zig");
 const ShaderPrograms = @import("ShaderPrograms.zig");
@@ -45,9 +45,8 @@ const Game = struct {
 
     paused: bool,
     settings: Settings,
-    screen: Screen,
+    window: Window,
     camera: Camera,
-    window: glfw.Window,
     input: *Input,
     callback_data: *callback.CallbackData,
     uniform_buffer: UniformBuffer,
@@ -60,19 +59,14 @@ const Game = struct {
     world_mesh: WorldMesh,
     selected_block: World.RaycastResult,
     relative_selector_world_pos: World.Pos,
-    inventory: []Block,
+    inventory: []const Block,
     selected_slot: usize,
 
     fn init(gpa: std.mem.Allocator) !Game {
         const settings: Settings = .{};
-        const screen: Screen = .{};
-        const camera: Camera = .init(.init(0, 0, 0), 0, 0, screen.aspect_ratio);
-
-        const world: World = try .init(gpa, 30);
-        const selected_block = world.raycast(camera.position, camera.direction);
 
         try initGLFW();
-        const window = try initWindow(&screen);
+        const window: Window = try .init(Window.INITIAL_WIDTH, Window.INITIAL_HEIGHT, TITLE, DEBUG_CONTEXT);
 
         const input = try gpa.create(Input);
         input.* = try .init(gpa);
@@ -80,19 +74,24 @@ const Game = struct {
         const callback_data = try gpa.create(callback.CallbackData);
         callback_data.* = .init(input);
 
-        window.setUserPointer(@ptrCast(callback_data));
+        window.handle.setUserPointer(@ptrCast(callback_data));
+
+        const camera: Camera = .init(.init(0, 0, 0), 0, 0, window.aspect_ratio);
+
+        const world: World = try .init(gpa, 30);
+        const selected_block = world.raycast(camera.position, camera.direction);
 
         try initGL();
         var uniform_buffer: UniformBuffer = .init(0);
         uniform_buffer.uploadSelectedBlockPos(selected_block.world_pos.toVec3f());
         uniform_buffer.uploadViewProjectionMatrix(camera.view_projection_matrix);
 
-        const shader_programs: ShaderPrograms = try .init(gpa, selected_block, screen);
+        const shader_programs: ShaderPrograms = try .init(gpa, selected_block, window);
 
         stbi.init(gpa);
         const textures: Textures = try .init();
         const shader_storage_buffers: ShaderStorageBuffers = try .init();
-        const offscreen_framebuffer: Framebuffer = try .init(3, screen.window_width, screen.window_height);
+        const offscreen_framebuffer: Framebuffer = try .init(3, window.width, window.height);
         const text_manager: TextManager = try .init(gpa);
 
         const world_mesh: WorldMesh = try .init(gpa);
@@ -102,9 +101,8 @@ const Game = struct {
         return .{
             .paused = false,
             .settings = settings,
-            .screen = screen,
-            .camera = camera,
             .window = window,
+            .camera = camera,
             .input = input,
             .callback_data = callback_data,
             .uniform_buffer = uniform_buffer,
@@ -125,7 +123,7 @@ const Game = struct {
     fn deinit(game: *Game, gpa: std.mem.Allocator) void {
         gpa.destroy(game.callback_data);
         gpa.destroy(game.input);
-        game.window.destroy();
+        game.window.handle.destroy();
         gl.makeProcTableCurrent(null);
         glfw.terminate();
         stbi.deinit();
@@ -191,33 +189,10 @@ const Game = struct {
         gl.BindVertexArray(vao_handle);
     }
 
-    fn initWindow(screen: *const Screen) !glfw.Window {
-        const window = glfw.Window.create(@intCast(screen.window_width), @intCast(screen.window_height), TITLE, null, null, .{
-            .opengl_profile = .opengl_core_profile,
-            .context_version_major = 4,
-            .context_version_minor = 6,
-            .context_debug = DEBUG_CONTEXT,
-        }) orelse {
-            std.log.err("failed to create GLFW window: {?s}", .{glfw.getErrorString()});
-            return error.WindowCreationFailed;
-        };
-
-        glfw.makeContextCurrent(window);
-
-        window.setInputModeCursor(.disabled);
-        window.setCursorPos(screen.prev_cursor_x, screen.prev_cursor_y);
-        window.setCursorPosCallback(callback.cursorCallback);
-        window.setFramebufferSizeCallback(callback.framebufferSizeCallback);
-        window.setKeyCallback(callback.keyCallback);
-        window.setMouseButtonCallback(callback.buttonCallback);
-
-        return window;
-    }
-
-    fn initInventory(gpa: std.mem.Allocator) ![]Block {
+    fn initInventory(gpa: std.mem.Allocator) ![]const Block {
         var inventory: std.ArrayListUnmanaged(Block) = .empty;
 
-        // // Lamp lights
+        // Lamp lights
         // for ([_]Light{
         //     .{
         //         .red = 15,
@@ -265,10 +240,10 @@ const Game = struct {
         //     try inventory.append(gpa, .init(.lamp, .{ .lamp = .{ .light = light } }));
         // }
 
-        // try inventory.append(gpa, .initNone(.stone));
-        // try inventory.append(gpa, .initNone(.glass));
-        // try inventory.append(gpa, .initNone(.ice));
-        // try inventory.append(gpa, .initNone(.glass_tinted));
+        try inventory.append(gpa, .initNone(.stone));
+        try inventory.append(gpa, .initNone(.glass));
+        try inventory.append(gpa, .initNone(.ice));
+        try inventory.append(gpa, .initNone(.glass_tinted));
 
         try inventory.append(gpa, .initNone(.torch));
 
@@ -493,7 +468,7 @@ const Game = struct {
             line = try game.appendRelativeSelectorText(gpa, line);
         }
 
-        try game.text_manager.build(gpa, game.screen.window_width, game.screen.window_height, game.settings.ui_scale);
+        try game.text_manager.build(gpa, game.window.width, game.window.height, game.settings.ui_scale);
     }
 
     pub const SharedFlags = packed struct {
@@ -505,17 +480,17 @@ const Game = struct {
 
     fn processWindowEvents(game: *Game, delta_time: gl.float, shared_flags: *SharedFlags) !void {
         if (game.callback_data.new_window_size) |new_window_size| {
-            game.screen.window_width = new_window_size.window_width;
-            game.screen.window_height = new_window_size.window_height;
-            game.screen.window_width_f = @floatFromInt(new_window_size.window_width);
-            game.screen.window_height_f = @floatFromInt(new_window_size.window_height);
+            game.window.width = new_window_size.width;
+            game.window.height = new_window_size.height;
+            game.window.width_f = @floatFromInt(new_window_size.width);
+            game.window.height_f = @floatFromInt(new_window_size.height);
 
-            game.screen.calcAspectRatio();
-            game.shader_programs.crosshair.setUniform2f("uWindowSize", game.screen.window_width_f, game.screen.window_height_f);
+            game.window.calcAspectRatio();
+            game.shader_programs.crosshair.setUniform2f("uWindowSize", game.window.width_f, game.window.height_f);
 
-            gl.Viewport(0, 0, game.screen.window_width, game.screen.window_height);
+            gl.Viewport(0, 0, game.window.width, game.window.height);
 
-            try game.offscreen_framebuffer.resizeAndBind(game.screen.window_width, game.screen.window_height, 3);
+            try game.offscreen_framebuffer.resizeAndBind(game.window.width, game.window.height, 3);
 
             shared_flags.calc_projection_matrix = true;
             game.callback_data.new_window_size = null;
@@ -525,11 +500,11 @@ const Game = struct {
             if (!game.paused) {
                 const mouse_speed = game.settings.mouse_speed * delta_time;
 
-                const offset_x = (new_cursor_pos.cursor_x - game.screen.prev_cursor_x) * mouse_speed;
-                const offset_y = (game.screen.prev_cursor_y - new_cursor_pos.cursor_y) * mouse_speed;
+                const offset_x = (new_cursor_pos.cursor_x - game.window.prev_cursor_x) * mouse_speed;
+                const offset_y = (game.window.prev_cursor_y - new_cursor_pos.cursor_y) * mouse_speed;
 
-                game.screen.prev_cursor_x = new_cursor_pos.cursor_x;
-                game.screen.prev_cursor_y = new_cursor_pos.cursor_y;
+                game.window.prev_cursor_x = new_cursor_pos.cursor_x;
+                game.window.prev_cursor_y = new_cursor_pos.cursor_y;
 
                 game.camera.yaw += offset_x;
                 game.camera.pitch = std.math.clamp(game.camera.pitch + offset_y, -89.0, 89.0);
@@ -545,14 +520,14 @@ const Game = struct {
 
     fn processInput(game: *Game, delta_time: gl.float, shared_flags: *SharedFlags) void {
         if (game.input.getUncached(.close_window) == .press) {
-            game.window.setShouldClose(true);
+            game.window.handle.setShouldClose(true);
         }
 
         if (game.input.getUncached(.pause) == .press) {
             game.paused = !game.paused;
 
             const cursor_mode: glfw.Window.InputModeCursor = if (game.paused) .normal else .disabled;
-            game.window.setInputModeCursor(cursor_mode);
+            game.window.handle.setInputModeCursor(cursor_mode);
         }
 
         if (game.input.getUncached(.toggle_chunk_borders) == .press) {
@@ -678,7 +653,7 @@ const Game = struct {
         }
 
         if (shared_flags.calc_projection_matrix) {
-            game.camera.calcProjectionMatrix(game.screen.aspect_ratio);
+            game.camera.calcProjectionMatrix(game.window.aspect_ratio);
         }
 
         const calc_view_projection_matrix = shared_flags.calc_view_matrix or shared_flags.calc_projection_matrix;
@@ -798,6 +773,7 @@ const Game = struct {
 
             world_mesh_layer.mesh.ssbo.bind(1);
             world_mesh_layer.chunk_mesh_pos.ssbo.bind(2);
+            world_mesh_layer.light_textures.ssbo.bind(16);
             world_mesh_layer.command.ssbo.bindAsIndirectBuffer();
 
             gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(world_mesh_layer.command.data.items.len), 0);
@@ -822,7 +798,7 @@ const Game = struct {
         //     gl.MemoryBarrier(gl.SHADER_STORAGE_BARRIER_BIT);
         // }
 
-        gl.BlitNamedFramebuffer(0, game.offscreen_framebuffer.framebuffer_handle, 0, 0, game.screen.window_width, game.screen.window_height, 0, 0, game.screen.window_width, game.screen.window_height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+        gl.BlitNamedFramebuffer(0, game.offscreen_framebuffer.framebuffer_handle, 0, 0, game.window.width, game.window.height, 0, 0, game.window.width, game.window.height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
 
         if (game.settings.chunk_borders) {
             game.shader_programs.chunks_debug.bind();
@@ -946,16 +922,45 @@ pub fn main() !void {
 
     try game.world.generate(gpa);
 
-    // const index = try game.world.addBlockExtendedData(allocator, .initChest(@splat(0)));
-    // try game.world.setBlock(allocator, .{ .x = 0, .y = 2, .z = 0 }, .initExtended(.chest, index));
+    for (0..8) |x| {
+        for (0..8) |z| {
+            try game.world.placeBlock(
+                gpa,
+                .{ .x = @intCast(x + 5), .y = 6, .z = @intCast(z + 5) },
+                .initNone(.stone),
+            );
+        }
+    }
 
-    // for (0..6) |x| {
-    //     for (0..6) |y| {
-    //         for (0..6) |z| {
-    //             try game.world.setBlock(allocator, .{ .x = @intCast(x + 6), .y = @intCast(y + 6), .z = @intCast(z + 6) }, .initNone(.stone));
-    //         }
-    //     }
-    // }
+    for (0..4) |x| {
+        for (0..4) |z| {
+            try game.world.placeBlock(
+                gpa,
+                .{ .x = @intCast(x + 7), .y = 7, .z = @intCast(z + 7) },
+                .initNone(.stone),
+            );
+        }
+    }
+
+    for (0..8) |x| {
+        for (0..8) |z| {
+            try game.world.placeBlock(
+                gpa,
+                .{ .x = @intCast(x + 5), .y = 11, .z = @intCast(z + 5) },
+                .initNone(.stone),
+            );
+        }
+    }
+
+    for (0..4) |x| {
+        for (0..4) |z| {
+            try game.world.placeBlock(
+                gpa,
+                .{ .x = @intCast(x + 7), .y = 10, .z = @intCast(z + 7) },
+                .initNone(.stone),
+            );
+        }
+    }
 
     // try game.world.propagateLights(gpa, &game.debug);
     try game.world.propagateLightAddition(gpa);
@@ -964,6 +969,7 @@ pub fn main() !void {
 
     try game.world_mesh.generateMesh(gpa, &game.world);
     try game.world_mesh.generateVisibleChunkMeshes(gpa, &game.world, &game.camera);
+    try game.world_mesh.generateLightTextures(gpa, &game.world);
     try game.world_mesh.generateCommands(gpa);
 
     game.world_mesh.uploadMesh();
@@ -972,7 +978,7 @@ pub fn main() !void {
     var delta_time: gl.float = 1.0 / 60.0;
     var timer: std.time.Timer = try .start();
 
-    while (!game.window.shouldClose()) {
+    while (!game.window.handle.shouldClose()) {
         glfw.pollEvents();
 
         var shared_flags: Game.SharedFlags = .{
@@ -996,6 +1002,6 @@ pub fn main() !void {
         game.input.resetUncachedKeys();
 
         delta_time = @floatCast(@as(f64, @floatFromInt(timer.lap())) / 1_000_000_000.0);
-        game.window.swapBuffers();
+        game.window.handle.swapBuffers();
     }
 }
