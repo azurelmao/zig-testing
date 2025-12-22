@@ -3,6 +3,7 @@ const Block = @import("block.zig").Block;
 const Light = @import("light.zig").Light;
 const World = @import("World.zig");
 const Vec3f = @import("vec3f.zig").Vec3f;
+const Dir = @import("dir.zig").Dir;
 
 const Chunk = @This();
 
@@ -33,14 +34,16 @@ pub const Pos = struct {
     y: i11,
     z: i11,
 
-    pub const OFFSETS = [6]Pos{
-        .{ .x = -1, .y = 0, .z = 0 },
-        .{ .x = 1, .y = 0, .z = 0 },
-        .{ .x = 0, .y = -1, .z = 0 },
-        .{ .x = 0, .y = 1, .z = 0 },
-        .{ .x = 0, .y = 0, .z = -1 },
-        .{ .x = 0, .y = 0, .z = 1 },
-    };
+    pub const OFFSETS = std.EnumArray(Dir, Pos).init(
+        .{
+            .west = .{ .x = -1, .y = 0, .z = 0 },
+            .east = .{ .x = 1, .y = 0, .z = 0 },
+            .bottom = .{ .x = 0, .y = -1, .z = 0 },
+            .top = .{ .x = 0, .y = 1, .z = 0 },
+            .north = .{ .x = 0, .y = 0, .z = -1 },
+            .south = .{ .x = 0, .y = 0, .z = 1 },
+        },
+    );
 
     pub fn toWorldPos(self: Pos) World.Pos {
         return .{

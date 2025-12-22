@@ -320,6 +320,8 @@ pub fn generateLightTextures(self: *WorldMesh, gpa: std.mem.Allocator, world: *c
         var handle: gl.uint = undefined;
         gl.CreateTextures(gl.TEXTURE_3D, 1, @ptrCast(&handle));
         gl.TextureStorage3D(handle, 1, gl.RGBA4, Chunk.SIZE, Chunk.SIZE, Chunk.SIZE);
+
+        // Main volume from chunk
         gl.TextureSubImage3D(
             handle,
             0,
@@ -333,6 +335,105 @@ pub fn generateLightTextures(self: *WorldMesh, gpa: std.mem.Allocator, world: *c
             gl.UNSIGNED_SHORT_4_4_4_4,
             @ptrCast(chunk.light),
         );
+
+        // Light overlap from neighboring side chunks
+        // const neighbor_chunks = world.getNeighborChunks(chunk.pos);
+        // if (neighbor_chunks.chunks.get(.west)) |neighbor_chunk| {
+        //     gl.PixelStorei(gl.UNPACK_ROW_LENGTH, Chunk.SIZE);
+        //     defer gl.PixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+
+        //     gl.PixelStorei(gl.UNPACK_IMAGE_HEIGHT, Chunk.SIZE);
+        //     defer gl.PixelStorei(gl.UNPACK_IMAGE_HEIGHT, 0);
+
+        //     gl.PixelStorei(gl.UNPACK_SKIP_PIXELS, Chunk.EDGE);
+        //     defer gl.PixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+
+        //     gl.TextureSubImage3D(
+        //         handle,
+        //         0,
+        //         0,
+        //         1,
+        //         1,
+        //         1,
+        //         Chunk.SIZE,
+        //         Chunk.SIZE,
+        //         gl.RGBA,
+        //         gl.UNSIGNED_SHORT_4_4_4_4,
+        //         @ptrCast(&neighbor_chunk.light),
+        //     );
+        // }
+
+        // if (neighbor_chunks.chunks.get(.bottom)) |neighbor_chunk| {
+        //     gl.PixelStorei(gl.UNPACK_ROW_LENGTH, Chunk.SIZE);
+        //     defer gl.PixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+
+        //     gl.PixelStorei(gl.UNPACK_IMAGE_HEIGHT, Chunk.SIZE);
+        //     defer gl.PixelStorei(gl.UNPACK_IMAGE_HEIGHT, 0);
+
+        //     gl.PixelStorei(gl.UNPACK_SKIP_ROWS, Chunk.EDGE);
+        //     defer gl.PixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+
+        //     gl.TextureSubImage3D(
+        //         handle,
+        //         0,
+        //         1,
+        //         0,
+        //         1,
+        //         Chunk.SIZE,
+        //         1,
+        //         Chunk.SIZE,
+        //         gl.RGBA,
+        //         gl.UNSIGNED_SHORT_4_4_4_4,
+        //         @ptrCast(&neighbor_chunk.light),
+        //     );
+        // }
+
+        // if (neighbor_chunks.chunks.get(.top)) |neighbor_chunk| {
+        //     for (0..Chunk.SIZE) |x| {
+        //         for (0..Chunk.SIZE) |z| {
+        //             const light = neighbor_chunk.getLight(.{ .x = @intCast(x), .y = 0, .z = @intCast(z) });
+
+        //             gl.TextureSubImage3D(
+        //                 handle,
+        //                 0,
+        //                 @intCast(x),
+        //                 Chunk.EDGE + 1,
+        //                 @intCast(z),
+        //                 1,
+        //                 1,
+        //                 1,
+        //                 gl.RGBA,
+        //                 gl.UNSIGNED_SHORT_4_4_4_4,
+        //                 @ptrCast(&light),
+        //             );
+        //         }
+        //     }
+        // }
+
+        // if (neighbor_chunks.chunks.get(.north)) |neighbor_chunk| {
+        //     gl.PixelStorei(gl.UNPACK_ROW_LENGTH, Chunk.SIZE);
+        //     defer gl.PixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+
+        //     gl.PixelStorei(gl.UNPACK_IMAGE_HEIGHT, Chunk.SIZE);
+        //     defer gl.PixelStorei(gl.UNPACK_IMAGE_HEIGHT, 0);
+
+        //     gl.PixelStorei(gl.UNPACK_SKIP_IMAGES, Chunk.EDGE);
+        //     defer gl.PixelStorei(gl.UNPACK_SKIP_IMAGES, 0);
+
+        //     gl.TextureSubImage3D(
+        //         handle,
+        //         0,
+        //         1,
+        //         1,
+        //         0,
+        //         Chunk.SIZE,
+        //         Chunk.SIZE,
+        //         1,
+        //         gl.RGBA,
+        //         gl.UNSIGNED_SHORT_4_4_4_4,
+        //         @ptrCast(&neighbor_chunk.light),
+        //     );
+        // }
 
         gl.TextureParameteri(handle, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.TextureParameteri(handle, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);

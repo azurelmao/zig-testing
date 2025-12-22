@@ -49,25 +49,19 @@ const float[6] NormalLightInverted = float[](
     0.8
 );
 
-const vec3[6] AmbientOcclusionNormalOffset = vec3[](
+const vec3[6] NormalOffset = vec3[](
     vec3(-0.5, 0, 0), // west
     vec3(0.5, 0, 0), // east
     vec3(0, -0.5, 0), // bottom
-    vec3(0.0, 0.5, 0), // top
-    vec3(0.0, 0.0, -0.5), // north
-    vec3(0, 0.0, 0.5) // south
+    vec3(0, 0.5, 0), // top
+    vec3(0, 0, -0.5), // north
+    vec3(0, 0, 0.5) // south
 );
 
-const vec3[6] IndirectLightNormalOffset = vec3[](
-    vec3(-0.5, 0.5, 0.5), // west
-    vec3(0.5, 0.5, 0.5), // east
-    vec3(0.5, 0.5, 0.5), // bottom
-    vec3(0.5, 0.5, 0.5), // top
-    vec3(0.5, 0.5, -0.5), // north
-    vec3(0.5, 0.5, 0.5) // south
-);
-
-const float CHUNK_SIZE_INVERSE = 1.0 / 32.0;
+const float CHUNK_SIZE = 32.0;
+const float OVERLAP_WIDTH = 0.0;
+const float LIGHT_TEXTURE_SIZE = CHUNK_SIZE + OVERLAP_WIDTH * 2.0;
+const float LIGHT_TEXTURE_SIZE_INVERSE = 1.0 / LIGHT_TEXTURE_SIZE;
 
 void main() {
     float normalLight;
@@ -79,7 +73,7 @@ void main() {
     }
 
     vec4 texColor = texture(uTexture, vec3(pTextureUV, pTextureIdx));
-    vec4 light = texture(sLightTextures[pDrawId], (pLocalModelPosition + AmbientOcclusionNormalOffset[pNormal]) * CHUNK_SIZE_INVERSE, 0).abgr;
+    vec4 light = texture(sLightTextures[pDrawId], (pLocalModelPosition + NormalOffset[pNormal] + OVERLAP_WIDTH) * LIGHT_TEXTURE_SIZE_INVERSE, 0).abgr;
 
     vec3 blockLight = light.rgb;
     vec3 indirectLight = light.aaa;

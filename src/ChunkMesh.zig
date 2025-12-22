@@ -54,7 +54,7 @@ pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, n
                     if (block_model_indices.len == 0) break :skip;
 
                     if (NeighborChunks.inEdge[dir_idx](local_pos)) {
-                        if (neighbor_chunks.chunks[dir_idx]) |neighbor_chunk| {
+                        if (neighbor_chunks.chunks.get(dir)) |neighbor_chunk| {
                             const neighbor_pos = NeighborChunks.getNeighborPos[dir_idx](local_pos);
                             const neighbor_block = neighbor_chunk.getBlock(neighbor_pos);
                             const neighbor_mesh_flags = neighbor_block.kind.getMeshFlags();

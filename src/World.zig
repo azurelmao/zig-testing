@@ -819,7 +819,7 @@ pub fn setLight(world: *World, world_pos: WorldPos, light: Light) !void {
 }
 
 pub const NeighborChunks = struct {
-    chunks: [6]?*Chunk,
+    chunks: std.EnumArray(Dir, ?*Chunk),
 
     pub const inEdge = .{
         inWestEdge,
@@ -945,11 +945,11 @@ pub const NeighborChunks = struct {
     }
 };
 
-pub fn getNeighborChunks(world: *World, chunk_pos: Chunk.Pos) NeighborChunks {
-    var chunks: [6]?*Chunk = undefined;
+pub fn getNeighborChunks(world: *const World, chunk_pos: Chunk.Pos) NeighborChunks {
+    var chunks: std.EnumArray(Dir, ?*Chunk) = .initUndefined();
 
-    inline for (Dir.indices) |dir_idx| {
-        chunks[dir_idx] = world.getChunkOrNull(chunk_pos.add(Chunk.Pos.OFFSETS[dir_idx]));
+    inline for (Dir.values) |dir| {
+        chunks.set(dir, world.getChunkOrNull(chunk_pos.add(Chunk.Pos.OFFSETS.get(dir))));
     }
 
     return .{ .chunks = chunks };
