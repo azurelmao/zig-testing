@@ -975,6 +975,10 @@ pub fn main() !void {
     game.world_mesh.uploadMesh();
     game.world_mesh.uploadCommands();
 
+    var data: gl.int = undefined;
+    gl.GetIntegerv(gl.MAX_SHADER_STORAGE_BUFFER_BINDINGS, @ptrCast(&data));
+    std.debug.print("{}", .{data});
+
     var delta_time: gl.float = 1.0 / 60.0;
     var timer: std.time.Timer = try .start();
 
