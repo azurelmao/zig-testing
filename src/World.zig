@@ -818,7 +818,7 @@ pub fn setLight(world: *World, world_pos: WorldPos, light: Light) !void {
     chunk.setLight(world_pos.toLocalPos(), light);
 }
 
-pub const NeighborChunks = struct {
+pub const NeighborChunks6 = struct {
     chunks: std.EnumArray(Dir, ?*Chunk),
 
     pub const inEdge = .{
@@ -945,11 +945,84 @@ pub const NeighborChunks = struct {
     }
 };
 
-pub fn getNeighborChunks(world: *const World, chunk_pos: Chunk.Pos) NeighborChunks {
+pub fn getNeighborChunks6(world: *const World, chunk_pos: Chunk.Pos) NeighborChunks6 {
     var chunks: std.EnumArray(Dir, ?*Chunk) = .initUndefined();
 
     inline for (Dir.values) |dir| {
         chunks.set(dir, world.getChunkOrNull(chunk_pos.add(Chunk.Pos.OFFSETS.get(dir))));
+    }
+
+    return .{ .chunks = chunks };
+}
+
+pub const NeighborChunks27 = struct {
+    chunks: std.EnumArray(LocalPos, ?*Chunk),
+
+    const LocalPos = enum(u5) {
+        west = idx(-1, 0, 0),
+        bottom_west = idx(-1, -1, 0),
+        top_west = idx(-1, 1, 0),
+
+        east = idx(1, 0, 0),
+        bottom_east = idx(1, -1, 0),
+        top_east = idx(1, 1, 0),
+
+        north = idx(0, 0, -1),
+        bottom_north = idx(0, -1, -1),
+        top_north = idx(0, 1, -1),
+
+        south = idx(0, 0, 1),
+        bottom_south = idx(0, -1, 1),
+        top_south = idx(0, 1, 1),
+
+        north_west = idx(-1, 0, -1),
+        bottom_north_west = idx(-1, -1, -1),
+        top_north_west = idx(-1, 1, -1),
+
+        north_east = idx(1, 0, -1),
+        bottom_north_east = idx(1, -1, -1),
+        top_north_east = idx(1, 1, -1),
+
+        south_west = idx(-1, 0, 1),
+        bottom_south_west = idx(-1, -1, 1),
+        top_south_west = idx(-1, 1, 1),
+
+        south_east = idx(1, 0, 1),
+        bottom_south_east = idx(1, -1, 1),
+        top_south_east = idx(1, 1, 1),
+
+        bottom = idx(0, -1, 0),
+        top = idx(0, 1, 0),
+        middle = idx(0, 0, 0),
+
+        pub fn idx(x: i2, y: i2, z: i2) u5 {
+            const x2: u5 = @intCast(@as(i3, @intCast(x)) + 1);
+            const y2: u5 = @intCast(@as(i3, @intCast(y)) + 1);
+            const z2: u5 = @intCast(@as(i3, @intCast(z)) + 1);
+
+            return x2 + y2 * 3 + z2 * 9;
+        }
+    };
+};
+
+pub fn getNeighborChunks27(world: *const World, chunk_pos: Chunk.Pos) NeighborChunks27 {
+    var chunks: std.EnumArray(NeighborChunks27.LocalPos, ?*Chunk) = .initUndefined();
+
+    for (0..3) |_x| {
+        const x: i2 = @intCast(@as(i3, @intCast(_x)) - 1);
+
+        for (0..3) |_y| {
+            const y: i2 = @intCast(@as(i3, @intCast(_y)) - 1);
+
+            for (0..3) |_z| {
+                const z: i2 = @intCast(@as(i3, @intCast(_z)) - 1);
+
+                chunks.set(
+                    @enumFromInt(NeighborChunks27.LocalPos.idx(x, y, z)),
+                    world.getChunkOrNull(chunk_pos.add(.{ .x = x, .y = y, .z = z })),
+                );
+            }
+        }
     }
 
     return .{ .chunks = chunks };

@@ -91,7 +91,7 @@ pub const LocalPos = packed struct(u15) {
     y: u5,
     z: u5,
 
-    pub fn index(self: LocalPos) u15 {
+    pub fn idx(self: LocalPos) u15 {
         return @bitCast(self);
     }
 };
@@ -137,11 +137,11 @@ pub fn init(gpa: std.mem.Allocator, pos: Pos) !Chunk {
 }
 
 pub fn getLight(self: *Chunk, pos: LocalPos) Light {
-    return self.light[pos.index()];
+    return self.light[pos.idx()];
 }
 
 pub fn setLight(self: *Chunk, pos: LocalPos, light: Light) void {
-    self.light[pos.index()] = light;
+    self.light[pos.idx()] = light;
 }
 
 pub fn getBlock(self: Chunk, pos: LocalPos) Block {
@@ -150,7 +150,7 @@ pub fn getBlock(self: Chunk, pos: LocalPos) Block {
 
         inline else => |bit_size| {
             const int_type = std.meta.Int(.unsigned, bit_size);
-            const bit_offset = @as(usize, @intCast(pos.index())) * @as(usize, @intCast(bit_size));
+            const bit_offset = @as(usize, @intCast(pos.idx())) * @as(usize, @intCast(bit_size));
 
             const block_index: u15 = @intCast(std.mem.readPackedIntNative(int_type, self.blocks, bit_offset));
             const block = self.index_to_block.get(block_index).?;
@@ -223,7 +223,7 @@ pub fn setBlock(self: *Chunk, gpa: std.mem.Allocator, pos: LocalPos, block: Bloc
 
         inline else => |bit_size| {
             const int_type = std.meta.Int(.unsigned, bit_size);
-            const bit_offset = @as(usize, @intCast(pos.index())) * @as(usize, @intCast(bit_size));
+            const bit_offset = @as(usize, @intCast(pos.idx())) * @as(usize, @intCast(bit_size));
 
             const prev_block_index = std.mem.readPackedIntNative(int_type, self.blocks, bit_offset);
             const prev_block = self.index_to_block.get(prev_block_index).?;

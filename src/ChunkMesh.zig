@@ -7,7 +7,7 @@ const Light = @import("light.zig").Light;
 const BlockLayer = @import("block.zig").BlockLayer;
 const Dir = @import("dir.zig").Dir;
 const World = @import("World.zig");
-const NeighborChunks = World.NeighborChunks;
+const NeighborChunks6 = World.NeighborChunks6;
 
 const ChunkMesh = @This();
 
@@ -31,7 +31,7 @@ pub const PerFaceData = packed struct(u64) {
 
 pub const empty: ChunkMesh = .{ .layers = @splat(.empty) };
 
-pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, neighbor_chunks: *const NeighborChunks) !void {
+pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, neighbor_chunks: *const NeighborChunks6) !void {
     var chunk_mesh_layer: *ChunkMeshLayer = undefined;
 
     for (0..Chunk.SIZE) |x| {
@@ -53,9 +53,9 @@ pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, n
 
                     if (block_model_indices.len == 0) break :skip;
 
-                    if (NeighborChunks.inEdge[dir_idx](local_pos)) {
+                    if (NeighborChunks6.inEdge[dir_idx](local_pos)) {
                         if (neighbor_chunks.chunks.get(dir)) |neighbor_chunk| {
-                            const neighbor_pos = NeighborChunks.getNeighborPos[dir_idx](local_pos);
+                            const neighbor_pos = NeighborChunks6.getNeighborPos[dir_idx](local_pos);
                             const neighbor_block = neighbor_chunk.getBlock(neighbor_pos);
                             const neighbor_mesh_flags = neighbor_block.kind.getMeshFlags();
 
@@ -76,7 +76,7 @@ pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, n
                             }
                         }
                     } else {
-                        const neighbor_pos = NeighborChunks.getPos[dir_idx](local_pos);
+                        const neighbor_pos = NeighborChunks6.getPos[dir_idx](local_pos);
                         const neighbor_block = chunk.getBlock(neighbor_pos);
                         const neighbor_mesh_flags = neighbor_block.kind.getMeshFlags();
 

@@ -8,7 +8,7 @@ layout (binding = 16, std430) readonly buffer ssbo16 {
 
 in vec2 pTextureUV;
 flat in uint pTextureIdx;
-flat in uint pIndirectLightTint;
+flat in uint pIndirectLightTintIdx;
 flat in uint pNormal;
 flat in int pDrawId;
 
@@ -17,6 +17,7 @@ in vec3 pWorldPosition;
 
 layout (location = 0) out vec4 oColor;
 layout (binding = 0) uniform sampler2DArray uTexture;
+// layout (binding = 3) uniform sampler3D uLightTexture; // temporary
 layout (binding = 4) uniform sampler2D uIndirectLightTexture;
 uniform vec3 uCameraPosition;
 
@@ -58,8 +59,13 @@ const vec3[6] NormalOffset = vec3[](
     vec3(0, 0, 0.5) // south
 );
 
+const vec3[2] IndirectLightTint = vec3[](
+    vec3(1),
+    vec3(207, 221, 255) / 255.0
+);
+
 const float CHUNK_SIZE = 32.0;
-const float OVERLAP_WIDTH = 0.0;
+const float OVERLAP_WIDTH = 1.0;
 const float LIGHT_TEXTURE_SIZE = CHUNK_SIZE + OVERLAP_WIDTH * 2.0;
 const float LIGHT_TEXTURE_SIZE_INVERSE = 1.0 / LIGHT_TEXTURE_SIZE;
 
@@ -74,9 +80,11 @@ void main() {
 
     vec4 texColor = texture(uTexture, vec3(pTextureUV, pTextureIdx));
     vec4 light = texture(sLightTextures[pDrawId], (pLocalModelPosition + NormalOffset[pNormal] + OVERLAP_WIDTH) * LIGHT_TEXTURE_SIZE_INVERSE, 0).abgr;
+    // vec4 light = texture(uLightTexture, (pLocalModelPosition + NormalOffset[pNormal] + OVERLAP_WIDTH) * LIGHT_TEXTURE_SIZE_INVERSE, 0).abgr;
 
     vec3 blockLight = light.rgb;
-    vec3 indirectLight = light.aaa;
+    vec3 indirectLightTint = IndirectLightTint[pIndirectLightTintIdx];
+    vec3 indirectLight = light.aaa * indirectLightTint;
     vec3 newLight = max(blockLight, indirectLight);
 
     vec4 color = vec4(texColor.rgb * newLight * normalLight, texColor.a);

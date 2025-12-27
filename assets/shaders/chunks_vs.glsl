@@ -33,7 +33,7 @@ uint unpackModelFaceIdx(uint data) {
     return modelFaceIdx;
 }
 
-uint unpackIndirectLightTint(uint data) {
+uint unpackIndirectLightTintIdx(uint data) {
     uint indirectLightTint = bitfieldExtract(data, 0, 1);
 
     return indirectLightTint;
@@ -74,7 +74,7 @@ layout (binding = 0, std140) uniform ubo0 {
 out vec2 pTextureUV;
 flat out uint pTextureIdx;
 flat out uint pNormal;
-flat out uint pIndirectLightTint;
+flat out uint pIndirectLightTintIdx;
 flat out uint pLightTextureIdx;
 flat out int pDrawId;
 
@@ -87,7 +87,7 @@ void main() {
     
     vec3 localPosition = unpackLocalPosition(perFaceData.data1);
     uint modelFaceIdx = unpackModelFaceIdx(perFaceData.data1);
-    uint indirectLightTint = unpackIndirectLightTint(perFaceData.data2);
+    uint indirectLightTintIdx = unpackIndirectLightTintIdx(perFaceData.data2);
     uint normal = unpackNormal(perFaceData.data2);
 
     uint vertexIdx = modelFaceIdx + (gl_VertexID % 6);
@@ -99,7 +99,7 @@ void main() {
     
     pTextureUV = textureUV / 16.0;
     pTextureIdx = textureIdx;
-    pIndirectLightTint = indirectLightTint;
+    pIndirectLightTintIdx = indirectLightTintIdx;
     pLightTextureIdx = gl_BaseInstance;
     pNormal = normal;
     pDrawId = gl_DrawID;

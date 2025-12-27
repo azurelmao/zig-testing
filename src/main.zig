@@ -165,7 +165,7 @@ const Game = struct {
 
         var flags: gl.int = undefined;
         gl.GetIntegerv(gl.CONTEXT_FLAGS, @ptrCast(&flags));
-        if (flags & gl.CONTEXT_FLAG_DEBUG_BIT > 0) {
+        if (flags & gl.CONTEXT_FLAG_DEBUG_BIT != 0) {
             gl.Enable(gl.DEBUG_OUTPUT);
             gl.Enable(gl.DEBUG_OUTPUT_SYNCHRONOUS);
             gl.DebugMessageCallback(callback.debugCallback, null);
@@ -530,6 +530,8 @@ const Game = struct {
             game.window.handle.setInputModeCursor(cursor_mode);
         }
 
+        if (game.paused) return;
+
         if (game.input.getUncached(.toggle_chunk_borders) == .press) {
             game.settings.chunk_borders = !game.settings.chunk_borders;
         }
@@ -645,7 +647,7 @@ const Game = struct {
         }
     }
 
-    fn processSharedFlags(game: *Game, gpa: std.mem.Allocator, shared_flags: *SharedFlags) !void {
+    fn processSharedFlags(game: *Game, gpa: std.mem.Allocator, shared_flags: SharedFlags) !void {
         if (shared_flags.calc_view_matrix and !game.paused) {
             game.camera.calcViewMatrix();
 
@@ -717,7 +719,7 @@ const Game = struct {
         }
     }
 
-    fn processChanges(game: *Game, gpa: std.mem.Allocator, shared_flags: *SharedFlags) !void {
+    fn processChanges(game: *Game, gpa: std.mem.Allocator, shared_flags: SharedFlags) !void {
         if (debug.upload_nodes) {
             debug.addition_nodes.ssbo.upload(debug.addition_nodes.data.items) catch |err| switch (err) {
                 error.DataTooLarge => {
@@ -975,9 +977,12 @@ pub fn main() !void {
     game.world_mesh.uploadMesh();
     game.world_mesh.uploadCommands();
 
-    var data: gl.int = undefined;
-    gl.GetIntegerv(gl.MAX_SHADER_STORAGE_BUFFER_BINDINGS, @ptrCast(&data));
-    std.debug.print("{}", .{data});
+    while (true) {
+        const err = gl.GetError();
+        if (err == gl.NO_ERROR) break;
+
+        std.log.err("{}", .{err});
+    }
 
     var delta_time: gl.float = 1.0 / 60.0;
     var timer: std.time.Timer = try .start();
@@ -995,11 +1000,11 @@ pub fn main() !void {
         try game.processWindowEvents(delta_time, &shared_flags);
         game.processInput(delta_time, &shared_flags);
 
-        try game.processSharedFlags(gpa, &shared_flags);
+        try game.processSharedFlags(gpa, shared_flags);
         try game.appendText(gpa);
 
         if (!game.paused)
-            try game.processChanges(gpa, &shared_flags);
+            try game.processChanges(gpa, shared_flags);
 
         game.render();
 

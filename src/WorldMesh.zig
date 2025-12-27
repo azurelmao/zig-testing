@@ -10,6 +10,7 @@ const ShaderStorageBufferWithArrayList = @import("shader_storage_buffer.zig").Sh
 const ChunkMesh = @import("ChunkMesh.zig");
 const ChunkMeshLayer = ChunkMesh.ChunkMeshLayer;
 const Dir = @import("dir.zig").Dir;
+const Light = @import("light.zig").Light;
 
 const WorldMesh = @This();
 
@@ -190,7 +191,7 @@ pub fn generateMesh(self: *WorldMesh, gpa: std.mem.Allocator, world: *World) !vo
     var chunk_iter = world.chunks.valueIterator();
     while (chunk_iter.next()) |chunk| {
         const chunk_pos = chunk.pos;
-        const neighbor_chunks = world.getNeighborChunks(chunk_pos);
+        const neighbor_chunks = world.getNeighborChunks6(chunk_pos);
 
         if (chunk.num_of_air != Chunk.VOLUME) {
             try self.chunk_mesh.generate(gpa, chunk, &neighbor_chunks);
@@ -208,7 +209,7 @@ pub fn generateMesh(self: *WorldMesh, gpa: std.mem.Allocator, world: *World) !vo
 
 pub fn generateChunkMesh(self: *WorldMesh, gpa: std.mem.Allocator, world: *World, chunk_pos: Chunk.Pos) !void {
     const chunk = try world.getChunk(chunk_pos);
-    const neighbor_chunks = world.getNeighborChunks(chunk_pos);
+    const neighbor_chunks = world.getNeighborChunks6(chunk_pos);
 
     if (chunk.num_of_air != Chunk.VOLUME) {
         try self.chunk_mesh.generate(gpa, chunk, &neighbor_chunks);
@@ -315,19 +316,44 @@ pub fn generateLightTextures(self: *WorldMesh, gpa: std.mem.Allocator, world: *c
 
     self.chunk_pos_to_light_texture.clearRetainingCapacity();
 
+    // temporary
+    // const chunk = try world.getChunk(.{ .x = 0, .y = 0, .z = 0 });
+    // _ = gpa;
+
     var iter = world.chunks.valueIterator();
     while (iter.next()) |chunk| {
         var handle: gl.uint = undefined;
         gl.CreateTextures(gl.TEXTURE_3D, 1, @ptrCast(&handle));
-        gl.TextureStorage3D(handle, 1, gl.RGBA4, Chunk.SIZE, Chunk.SIZE, Chunk.SIZE);
+        gl.TextureStorage3D(handle, 1, gl.RGBA4, Chunk.SIZE + 2, Chunk.SIZE + 2, Chunk.SIZE + 2);
+
+        // Fill with black for testing
+        for (0..Chunk.SIZE + 2) |x| {
+            for (0..Chunk.SIZE + 2) |y| {
+                for (0..Chunk.SIZE + 2) |z| {
+                    gl.TextureSubImage3D(
+                        handle,
+                        0,
+                        @intCast(x),
+                        @intCast(y),
+                        @intCast(z),
+                        1,
+                        1,
+                        1,
+                        gl.RGBA,
+                        gl.UNSIGNED_SHORT_4_4_4_4,
+                        @ptrCast(&Light{ .red = 0, .green = 0, .blue = 0, .indirect = 0 }),
+                    );
+                }
+            }
+        }
 
         // Main volume from chunk
         gl.TextureSubImage3D(
             handle,
             0,
-            0,
-            0,
-            0,
+            1,
+            1,
+            1,
             Chunk.SIZE,
             Chunk.SIZE,
             Chunk.SIZE,
@@ -337,103 +363,503 @@ pub fn generateLightTextures(self: *WorldMesh, gpa: std.mem.Allocator, world: *c
         );
 
         // Light overlap from neighboring side chunks
-        // const neighbor_chunks = world.getNeighborChunks(chunk.pos);
-        // if (neighbor_chunks.chunks.get(.west)) |neighbor_chunk| {
-        //     gl.PixelStorei(gl.UNPACK_ROW_LENGTH, Chunk.SIZE);
-        //     defer gl.PixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+        const neighbor_chunks = world.getNeighborChunks27(chunk.pos);
 
-        //     gl.PixelStorei(gl.UNPACK_IMAGE_HEIGHT, Chunk.SIZE);
-        //     defer gl.PixelStorei(gl.UNPACK_IMAGE_HEIGHT, 0);
+        if (neighbor_chunks.chunks.get(.west)) |neighbor_chunk| {
+            for (0..Chunk.SIZE) |y| {
+                for (0..Chunk.SIZE) |z| {
+                    const light = neighbor_chunk.getLight(.{ .x = Chunk.EDGE, .y = @intCast(y), .z = @intCast(z) });
 
-        //     gl.PixelStorei(gl.UNPACK_SKIP_PIXELS, Chunk.EDGE);
-        //     defer gl.PixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+                    gl.TextureSubImage3D(
+                        handle,
+                        0,
+                        0,
+                        @intCast(y + 1),
+                        @intCast(z + 1),
+                        1,
+                        1,
+                        1,
+                        gl.RGBA,
+                        gl.UNSIGNED_SHORT_4_4_4_4,
+                        @ptrCast(&light),
+                    );
+                }
+            }
+        }
 
-        //     gl.TextureSubImage3D(
-        //         handle,
-        //         0,
-        //         0,
-        //         1,
-        //         1,
-        //         1,
-        //         Chunk.SIZE,
-        //         Chunk.SIZE,
-        //         gl.RGBA,
-        //         gl.UNSIGNED_SHORT_4_4_4_4,
-        //         @ptrCast(&neighbor_chunk.light),
-        //     );
-        // }
+        if (neighbor_chunks.chunks.get(.bottom_west)) |neighbor_chunk| {
+            for (0..Chunk.SIZE) |z| {
+                const light = neighbor_chunk.getLight(.{ .x = Chunk.EDGE, .y = Chunk.EDGE, .z = @intCast(z) });
 
-        // if (neighbor_chunks.chunks.get(.bottom)) |neighbor_chunk| {
-        //     gl.PixelStorei(gl.UNPACK_ROW_LENGTH, Chunk.SIZE);
-        //     defer gl.PixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+                gl.TextureSubImage3D(
+                    handle,
+                    0,
+                    0,
+                    0,
+                    @intCast(z + 1),
+                    1,
+                    1,
+                    1,
+                    gl.RGBA,
+                    gl.UNSIGNED_SHORT_4_4_4_4,
+                    @ptrCast(&light),
+                );
+            }
+        }
 
-        //     gl.PixelStorei(gl.UNPACK_IMAGE_HEIGHT, Chunk.SIZE);
-        //     defer gl.PixelStorei(gl.UNPACK_IMAGE_HEIGHT, 0);
+        if (neighbor_chunks.chunks.get(.top_west)) |neighbor_chunk| {
+            for (0..Chunk.SIZE) |z| {
+                const light = neighbor_chunk.getLight(.{ .x = Chunk.EDGE, .y = 0, .z = @intCast(z) });
 
-        //     gl.PixelStorei(gl.UNPACK_SKIP_ROWS, Chunk.EDGE);
-        //     defer gl.PixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+                gl.TextureSubImage3D(
+                    handle,
+                    0,
+                    0,
+                    Chunk.SIZE + 1,
+                    @intCast(z + 1),
+                    1,
+                    1,
+                    1,
+                    gl.RGBA,
+                    gl.UNSIGNED_SHORT_4_4_4_4,
+                    @ptrCast(&light),
+                );
+            }
+        }
 
-        //     gl.TextureSubImage3D(
-        //         handle,
-        //         0,
-        //         1,
-        //         0,
-        //         1,
-        //         Chunk.SIZE,
-        //         1,
-        //         Chunk.SIZE,
-        //         gl.RGBA,
-        //         gl.UNSIGNED_SHORT_4_4_4_4,
-        //         @ptrCast(&neighbor_chunk.light),
-        //     );
-        // }
+        if (neighbor_chunks.chunks.get(.east)) |neighbor_chunk| {
+            for (0..Chunk.SIZE) |y| {
+                for (0..Chunk.SIZE) |z| {
+                    const light = neighbor_chunk.getLight(.{ .x = 0, .y = @intCast(y), .z = @intCast(z) });
 
-        // if (neighbor_chunks.chunks.get(.top)) |neighbor_chunk| {
-        //     for (0..Chunk.SIZE) |x| {
-        //         for (0..Chunk.SIZE) |z| {
-        //             const light = neighbor_chunk.getLight(.{ .x = @intCast(x), .y = 0, .z = @intCast(z) });
+                    gl.TextureSubImage3D(
+                        handle,
+                        0,
+                        Chunk.SIZE + 1,
+                        @intCast(y + 1),
+                        @intCast(z + 1),
+                        1,
+                        1,
+                        1,
+                        gl.RGBA,
+                        gl.UNSIGNED_SHORT_4_4_4_4,
+                        @ptrCast(&light),
+                    );
+                }
+            }
+        }
 
-        //             gl.TextureSubImage3D(
-        //                 handle,
-        //                 0,
-        //                 @intCast(x),
-        //                 Chunk.EDGE + 1,
-        //                 @intCast(z),
-        //                 1,
-        //                 1,
-        //                 1,
-        //                 gl.RGBA,
-        //                 gl.UNSIGNED_SHORT_4_4_4_4,
-        //                 @ptrCast(&light),
-        //             );
-        //         }
-        //     }
-        // }
+        if (neighbor_chunks.chunks.get(.bottom_east)) |neighbor_chunk| {
+            for (0..Chunk.SIZE) |z| {
+                const light = neighbor_chunk.getLight(.{ .x = 0, .y = Chunk.EDGE, .z = @intCast(z) });
 
-        // if (neighbor_chunks.chunks.get(.north)) |neighbor_chunk| {
-        //     gl.PixelStorei(gl.UNPACK_ROW_LENGTH, Chunk.SIZE);
-        //     defer gl.PixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+                gl.TextureSubImage3D(
+                    handle,
+                    0,
+                    Chunk.SIZE + 1,
+                    0,
+                    @intCast(z + 1),
+                    1,
+                    1,
+                    1,
+                    gl.RGBA,
+                    gl.UNSIGNED_SHORT_4_4_4_4,
+                    @ptrCast(&light),
+                );
+            }
+        }
 
-        //     gl.PixelStorei(gl.UNPACK_IMAGE_HEIGHT, Chunk.SIZE);
-        //     defer gl.PixelStorei(gl.UNPACK_IMAGE_HEIGHT, 0);
+        if (neighbor_chunks.chunks.get(.top_east)) |neighbor_chunk| {
+            for (0..Chunk.SIZE) |z| {
+                const light = neighbor_chunk.getLight(.{ .x = 0, .y = 0, .z = @intCast(z) });
 
-        //     gl.PixelStorei(gl.UNPACK_SKIP_IMAGES, Chunk.EDGE);
-        //     defer gl.PixelStorei(gl.UNPACK_SKIP_IMAGES, 0);
+                gl.TextureSubImage3D(
+                    handle,
+                    0,
+                    Chunk.SIZE + 1,
+                    Chunk.SIZE + 1,
+                    @intCast(z + 1),
+                    1,
+                    1,
+                    1,
+                    gl.RGBA,
+                    gl.UNSIGNED_SHORT_4_4_4_4,
+                    @ptrCast(&light),
+                );
+            }
+        }
 
-        //     gl.TextureSubImage3D(
-        //         handle,
-        //         0,
-        //         1,
-        //         1,
-        //         0,
-        //         Chunk.SIZE,
-        //         Chunk.SIZE,
-        //         1,
-        //         gl.RGBA,
-        //         gl.UNSIGNED_SHORT_4_4_4_4,
-        //         @ptrCast(&neighbor_chunk.light),
-        //     );
-        // }
+        if (neighbor_chunks.chunks.get(.north)) |neighbor_chunk| {
+            const local_pos: Chunk.LocalPos = .{ .x = 0, .y = 0, .z = Chunk.EDGE };
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                1,
+                1,
+                0,
+                Chunk.SIZE,
+                Chunk.SIZE,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(neighbor_chunk.light[local_pos.idx()..]),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.bottom_north)) |neighbor_chunk| {
+            const local_pos: Chunk.LocalPos = .{ .x = 0, .y = Chunk.EDGE, .z = Chunk.EDGE };
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                1,
+                0,
+                0,
+                Chunk.SIZE,
+                1,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(neighbor_chunk.light[local_pos.idx()..]),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.top_north)) |neighbor_chunk| {
+            const local_pos: Chunk.LocalPos = .{ .x = 0, .y = 0, .z = Chunk.EDGE };
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                1,
+                Chunk.SIZE + 1,
+                0,
+                Chunk.SIZE,
+                1,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(neighbor_chunk.light[local_pos.idx()..]),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.south)) |neighbor_chunk| {
+            const local_pos: Chunk.LocalPos = .{ .x = 0, .y = 0, .z = 0 };
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                1,
+                1,
+                Chunk.SIZE + 1,
+                Chunk.SIZE,
+                Chunk.SIZE,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(neighbor_chunk.light[local_pos.idx()..]),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.bottom_south)) |neighbor_chunk| {
+            const local_pos: Chunk.LocalPos = .{ .x = 0, .y = Chunk.EDGE, .z = 0 };
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                1,
+                0,
+                Chunk.SIZE + 1,
+                Chunk.SIZE,
+                1,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(neighbor_chunk.light[local_pos.idx()..]),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.top_south)) |neighbor_chunk| {
+            const local_pos: Chunk.LocalPos = .{ .x = 0, .y = 0, .z = 0 };
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                1,
+                Chunk.SIZE + 1,
+                Chunk.SIZE + 1,
+                Chunk.SIZE,
+                1,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(neighbor_chunk.light[local_pos.idx()..]),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.north_west)) |neighbor_chunk| {
+            for (0..Chunk.SIZE) |y| {
+                const light = neighbor_chunk.getLight(.{ .x = Chunk.EDGE, .y = @intCast(y), .z = Chunk.EDGE });
+
+                gl.TextureSubImage3D(
+                    handle,
+                    0,
+                    0,
+                    @intCast(y + 1),
+                    0,
+                    1,
+                    1,
+                    1,
+                    gl.RGBA,
+                    gl.UNSIGNED_SHORT_4_4_4_4,
+                    @ptrCast(&light),
+                );
+            }
+        }
+
+        if (neighbor_chunks.chunks.get(.bottom_north_west)) |neighbor_chunk| {
+            const light = neighbor_chunk.getLight(.{ .x = Chunk.EDGE, .y = Chunk.EDGE, .z = Chunk.EDGE });
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                0,
+                0,
+                0,
+                1,
+                1,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(&light),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.top_north_west)) |neighbor_chunk| {
+            const light = neighbor_chunk.getLight(.{ .x = Chunk.EDGE, .y = 0, .z = Chunk.EDGE });
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                0,
+                Chunk.SIZE + 1,
+                0,
+                1,
+                1,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(&light),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.north_east)) |neighbor_chunk| {
+            for (0..Chunk.SIZE) |y| {
+                const light = neighbor_chunk.getLight(.{ .x = 0, .y = @intCast(y), .z = Chunk.EDGE });
+
+                gl.TextureSubImage3D(
+                    handle,
+                    0,
+                    Chunk.SIZE + 1,
+                    @intCast(y + 1),
+                    0,
+                    1,
+                    1,
+                    1,
+                    gl.RGBA,
+                    gl.UNSIGNED_SHORT_4_4_4_4,
+                    @ptrCast(&light),
+                );
+            }
+        }
+
+        if (neighbor_chunks.chunks.get(.bottom_north_east)) |neighbor_chunk| {
+            const light = neighbor_chunk.getLight(.{ .x = 0, .y = Chunk.EDGE, .z = Chunk.EDGE });
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                Chunk.SIZE + 1,
+                0,
+                0,
+                1,
+                1,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(&light),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.top_north_east)) |neighbor_chunk| {
+            const light = neighbor_chunk.getLight(.{ .x = 0, .y = 0, .z = Chunk.EDGE });
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                Chunk.SIZE + 1,
+                Chunk.SIZE + 1,
+                0,
+                1,
+                1,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(&light),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.south_west)) |neighbor_chunk| {
+            for (0..Chunk.SIZE) |y| {
+                const light = neighbor_chunk.getLight(.{ .x = Chunk.EDGE, .y = @intCast(y), .z = 0 });
+
+                gl.TextureSubImage3D(
+                    handle,
+                    0,
+                    0,
+                    @intCast(y + 1),
+                    Chunk.SIZE + 1,
+                    1,
+                    1,
+                    1,
+                    gl.RGBA,
+                    gl.UNSIGNED_SHORT_4_4_4_4,
+                    @ptrCast(&light),
+                );
+            }
+        }
+
+        if (neighbor_chunks.chunks.get(.bottom_south_west)) |neighbor_chunk| {
+            const light = neighbor_chunk.getLight(.{ .x = Chunk.EDGE, .y = Chunk.EDGE, .z = 0 });
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                0,
+                0,
+                Chunk.SIZE + 1,
+                1,
+                1,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(&light),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.top_south_west)) |neighbor_chunk| {
+            const light = neighbor_chunk.getLight(.{ .x = Chunk.EDGE, .y = 0, .z = 0 });
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                0,
+                Chunk.SIZE + 1,
+                Chunk.SIZE + 1,
+                1,
+                1,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(&light),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.south_east)) |neighbor_chunk| {
+            for (0..Chunk.SIZE) |y| {
+                const light = neighbor_chunk.getLight(.{ .x = 0, .y = @intCast(y), .z = 0 });
+
+                gl.TextureSubImage3D(
+                    handle,
+                    0,
+                    Chunk.SIZE + 1,
+                    @intCast(y + 1),
+                    Chunk.SIZE + 1,
+                    1,
+                    1,
+                    1,
+                    gl.RGBA,
+                    gl.UNSIGNED_SHORT_4_4_4_4,
+                    @ptrCast(&light),
+                );
+            }
+        }
+
+        if (neighbor_chunks.chunks.get(.bottom_south_east)) |neighbor_chunk| {
+            const light = neighbor_chunk.getLight(.{ .x = 0, .y = Chunk.EDGE, .z = 0 });
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                Chunk.SIZE + 1,
+                0,
+                Chunk.SIZE + 1,
+                1,
+                1,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(&light),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.top_south_east)) |neighbor_chunk| {
+            const light = neighbor_chunk.getLight(.{ .x = 0, .y = 0, .z = 0 });
+
+            gl.TextureSubImage3D(
+                handle,
+                0,
+                Chunk.SIZE + 1,
+                Chunk.SIZE + 1,
+                Chunk.SIZE + 1,
+                1,
+                1,
+                1,
+                gl.RGBA,
+                gl.UNSIGNED_SHORT_4_4_4_4,
+                @ptrCast(&light),
+            );
+        }
+
+        if (neighbor_chunks.chunks.get(.bottom)) |neighbor_chunk| {
+            for (0..Chunk.SIZE) |z| {
+                const local_pos: Chunk.LocalPos = .{ .x = 0, .y = Chunk.EDGE, .z = @intCast(z) };
+
+                gl.TextureSubImage3D(
+                    handle,
+                    0,
+                    1,
+                    0,
+                    @intCast(z + 1),
+                    Chunk.SIZE,
+                    1,
+                    1,
+                    gl.RGBA,
+                    gl.UNSIGNED_SHORT_4_4_4_4,
+                    @ptrCast(neighbor_chunk.light[local_pos.idx()..]),
+                );
+            }
+        }
+
+        if (neighbor_chunks.chunks.get(.top)) |neighbor_chunk| {
+            for (0..Chunk.SIZE) |z| {
+                const local_pos: Chunk.LocalPos = .{ .x = 0, .y = 0, .z = @intCast(z) };
+
+                gl.TextureSubImage3D(
+                    handle,
+                    0,
+                    1,
+                    Chunk.SIZE + 1,
+                    @intCast(z + 1),
+                    Chunk.SIZE,
+                    1,
+                    1,
+                    gl.RGBA,
+                    gl.UNSIGNED_SHORT_4_4_4_4,
+                    @ptrCast(neighbor_chunk.light[local_pos.idx()..]),
+                );
+            }
+        }
 
         gl.TextureParameteri(handle, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.TextureParameteri(handle, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);

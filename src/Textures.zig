@@ -11,19 +11,19 @@ const Textures = @This();
 block: TextureArray2D,
 font: TextureArray2D,
 crosshair: Texture2D,
-indirect_light: Texture2D,
+// indirect_light: Texture2D,
 
 pub fn init() !Textures {
     const block = try initBlockTextures();
     const font = try initFontTextures();
     const crosshair = try initCrosshairTexture();
-    const indirect_light = try initIndirectLightTexture();
+    // const indirect_light = try initIndirectLightTexture();
 
     return .{
         .block = block,
         .font = font,
         .crosshair = crosshair,
-        .indirect_light = indirect_light,
+        // .indirect_light = indirect_light,
     };
 }
 
