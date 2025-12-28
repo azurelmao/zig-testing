@@ -7,16 +7,19 @@ const Block = @import("block.zig").Block;
 const BlockExtendedData = @import("block.zig").BlockExtendedData;
 const BlockVolumeScheme = @import("block.zig").BlockVolumeScheme;
 const Dir = @import("dir.zig").Dir;
-const DedupQueue = @import("dedup_queue.zig").DedupQueue;
+const DedupArraylist = @import("dedup_arraylist.zig").DedupArraylist;
 const Vec3f = @import("vec3f.zig").Vec3f;
+const Camera = @import("Camera.zig");
 const debug = @import("debug.zig");
 
 const World = @This();
 
 prng: std.Random.Xoshiro256,
 seed: i32,
-chunks: std.AutoHashMapUnmanaged(Chunk.Pos, Chunk),
-chunks_which_need_to_regenerate_meshes: DedupQueue(Chunk.Pos),
+chunks: std.AutoArrayHashMapUnmanaged(Chunk.Pos, Chunk),
+
+/// This should never have chunk positions which don't exist
+chunks_which_need_to_generate_meshes: DedupArraylist(Chunk.Pos),
 block_extended_data_store: std.ArrayListUnmanaged(BlockExtendedData),
 
 light_addition_queue: Queue(LightNode),
@@ -46,7 +49,7 @@ pub fn init(gpa: std.mem.Allocator, seed: i32) !World {
         .prng = prng,
         .seed = seed,
         .chunks = .empty,
-        .chunks_which_need_to_regenerate_meshes = .empty,
+        .chunks_which_need_to_generate_meshes = .empty,
         .block_extended_data_store = .empty,
 
         .light_addition_queue = .init(gpa),
@@ -127,12 +130,16 @@ pub const Pos = packed struct {
 
 const WorldPos = Pos;
 
-pub fn getChunk(world: World, world_pos: Chunk.Pos) !*Chunk {
-    return world.chunks.getPtr(world_pos) orelse error.ChunkNotFound;
+pub fn hasChunk(world: World, chunk_pos: Chunk.Pos) bool {
+    return world.chunks.contains(chunk_pos);
 }
 
-pub fn getChunkOrNull(world: World, world_pos: Chunk.Pos) ?*Chunk {
-    return world.chunks.getPtr(world_pos);
+pub fn getChunk(world: World, chunk_pos: Chunk.Pos) *Chunk {
+    return world.chunks.getPtr(chunk_pos) orelse unreachable;
+}
+
+pub fn getChunkOrNull(world: World, chunk_pos: Chunk.Pos) ?*Chunk {
+    return world.chunks.getPtr(chunk_pos);
 }
 
 pub fn getBlock(world: World, world_pos: WorldPos) !Block {
@@ -148,7 +155,7 @@ pub fn getBlockOrNull(world: World, world_pos: WorldPos) ?Block {
 }
 
 pub fn setBlock(world: *World, gpa: std.mem.Allocator, world_pos: WorldPos, block: Block) !void {
-    const chunk = try world.getChunk(world_pos.toChunkPos());
+    const chunk = world.getChunk(world_pos.toChunkPos());
 
     try chunk.setBlock(gpa, world_pos.toLocalPos(), block);
 }
@@ -196,7 +203,11 @@ pub fn placeBlock(world: *World, gpa: std.mem.Allocator, world_pos: WorldPos, bl
 
     for (Dir.indices) |dir_idx| {
         const neighbor_world_pos = world_pos.add(WorldPos.OFFSETS[dir_idx]);
-        try world.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_world_pos.toChunkPos());
+        const neighbor_chunk_pos = neighbor_world_pos.toChunkPos();
+
+        if (world.hasChunk(neighbor_chunk_pos)) {
+            try world.chunks_which_need_to_generate_meshes.append(gpa, neighbor_chunk_pos);
+        }
     }
 }
 
@@ -232,7 +243,11 @@ pub fn breakBlock(world: *World, gpa: std.mem.Allocator, world_pos: WorldPos, bl
 
     for (Dir.indices) |dir_idx| {
         const neighbor_world_pos = world_pos.add(WorldPos.OFFSETS[dir_idx]);
-        try world.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_world_pos.toChunkPos());
+        const neighbor_chunk_pos = neighbor_world_pos.toChunkPos();
+
+        if (world.hasChunk(neighbor_chunk_pos)) {
+            try world.chunks_which_need_to_generate_meshes.append(gpa, neighbor_chunk_pos);
+        }
     }
 }
 
@@ -374,128 +389,236 @@ pub fn raycast(world: World, origin: Vec3f, direction: Vec3f) RaycastResult {
     };
 }
 
-pub fn generate(world: *World, gpa: std.mem.Allocator) !void {
-    const gen1 = znoise.FnlGenerator{
-        .noise_type = .opensimplex2,
-        .seed = world.seed,
-        .frequency = 1.0 / 16.0 / 16.0 / 16.0,
-        // .lacunarity = 4,
-        // .gain = 16,
-        // .octaves = 8,
-    };
-
-    const gen2 = znoise.FnlGenerator{
-        .noise_type = .opensimplex2,
-        .seed = world.seed,
-        .frequency = 1.0 / 16.0 / 16.0,
-        // .lacunarity = 8,
-        // .gain = 1,
-        // .octaves = 8,
-    };
-
-    const gen3 = znoise.FnlGenerator{
-        .noise_type = .opensimplex2,
-        .seed = world.seed,
-        .frequency = 1.0 / 16.0,
-        // .lacunarity = 16,
-        // .gain = 1.0 / 16.0,
-        // .octaves = 8,
-    };
-
-    const sea_rift_gen = znoise.FnlGenerator{
-        .noise_type = .opensimplex2,
-        .seed = world.seed,
-        .frequency = 0.05,
-        .fractal_type = .ridged,
-        .octaves = 6,
-        .lacunarity = 0.37,
-        .gain = 10,
-        .weighted_strength = 0.94,
-    };
-
-    const cave_gen = znoise.FnlGenerator{
-        .noise_type = .opensimplex2,
-        .seed = world.seed,
-        .frequency = 0.01,
-        .fractal_type = .fbm,
-        .octaves = 5,
-        .lacunarity = 2,
-        .gain = 0.4,
-        .weighted_strength = -1,
-    };
-
-    var height_map = try gpa.create([Chunk.AREA]i16);
-
-    for (0..WIDTH * 2) |chunk_x_| {
-        for (0..WIDTH * 2) |chunk_z_| {
-            var min_height: ?i16 = null;
-            var max_height: ?i16 = null;
-
-            for (0..Chunk.SIZE) |x_| {
-                for (0..Chunk.SIZE) |z_| {
-                    const x: f32 = @floatFromInt((chunk_x_ << Chunk.BIT_SIZE) + x_);
-                    const z: f32 = @floatFromInt((chunk_z_ << Chunk.BIT_SIZE) + z_);
-                    const height_idx = x_ * Chunk.SIZE + z_;
-
-                    const height = getHeight(&gen1, &gen2, &gen3, &sea_rift_gen, x, z);
-                    height_map[height_idx] = height;
-
-                    if (min_height) |value| min_height = @min(value, height) else min_height = height;
-                    if (max_height) |value| max_height = @max(value, height) else max_height = height;
-                }
-            }
-
-            const min_chunk_height: i11 = @intCast((min_height.? >> Chunk.BIT_SIZE) - 1);
-            const max_chunk_height: i11 = @intCast(max_height.? >> Chunk.BIT_SIZE);
-
-            var chunk_y: i11 = ABOVE_HEIGHT - 1;
-            while (chunk_y >= BELOW_HEIGHT) : (chunk_y -= 1) {
-                const chunk_x = @as(i11, @intCast(chunk_x_)) - WIDTH;
-                const chunk_z = @as(i11, @intCast(chunk_z_)) - WIDTH;
-                const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
-
-                try world.chunks.put(gpa, chunk_pos, try Chunk.init(gpa, chunk_pos));
-                const chunk = world.getChunkOrNull(chunk_pos) orelse unreachable;
-
-                if (chunk_y >= min_chunk_height and chunk_y <= max_chunk_height) {
-                    try generateNoise2D(gpa, chunk, height_map);
-                } else if (chunk_y < min_chunk_height) {
-                    try generateFillWithStone(gpa, chunk);
-                }
-
-                try generateNoise3D(world, gpa, chunk, &cave_gen, world.prng.random());
-            }
+pub fn generateChunks(world: *World, gpa: std.mem.Allocator, camera: Camera) !void {
+    if (world.chunks.count() != 0) {
+        if (camera.prev_position.toChunkPos().notEqual(camera.position.toChunkPos())) {
+            // gen/load new chunks and unload old chunks
         }
-    }
+    } else {
+        const gen1 = znoise.FnlGenerator{
+            .noise_type = .opensimplex2,
+            .seed = world.seed,
+            .frequency = 1.0 / 16.0 / 16.0 / 16.0,
+            // .lacunarity = 4,
+            // .gain = 16,
+            // .octaves = 8,
+        };
 
-    const indirect_light_bitset = try gpa.create([Chunk.AREA]u32);
-    const cave_bitset = try gpa.create([Chunk.AREA]u32);
+        const gen2 = znoise.FnlGenerator{
+            .noise_type = .opensimplex2,
+            .seed = world.seed,
+            .frequency = 1.0 / 16.0 / 16.0,
+            // .lacunarity = 8,
+            // .gain = 1,
+            // .octaves = 8,
+        };
 
-    for (0..WIDTH * 2) |chunk_x_| {
-        for (0..WIDTH * 2) |chunk_z_| {
-            const chunk_x = @as(i11, @intCast(chunk_x_)) - WIDTH;
-            const chunk_z = @as(i11, @intCast(chunk_z_)) - WIDTH;
+        const gen3 = znoise.FnlGenerator{
+            .noise_type = .opensimplex2,
+            .seed = world.seed,
+            .frequency = 1.0 / 16.0,
+            // .lacunarity = 16,
+            // .gain = 1.0 / 16.0,
+            // .octaves = 8,
+        };
 
-            var chunk_y: i11 = ABOVE_HEIGHT - 1;
-            {
-                const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
-                const chunk = try world.getChunk(chunk_pos);
+        const sea_rift_gen = znoise.FnlGenerator{
+            .noise_type = .opensimplex2,
+            .seed = world.seed,
+            .frequency = 0.05,
+            .fractal_type = .ridged,
+            .octaves = 6,
+            .lacunarity = 0.37,
+            .gain = 10,
+            .weighted_strength = 0.94,
+        };
 
-                try generateIndirectLight(chunk, indirect_light_bitset);
-                try world.fillChunkWithIndirectLight(chunk, indirect_light_bitset, cave_bitset);
-            }
+        const cave_gen = znoise.FnlGenerator{
+            .noise_type = .opensimplex2,
+            .seed = world.seed,
+            .frequency = 0.01,
+            .fractal_type = .fbm,
+            .octaves = 5,
+            .lacunarity = 2,
+            .gain = 0.4,
+            .weighted_strength = -1,
+        };
 
-            chunk_y -= 1;
-            while (chunk_y >= BELOW_HEIGHT) : (chunk_y -= 1) {
-                const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
-                const chunk = try world.getChunk(chunk_pos);
+        const camera_chunk_pos = camera.position.toChunkPos();
+        // const render_distance_usize = @as(usize, @intFromFloat(@floor(camera.far))) >> Chunk.BIT_SIZE;
+        const render_distance_usize: usize = 2;
+        const render_distance: i11 = @intCast(render_distance_usize);
 
-                try world.continueIndirectLight(chunk, indirect_light_bitset);
-                try world.fillChunkWithIndirectLight(chunk, indirect_light_bitset, cave_bitset);
+        var height_map = try gpa.create([Chunk.AREA]i16);
+
+        for (0..render_distance_usize * 2) |chunk_x_| {
+            for (0..render_distance_usize * 2) |chunk_z_| {
+                var min_height: ?i16 = null;
+                var max_height: ?i16 = null;
+
+                for (0..Chunk.SIZE) |x_| {
+                    for (0..Chunk.SIZE) |z_| {
+                        const x: f32 = @floatFromInt((chunk_x_ << Chunk.BIT_SIZE) + x_);
+                        const z: f32 = @floatFromInt((chunk_z_ << Chunk.BIT_SIZE) + z_);
+                        const height_idx = x_ * Chunk.SIZE + z_;
+
+                        const height = getHeight(&gen1, &gen2, &gen3, &sea_rift_gen, x, z);
+                        height_map[height_idx] = height;
+
+                        if (min_height) |value| min_height = @min(value, height) else min_height = height;
+                        if (max_height) |value| max_height = @max(value, height) else max_height = height;
+                    }
+                }
+
+                const min_chunk_height: i11 = @intCast((min_height.? >> Chunk.BIT_SIZE) - 1);
+                const max_chunk_height: i11 = @intCast(max_height.? >> Chunk.BIT_SIZE);
+
+                for (0..render_distance_usize * 2) |chunk_y_| {
+                    const chunk_x = @as(i11, @intCast(chunk_x_)) - render_distance - camera_chunk_pos.x;
+                    const chunk_y = @as(i11, @intCast(chunk_y_)) - render_distance - camera_chunk_pos.y;
+                    const chunk_z = @as(i11, @intCast(chunk_z_)) - render_distance - camera_chunk_pos.z;
+                    const chunk_pos: Chunk.Pos = .{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
+
+                    try world.chunks.put(gpa, chunk_pos, try .init(gpa, chunk_pos));
+                    const chunk = world.getChunk(chunk_pos);
+
+                    if (chunk_y >= min_chunk_height and chunk_y <= max_chunk_height) {
+                        try generateNoise2D(gpa, chunk, height_map);
+                    } else if (chunk_y < min_chunk_height) {
+                        try generateFillWithStone(gpa, chunk);
+                    }
+
+                    try generateNoise3D(world, gpa, chunk, &cave_gen, world.prng.random());
+
+                    try world.chunks_which_need_to_generate_meshes.append(gpa, chunk.pos);
+                }
             }
         }
     }
 }
+
+// pub fn generate(world: *World, gpa: std.mem.Allocator) !void {
+//     const gen1 = znoise.FnlGenerator{
+//         .noise_type = .opensimplex2,
+//         .seed = world.seed,
+//         .frequency = 1.0 / 16.0 / 16.0 / 16.0,
+//         // .lacunarity = 4,
+//         // .gain = 16,
+//         // .octaves = 8,
+//     };
+
+//     const gen2 = znoise.FnlGenerator{
+//         .noise_type = .opensimplex2,
+//         .seed = world.seed,
+//         .frequency = 1.0 / 16.0 / 16.0,
+//         // .lacunarity = 8,
+//         // .gain = 1,
+//         // .octaves = 8,
+//     };
+
+//     const gen3 = znoise.FnlGenerator{
+//         .noise_type = .opensimplex2,
+//         .seed = world.seed,
+//         .frequency = 1.0 / 16.0,
+//         // .lacunarity = 16,
+//         // .gain = 1.0 / 16.0,
+//         // .octaves = 8,
+//     };
+
+//     const sea_rift_gen = znoise.FnlGenerator{
+//         .noise_type = .opensimplex2,
+//         .seed = world.seed,
+//         .frequency = 0.05,
+//         .fractal_type = .ridged,
+//         .octaves = 6,
+//         .lacunarity = 0.37,
+//         .gain = 10,
+//         .weighted_strength = 0.94,
+//     };
+
+//     const cave_gen = znoise.FnlGenerator{
+//         .noise_type = .opensimplex2,
+//         .seed = world.seed,
+//         .frequency = 0.01,
+//         .fractal_type = .fbm,
+//         .octaves = 5,
+//         .lacunarity = 2,
+//         .gain = 0.4,
+//         .weighted_strength = -1,
+//     };
+
+//     var height_map = try gpa.create([Chunk.AREA]i16);
+
+//     for (0..WIDTH * 2) |chunk_x_| {
+//         for (0..WIDTH * 2) |chunk_z_| {
+//             var min_height: ?i16 = null;
+//             var max_height: ?i16 = null;
+
+//             for (0..Chunk.SIZE) |x_| {
+//                 for (0..Chunk.SIZE) |z_| {
+//                     const x: f32 = @floatFromInt((chunk_x_ << Chunk.BIT_SIZE) + x_);
+//                     const z: f32 = @floatFromInt((chunk_z_ << Chunk.BIT_SIZE) + z_);
+//                     const height_idx = x_ * Chunk.SIZE + z_;
+
+//                     const height = getHeight(&gen1, &gen2, &gen3, &sea_rift_gen, x, z);
+//                     height_map[height_idx] = height;
+
+//                     if (min_height) |value| min_height = @min(value, height) else min_height = height;
+//                     if (max_height) |value| max_height = @max(value, height) else max_height = height;
+//                 }
+//             }
+
+//             const min_chunk_height: i11 = @intCast((min_height.? >> Chunk.BIT_SIZE) - 1);
+//             const max_chunk_height: i11 = @intCast(max_height.? >> Chunk.BIT_SIZE);
+
+//             var chunk_y: i11 = ABOVE_HEIGHT - 1;
+//             while (chunk_y >= BELOW_HEIGHT) : (chunk_y -= 1) {
+//                 const chunk_x = @as(i11, @intCast(chunk_x_)) - WIDTH;
+//                 const chunk_z = @as(i11, @intCast(chunk_z_)) - WIDTH;
+//                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
+
+//                 try world.chunks.put(gpa, chunk_pos, try Chunk.init(gpa, chunk_pos));
+//                 const chunk = world.getChunkOrNull(chunk_pos) orelse unreachable;
+
+//                 if (chunk_y >= min_chunk_height and chunk_y <= max_chunk_height) {
+//                     try generateNoise2D(gpa, chunk, height_map);
+//                 } else if (chunk_y < min_chunk_height) {
+//                     try generateFillWithStone(gpa, chunk);
+//                 }
+
+//                 try generateNoise3D(world, gpa, chunk, &cave_gen, world.prng.random());
+//             }
+//         }
+//     }
+
+//     const indirect_light_bitset = try gpa.create([Chunk.AREA]u32);
+//     const cave_bitset = try gpa.create([Chunk.AREA]u32);
+
+//     for (0..WIDTH * 2) |chunk_x_| {
+//         for (0..WIDTH * 2) |chunk_z_| {
+//             const chunk_x = @as(i11, @intCast(chunk_x_)) - WIDTH;
+//             const chunk_z = @as(i11, @intCast(chunk_z_)) - WIDTH;
+
+//             var chunk_y: i11 = ABOVE_HEIGHT - 1;
+//             {
+//                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
+//                 const chunk = try world.getChunk(chunk_pos);
+
+//                 try generateIndirectLight(chunk, indirect_light_bitset);
+//                 try world.fillChunkWithIndirectLight(chunk, indirect_light_bitset, cave_bitset);
+//             }
+
+//             chunk_y -= 1;
+//             while (chunk_y >= BELOW_HEIGHT) : (chunk_y -= 1) {
+//                 const chunk_pos = Chunk.Pos{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
+//                 const chunk = try world.getChunk(chunk_pos);
+
+//                 try world.continueIndirectLight(chunk, indirect_light_bitset);
+//                 try world.fillChunkWithIndirectLight(chunk, indirect_light_bitset, cave_bitset);
+//             }
+//         }
+//     }
+// }
 
 pub fn getHeight(gen1: *const znoise.FnlGenerator, gen2: *const znoise.FnlGenerator, gen3: *const znoise.FnlGenerator, sea_rift_gen: *const znoise.FnlGenerator, x: f32, z: f32) i16 {
     const noise1 = gen1.noise2(x, z) * 64;
@@ -644,164 +767,164 @@ pub fn generateNoise3D(world: *World, gpa: std.mem.Allocator, chunk: *Chunk, gen
     }
 }
 
-pub fn generateIndirectLight(chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]u32) !void {
-    for (0..Chunk.SIZE) |x| {
-        for (0..Chunk.SIZE) |z| {
-            const idx = x * Chunk.SIZE + z;
-            const air_column = chunk.air_bitset[idx];
+// pub fn generateIndirectLight(chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]u32) !void {
+//     for (0..Chunk.SIZE) |x| {
+//         for (0..Chunk.SIZE) |z| {
+//             const idx = x * Chunk.SIZE + z;
+//             const air_column = chunk.air_bitset[idx];
 
-            var indirect_light_column = air_column;
-            for (1..Chunk.SIZE) |y| {
-                indirect_light_column |= (indirect_light_column >> @intCast(y));
-            }
+//             var indirect_light_column = air_column;
+//             for (1..Chunk.SIZE) |y| {
+//                 indirect_light_column |= (indirect_light_column >> @intCast(y));
+//             }
 
-            indirect_light_bitset[idx] = indirect_light_column;
-        }
-    }
-}
+//             indirect_light_bitset[idx] = indirect_light_column;
+//         }
+//     }
+// }
 
-pub fn continueIndirectLight(world: *World, chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]u32) !void {
-    for (0..Chunk.SIZE) |x| {
-        for (0..Chunk.SIZE) |z| {
-            const idx = x * Chunk.SIZE + z;
-            const air_column = chunk.air_bitset[idx];
+// pub fn continueIndirectLight(world: *World, chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]u32) !void {
+//     for (0..Chunk.SIZE) |x| {
+//         for (0..Chunk.SIZE) |z| {
+//             const idx = x * Chunk.SIZE + z;
+//             const air_column = chunk.air_bitset[idx];
 
-            const top_indirect_light_column = indirect_light_bitset[idx];
+//             const top_indirect_light_column = indirect_light_bitset[idx];
 
-            var indirect_light_column: u32 = 0xFF_FF_FF_FF;
-            if (top_indirect_light_column & 1 == 0) {
-                const water_column = chunk.water_bitset[idx];
+//             var indirect_light_column: u32 = 0xFF_FF_FF_FF;
+//             if (top_indirect_light_column & 1 == 0) {
+//                 const water_column = chunk.water_bitset[idx];
 
-                if (((water_column >> Chunk.EDGE) & 1) == 1) {
-                    var up_neighbor_chunk_pos = chunk.pos;
-                    up_neighbor_chunk_pos.y += 1;
+//                 if (((water_column >> Chunk.EDGE) & 1) == 1) {
+//                     var up_neighbor_chunk_pos = chunk.pos;
+//                     up_neighbor_chunk_pos.y += 1;
 
-                    const world_pos = WorldPos.from(
-                        up_neighbor_chunk_pos,
-                        .{
-                            .x = @intCast(x),
-                            .y = 0,
-                            .z = @intCast(z),
-                        },
-                    );
+//                     const world_pos = WorldPos.from(
+//                         up_neighbor_chunk_pos,
+//                         .{
+//                             .x = @intCast(x),
+//                             .y = 0,
+//                             .z = @intCast(z),
+//                         },
+//                     );
 
-                    const light = Light{
-                        .red = 0,
-                        .green = 0,
-                        .blue = 0,
-                        .indirect = 15,
-                    };
+//                     const light = Light{
+//                         .red = 0,
+//                         .green = 0,
+//                         .blue = 0,
+//                         .indirect = 15,
+//                     };
 
-                    _ = try world.addLight(world_pos, light);
-                }
+//                     _ = try world.addLight(world_pos, light);
+//                 }
 
-                indirect_light_column = air_column;
+//                 indirect_light_column = air_column;
 
-                for (1..Chunk.SIZE) |y| {
-                    indirect_light_column |= (indirect_light_column >> @intCast(y));
-                }
-            }
+//                 for (1..Chunk.SIZE) |y| {
+//                     indirect_light_column |= (indirect_light_column >> @intCast(y));
+//                 }
+//             }
 
-            indirect_light_bitset[idx] = indirect_light_column;
-        }
-    }
-}
+//             indirect_light_bitset[idx] = indirect_light_column;
+//         }
+//     }
+// }
 
-pub fn fillChunkWithIndirectLight(world: *World, chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]u32, cave_bitset: *[Chunk.AREA]u32) !void {
-    for (0..Chunk.SIZE) |x| {
-        for (0..Chunk.SIZE) |z| {
-            const idx = x * Chunk.SIZE + z;
-            const air_column = chunk.air_bitset[idx];
-            const indirect_light_column = indirect_light_bitset[idx];
+// pub fn fillChunkWithIndirectLight(world: *World, chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]u32, cave_bitset: *[Chunk.AREA]u32) !void {
+//     for (0..Chunk.SIZE) |x| {
+//         for (0..Chunk.SIZE) |z| {
+//             const idx = x * Chunk.SIZE + z;
+//             const air_column = chunk.air_bitset[idx];
+//             const indirect_light_column = indirect_light_bitset[idx];
 
-            const cave_column = air_column ^ indirect_light_column;
-            cave_bitset[idx] = cave_column;
-        }
-    }
+//             const cave_column = air_column ^ indirect_light_column;
+//             cave_bitset[idx] = cave_column;
+//         }
+//     }
 
-    for (0..Chunk.SIZE) |x| {
-        for (0..Chunk.SIZE) |z| {
-            const idx = x * Chunk.SIZE + z;
+//     for (0..Chunk.SIZE) |x| {
+//         for (0..Chunk.SIZE) |z| {
+//             const idx = x * Chunk.SIZE + z;
 
-            const indirect_light_column = indirect_light_bitset[idx];
-            const inverted_indirect_light_column = ~indirect_light_column;
+//             const indirect_light_column = indirect_light_bitset[idx];
+//             const inverted_indirect_light_column = ~indirect_light_column;
 
-            const top_water_column = chunk.water_bitset[idx] << 1;
-            const cave_column = cave_bitset[idx];
+//             const top_water_column = chunk.water_bitset[idx] << 1;
+//             const cave_column = cave_bitset[idx];
 
-            var west_water_column = top_water_column;
-            var west_cave_column = cave_column;
-            if (x != 0) {
-                const west_idx = (x - 1) * Chunk.SIZE + z;
+//             var west_water_column = top_water_column;
+//             var west_cave_column = cave_column;
+//             if (x != 0) {
+//                 const west_idx = (x - 1) * Chunk.SIZE + z;
 
-                west_water_column = chunk.water_bitset[west_idx];
-                west_cave_column = cave_bitset[west_idx];
-            }
+//                 west_water_column = chunk.water_bitset[west_idx];
+//                 west_cave_column = cave_bitset[west_idx];
+//             }
 
-            var east_water_column = top_water_column;
-            var east_cave_column = cave_column;
-            if (x != Chunk.EDGE) {
-                const east_idx = (x + 1) * Chunk.SIZE + z;
+//             var east_water_column = top_water_column;
+//             var east_cave_column = cave_column;
+//             if (x != Chunk.EDGE) {
+//                 const east_idx = (x + 1) * Chunk.SIZE + z;
 
-                east_water_column = chunk.water_bitset[east_idx];
-                east_cave_column = cave_bitset[east_idx];
-            }
+//                 east_water_column = chunk.water_bitset[east_idx];
+//                 east_cave_column = cave_bitset[east_idx];
+//             }
 
-            var north_water_column = top_water_column;
-            var north_cave_column = cave_column;
-            if (z != 0) {
-                const north_idx = x * Chunk.SIZE + z - 1;
+//             var north_water_column = top_water_column;
+//             var north_cave_column = cave_column;
+//             if (z != 0) {
+//                 const north_idx = x * Chunk.SIZE + z - 1;
 
-                north_water_column = chunk.water_bitset[north_idx];
-                north_cave_column = cave_bitset[north_idx];
-            }
+//                 north_water_column = chunk.water_bitset[north_idx];
+//                 north_cave_column = cave_bitset[north_idx];
+//             }
 
-            var south_water_column = top_water_column;
-            var south_cave_column = cave_column;
-            if (z != Chunk.EDGE) {
-                const south_idx = x * Chunk.SIZE + z + 1;
+//             var south_water_column = top_water_column;
+//             var south_cave_column = cave_column;
+//             if (z != Chunk.EDGE) {
+//                 const south_idx = x * Chunk.SIZE + z + 1;
 
-                south_water_column = chunk.water_bitset[south_idx];
-                south_cave_column = cave_bitset[south_idx];
-            }
+//                 south_water_column = chunk.water_bitset[south_idx];
+//                 south_cave_column = cave_bitset[south_idx];
+//             }
 
-            const water_neighbors_column = top_water_column | west_water_column | east_water_column | north_water_column | south_water_column;
-            const cave_neighbors_column = west_cave_column | east_cave_column | north_cave_column | south_cave_column;
+//             const water_neighbors_column = top_water_column | west_water_column | east_water_column | north_water_column | south_water_column;
+//             const cave_neighbors_column = west_cave_column | east_cave_column | north_cave_column | south_cave_column;
 
-            const neighbors_column = cave_neighbors_column | water_neighbors_column;
-            const edges_column = neighbors_column & inverted_indirect_light_column;
+//             const neighbors_column = cave_neighbors_column | water_neighbors_column;
+//             const edges_column = neighbors_column & inverted_indirect_light_column;
 
-            for (0..Chunk.SIZE) |y| {
-                const local_pos = Chunk.LocalPos{
-                    .x = @intCast(x),
-                    .y = @intCast(y),
-                    .z = @intCast(z),
-                };
+//             for (0..Chunk.SIZE) |y| {
+//                 const local_pos = Chunk.LocalPos{
+//                     .x = @intCast(x),
+//                     .y = @intCast(y),
+//                     .z = @intCast(z),
+//                 };
 
-                if (((indirect_light_column >> @intCast(y)) & 1) == 0) {
-                    const light = Light{
-                        .red = 0,
-                        .green = 0,
-                        .blue = 0,
-                        .indirect = 15,
-                    };
+//                 if (((indirect_light_column >> @intCast(y)) & 1) == 0) {
+//                     const light = Light{
+//                         .red = 0,
+//                         .green = 0,
+//                         .blue = 0,
+//                         .indirect = 15,
+//                     };
 
-                    chunk.setLight(local_pos, light);
+//                     chunk.setLight(local_pos, light);
 
-                    if (((edges_column >> @intCast(y)) & 1) == 1) {
-                        try world.light_addition_queue.writeItem(.{
-                            .world_pos = WorldPos.from(chunk.pos, local_pos),
-                            .light = light,
-                        });
-                    }
-                }
-            }
-        }
-    }
-}
+//                     if (((edges_column >> @intCast(y)) & 1) == 1) {
+//                         try world.light_addition_queue.writeItem(.{
+//                             .world_pos = WorldPos.from(chunk.pos, local_pos),
+//                             .light = light,
+//                         });
+//                     }
+//                 }
+//             }
+//         }
+//     }
+// }
 
 pub fn getLight(world: *World, world_pos: WorldPos) !Light {
-    const chunk = try world.getChunk(world_pos.toChunkPos());
+    const chunk = world.getChunk(world_pos.toChunkPos());
 
     return chunk.getLight(world_pos.toLocalPos());
 }
@@ -945,7 +1068,7 @@ pub const NeighborChunks6 = struct {
     }
 };
 
-pub fn getNeighborChunks6(world: *const World, chunk_pos: Chunk.Pos) NeighborChunks6 {
+pub fn getNeighborChunks6(world: World, chunk_pos: Chunk.Pos) NeighborChunks6 {
     var chunks: std.EnumArray(Dir, ?*Chunk) = .initUndefined();
 
     inline for (Dir.values) |dir| {
@@ -1005,7 +1128,7 @@ pub const NeighborChunks27 = struct {
     };
 };
 
-pub fn getNeighborChunks27(world: *const World, chunk_pos: Chunk.Pos) NeighborChunks27 {
+pub fn getNeighborChunks27(world: World, chunk_pos: Chunk.Pos) NeighborChunks27 {
     var chunks: std.EnumArray(NeighborChunks27.LocalPos, ?*Chunk) = .initUndefined();
 
     for (0..3) |_x| {
@@ -1143,7 +1266,7 @@ pub fn propagateLightAddition(world: *World, gpa: std.mem.Allocator) !void {
                     .light = light_to_enqueue_and_set,
                 });
 
-                try world.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_chunk.pos);
+                try world.chunks_which_need_to_generate_meshes.append(gpa, neighbor_chunk.pos);
             }
         }
     }
@@ -1202,7 +1325,7 @@ pub fn propagateLightRemoval(world: *World, gpa: std.mem.Allocator) !void {
                     .light = neighbor_light,
                 });
 
-                try world.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_chunk.pos);
+                try world.chunks_which_need_to_generate_meshes.append(gpa, neighbor_chunk.pos);
 
                 try debug.removal_nodes.data.append(gpa, neighbor_world_pos.toVec3f());
             }
@@ -1213,7 +1336,7 @@ pub fn propagateLightRemoval(world: *World, gpa: std.mem.Allocator) !void {
                     .light = light_to_enqueue_at_addition,
                 });
 
-                try world.chunks_which_need_to_regenerate_meshes.enqueue(gpa, neighbor_chunk.pos);
+                try world.chunks_which_need_to_generate_meshes.append(gpa, neighbor_chunk.pos);
 
                 try debug.addition_nodes.data.append(gpa, neighbor_world_pos.toVec3f());
             }

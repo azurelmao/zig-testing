@@ -24,6 +24,7 @@ const Dir = @import("dir.zig").Dir;
 const Light = @import("light.zig").Light;
 const ShaderStorageBufferWithArrayList = @import("shader_storage_buffer.zig").ShaderStorageBufferWithArrayList;
 const Vec3f = @import("vec3f.zig").Vec3f;
+const LightTexture = @import("LightTexture.zig");
 
 pub const std_options: std.Options = .{
     .log_level = .debug,
@@ -55,8 +56,10 @@ const Game = struct {
     shader_storage_buffers: ShaderStorageBuffers,
     offscreen_framebuffer: Framebuffer,
     text_manager: TextManager,
+
     world: World,
     world_mesh: WorldMesh,
+
     selected_block: World.RaycastResult,
     relative_selector_world_pos: World.Pos,
     inventory: []const Block,
@@ -111,8 +114,10 @@ const Game = struct {
             .shader_storage_buffers = shader_storage_buffers,
             .offscreen_framebuffer = offscreen_framebuffer,
             .text_manager = text_manager,
+
             .world = world,
             .world_mesh = world_mesh,
+
             .selected_block = selected_block,
             .relative_selector_world_pos = .{ .x = 0, .y = 0, .z = 0 },
             .inventory = inventory,
@@ -193,52 +198,52 @@ const Game = struct {
         var inventory: std.ArrayListUnmanaged(Block) = .empty;
 
         // Lamp lights
-        // for ([_]Light{
-        //     .{
-        //         .red = 15,
-        //         .green = 0,
-        //         .blue = 0,
-        //         .indirect = 0,
-        //     },
-        //     .{
-        //         .red = 0,
-        //         .green = 15,
-        //         .blue = 0,
-        //         .indirect = 0,
-        //     },
-        //     .{
-        //         .red = 0,
-        //         .green = 0,
-        //         .blue = 15,
-        //         .indirect = 0,
-        //     },
-        //     .{
-        //         .red = 15,
-        //         .green = 15,
-        //         .blue = 0,
-        //         .indirect = 0,
-        //     },
-        //     .{
-        //         .red = 15,
-        //         .green = 0,
-        //         .blue = 15,
-        //         .indirect = 0,
-        //     },
-        //     .{
-        //         .red = 0,
-        //         .green = 15,
-        //         .blue = 15,
-        //         .indirect = 0,
-        //     },
-        //     .{
-        //         .red = 15,
-        //         .green = 15,
-        //         .blue = 15,
-        //         .indirect = 0,
-        //     },
-        // }) |light| {
-        //     try inventory.append(gpa, .init(.lamp, .{ .lamp = .{ .light = light } }));
-        // }
+        for ([_]Light{
+            .{
+                .red = 15,
+                .green = 0,
+                .blue = 0,
+                .indirect = 0,
+            },
+            .{
+                .red = 0,
+                .green = 15,
+                .blue = 0,
+                .indirect = 0,
+            },
+            .{
+                .red = 0,
+                .green = 0,
+                .blue = 15,
+                .indirect = 0,
+            },
+            .{
+                .red = 15,
+                .green = 15,
+                .blue = 0,
+                .indirect = 0,
+            },
+            .{
+                .red = 15,
+                .green = 0,
+                .blue = 15,
+                .indirect = 0,
+            },
+            .{
+                .red = 0,
+                .green = 15,
+                .blue = 15,
+                .indirect = 0,
+            },
+            .{
+                .red = 15,
+                .green = 15,
+                .blue = 15,
+                .indirect = 0,
+            },
+        }) |light| {
+            try inventory.append(gpa, .init(.lamp, .{ .lamp = .{ .light = light } }));
+        }
 
         try inventory.append(gpa, .initNone(.stone));
         try inventory.append(gpa, .initNone(.glass));
@@ -279,7 +284,7 @@ const Game = struct {
                 });
                 line += 1;
 
-                if (game.world.getLight(world_pos.add(World.Pos.OFFSETS[dir.idx()]))) |light| {
+                if (game.world.getLightOrNull(world_pos.add(World.Pos.OFFSETS[dir.idx()]))) |light| {
                     try game.text_manager.append(gpa, .{
                         .pixel_x = 0,
                         .pixel_y = line * 6,
@@ -291,7 +296,7 @@ const Game = struct {
                         }),
                     });
                     line += 1;
-                } else |_| {
+                } else {
                     try game.text_manager.append(gpa, .{
                         .pixel_x = 0,
                         .pixel_y = line * 6,
@@ -740,18 +745,59 @@ const Game = struct {
             debug.upload_nodes = false;
         }
 
-        var upload_mesh = false;
-        while (game.world.chunks_which_need_to_regenerate_meshes.dequeue()) |chunk_pos| {
-            if (game.world.getChunkOrNull(chunk_pos) == null) continue;
+        try game.world.generateChunks(gpa, game.camera);
 
-            game.world_mesh.invalidateChunkMesh(chunk_pos);
+        const upload_mesh = game.world.chunks_which_need_to_generate_meshes.count() != 0;
+
+        for (game.world.chunks_which_need_to_generate_meshes.items()) |chunk_pos| {
+            _ = game.world.getChunk(chunk_pos);
+
+            if (game.world_mesh.hasChunkMesh(chunk_pos)) {
+                game.world_mesh.invalidateChunkMesh(chunk_pos);
+            } else {
+                try game.world_mesh.putChunkMesh(gpa, chunk_pos, .{ .light_texture = .init() });
+            }
+
             try game.world_mesh.generateChunkMesh(gpa, &game.world, chunk_pos);
-
-            upload_mesh = true;
         }
 
+        if (upload_mesh) {
+            try game.world.propagateLightRemoval(gpa);
+            try game.world.propagateLightAddition(gpa);
+        }
+
+        for (game.world.chunks_which_need_to_generate_meshes.items()) |chunk_pos| {
+            for (0..3) |x_usize| {
+                const x = @as(i11, @intCast(x_usize)) - 1;
+
+                for (0..3) |y_usize| {
+                    const y = @as(i11, @intCast(y_usize)) - 1;
+
+                    for (0..3) |z_usize| {
+                        const z = @as(i11, @intCast(z_usize)) - 1;
+
+                        const neighbor_chunk_pos = chunk_pos.add(.{ .x = x, .y = y, .z = z });
+
+                        if (game.world.chunks_which_need_to_generate_meshes.contains(neighbor_chunk_pos)) continue;
+                        if (!game.world.hasChunk(neighbor_chunk_pos)) continue;
+
+                        try game.world_mesh.chunk_meshes_which_need_to_upload_light_texture_overlaps.append(gpa, neighbor_chunk_pos);
+                    }
+                }
+            }
+
+            try game.world_mesh.uploadLightTexture(game.world, chunk_pos);
+        }
+
+        for (game.world_mesh.chunk_meshes_which_need_to_upload_light_texture_overlaps.items()) |chunk_pos| {
+            try game.world_mesh.uploadLightTextureOverlaps(game.world, chunk_pos);
+        }
+
+        game.world.chunks_which_need_to_generate_meshes.clearRetainingCapacity();
+        game.world_mesh.chunk_meshes_which_need_to_upload_light_texture_overlaps.clearRetainingCapacity();
+
         if (shared_flags.calc_projection_matrix or shared_flags.calc_view_matrix or shared_flags.action != .none) {
-            try game.world_mesh.generateVisibleChunkMeshes(gpa, &game.world, &game.camera);
+            try game.world_mesh.generateVisibleChunkMeshes(gpa, game.world, game.camera);
             try game.world_mesh.generateCommands(gpa);
             game.world_mesh.uploadCommands();
         }
@@ -774,11 +820,15 @@ const Game = struct {
             if (world_mesh_layer.command.data.items.len == 0) break :skip;
 
             world_mesh_layer.mesh.ssbo.bind(1);
-            world_mesh_layer.chunk_mesh_pos.ssbo.bind(2);
-            world_mesh_layer.light_textures.ssbo.bind(16);
+            world_mesh_layer.command.ssbo.bind(2);
             world_mesh_layer.command.ssbo.bindAsIndirectBuffer();
 
-            gl.MultiDrawArraysIndirect(gl.TRIANGLES, null, @intCast(world_mesh_layer.command.data.items.len), 0);
+            gl.MultiDrawArraysIndirect(
+                gl.TRIANGLES,
+                null,
+                @intCast(world_mesh_layer.command.data.items.len),
+                world_mesh_layer.command.ssbo.stride,
+            );
         }
 
         // game.shader_programs.chunks_bb.bind();
@@ -803,7 +853,7 @@ const Game = struct {
         gl.BlitNamedFramebuffer(0, game.offscreen_framebuffer.framebuffer_handle, 0, 0, game.window.width, game.window.height, 0, 0, game.window.width, game.window.height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
 
         if (game.settings.chunk_borders) {
-            game.shader_programs.chunks_debug.bind();
+            game.shader_programs.chunk_borders.bind();
             {
                 gl.Enable(gl.POLYGON_OFFSET_LINE);
                 defer gl.Disable(gl.POLYGON_OFFSET_LINE);
@@ -814,7 +864,10 @@ const Game = struct {
                 gl.Enable(gl.LINE_SMOOTH);
                 defer gl.Disable(gl.LINE_SMOOTH);
 
-                gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(game.world_mesh.visible_chunk_mesh_pos.data.items.len));
+                game.shader_storage_buffers.chunk_bounding_box_lines.bind(1);
+                debug.visible_chunk_mesh_positions.ssbo.bind(2);
+
+                gl.DrawArraysInstanced(gl.LINES, 0, 36, @intCast(debug.visible_chunk_mesh_positions.data.items.len));
             }
         }
 
@@ -833,34 +886,34 @@ const Game = struct {
             }
         }
 
-        if (game.settings.light_removal_nodes or game.settings.light_addition_nodes) {
-            game.shader_programs.debug_nodes.bind();
-            {
-                gl.Enable(gl.POLYGON_OFFSET_LINE);
-                defer gl.Disable(gl.POLYGON_OFFSET_LINE);
+        // if (game.settings.light_removal_nodes or game.settings.light_addition_nodes) {
+        //     game.shader_programs.debug_nodes.bind();
+        //     {
+        //         gl.Enable(gl.POLYGON_OFFSET_LINE);
+        //         defer gl.Disable(gl.POLYGON_OFFSET_LINE);
 
-                gl.PolygonOffset(-2.0, 1.0);
-                defer gl.PolygonOffset(0.0, 0.0);
+        //         gl.PolygonOffset(-2.0, 1.0);
+        //         defer gl.PolygonOffset(0.0, 0.0);
 
-                gl.Enable(gl.LINE_SMOOTH);
-                defer gl.Disable(gl.LINE_SMOOTH);
+        //         gl.Enable(gl.LINE_SMOOTH);
+        //         defer gl.Disable(gl.LINE_SMOOTH);
 
-                gl.DepthFunc(gl.LEQUAL);
-                defer gl.DepthFunc(gl.LESS);
+        //         gl.DepthFunc(gl.LEQUAL);
+        //         defer gl.DepthFunc(gl.LESS);
 
-                if (game.settings.light_removal_nodes) {
-                    game.shader_programs.debug_nodes.setUniform3f("uColor", 1, 0, 0);
-                    debug.removal_nodes.ssbo.bind(15);
-                    gl.DrawArraysInstanced(gl.LINES, 0, BlockVolumeScheme.FULL_LEN, @intCast(debug.removal_nodes.data.items.len));
-                }
+        //         if (game.settings.light_removal_nodes) {
+        //             game.shader_programs.debug_nodes.setUniform3f("uColor", 1, 0, 0);
+        //             debug.removal_nodes.ssbo.bind(15);
+        //             gl.DrawArraysInstanced(gl.LINES, 0, BlockVolumeScheme.FULL_LEN, @intCast(debug.removal_nodes.data.items.len));
+        //         }
 
-                if (game.settings.light_addition_nodes) {
-                    game.shader_programs.debug_nodes.setUniform3f("uColor", 0, 0, 1);
-                    debug.addition_nodes.ssbo.bind(15);
-                    gl.DrawArraysInstanced(gl.LINES, 0, BlockVolumeScheme.FULL_LEN, @intCast(debug.addition_nodes.data.items.len));
-                }
-            }
-        }
+        //         if (game.settings.light_addition_nodes) {
+        //             game.shader_programs.debug_nodes.setUniform3f("uColor", 0, 0, 1);
+        //             debug.addition_nodes.ssbo.bind(15);
+        //             gl.DrawArraysInstanced(gl.LINES, 0, BlockVolumeScheme.FULL_LEN, @intCast(debug.addition_nodes.data.items.len));
+        //         }
+        //     }
+        // }
 
         if (game.selected_block.block) |block| {
             game.shader_programs.selected_block.bind();
@@ -882,23 +935,23 @@ const Game = struct {
             gl.DrawArrays(gl.LINES, @intCast(index_and_len.index), @intCast(index_and_len.len));
         }
 
-        if (game.settings.relative_selector) {
-            game.shader_programs.relative_selector.bind();
+        // if (game.settings.relative_selector) {
+        //     game.shader_programs.relative_selector.bind();
 
-            gl.Enable(gl.POLYGON_OFFSET_LINE);
-            defer gl.Disable(gl.POLYGON_OFFSET_LINE);
+        //     gl.Enable(gl.POLYGON_OFFSET_LINE);
+        //     defer gl.Disable(gl.POLYGON_OFFSET_LINE);
 
-            gl.PolygonOffset(-2.0, 1.0);
-            defer gl.PolygonOffset(0.0, 0.0);
+        //     gl.PolygonOffset(-2.0, 1.0);
+        //     defer gl.PolygonOffset(0.0, 0.0);
 
-            gl.Enable(gl.LINE_SMOOTH);
-            defer gl.Disable(gl.LINE_SMOOTH);
+        //     gl.Enable(gl.LINE_SMOOTH);
+        //     defer gl.Disable(gl.LINE_SMOOTH);
 
-            gl.DepthFunc(gl.LEQUAL);
-            defer gl.DepthFunc(gl.LESS);
+        //     gl.DepthFunc(gl.LEQUAL);
+        //     defer gl.DepthFunc(gl.LESS);
 
-            gl.DrawArrays(gl.LINES, 0, BlockVolumeScheme.FULL_LEN);
-        }
+        //     gl.DrawArrays(gl.LINES, 0, BlockVolumeScheme.FULL_LEN);
+        // }
 
         game.shader_programs.crosshair.bind();
         gl.DrawArrays(gl.TRIANGLES, 0, 6);
@@ -922,67 +975,58 @@ pub fn main() !void {
 
     try debug.init(gpa);
 
-    try game.world.generate(gpa);
+    // for (0..8) |x| {
+    //     for (0..8) |z| {
+    //         try game.world.placeBlock(
+    //             gpa,
+    //             .{ .x = @intCast(x + 5), .y = 6, .z = @intCast(z + 5) },
+    //             .initNone(.stone),
+    //         );
+    //     }
+    // }
 
-    for (0..8) |x| {
-        for (0..8) |z| {
-            try game.world.placeBlock(
-                gpa,
-                .{ .x = @intCast(x + 5), .y = 6, .z = @intCast(z + 5) },
-                .initNone(.stone),
-            );
-        }
-    }
+    // for (0..4) |x| {
+    //     for (0..4) |z| {
+    //         try game.world.placeBlock(
+    //             gpa,
+    //             .{ .x = @intCast(x + 7), .y = 7, .z = @intCast(z + 7) },
+    //             .initNone(.stone),
+    //         );
+    //     }
+    // }
 
-    for (0..4) |x| {
-        for (0..4) |z| {
-            try game.world.placeBlock(
-                gpa,
-                .{ .x = @intCast(x + 7), .y = 7, .z = @intCast(z + 7) },
-                .initNone(.stone),
-            );
-        }
-    }
+    // for (0..8) |x| {
+    //     for (0..8) |z| {
+    //         try game.world.placeBlock(
+    //             gpa,
+    //             .{ .x = @intCast(x + 5), .y = 11, .z = @intCast(z + 5) },
+    //             .initNone(.stone),
+    //         );
+    //     }
+    // }
 
-    for (0..8) |x| {
-        for (0..8) |z| {
-            try game.world.placeBlock(
-                gpa,
-                .{ .x = @intCast(x + 5), .y = 11, .z = @intCast(z + 5) },
-                .initNone(.stone),
-            );
-        }
-    }
-
-    for (0..4) |x| {
-        for (0..4) |z| {
-            try game.world.placeBlock(
-                gpa,
-                .{ .x = @intCast(x + 7), .y = 10, .z = @intCast(z + 7) },
-                .initNone(.stone),
-            );
-        }
-    }
+    // for (0..4) |x| {
+    //     for (0..4) |z| {
+    //         try game.world.placeBlock(
+    //             gpa,
+    //             .{ .x = @intCast(x + 7), .y = 10, .z = @intCast(z + 7) },
+    //             .initNone(.stone),
+    //         );
+    //     }
+    // }
 
     // try game.world.propagateLights(gpa, &game.debug);
-    try game.world.propagateLightAddition(gpa);
+    // try game.world.propagateLightAddition(gpa);
     // game.debug.removal_nodes.data.clearRetainingCapacity();
     // game.debug.addition_nodes.data.clearRetainingCapacity();
 
-    try game.world_mesh.generateMesh(gpa, &game.world);
-    try game.world_mesh.generateVisibleChunkMeshes(gpa, &game.world, &game.camera);
-    try game.world_mesh.generateLightTextures(gpa, &game.world);
-    try game.world_mesh.generateCommands(gpa);
+    // try game.world_mesh.generateMesh(gpa, &game.world);
+    // try game.world_mesh.generateVisibleChunkMeshes(gpa, &game.world, &game.camera);
+    // try game.world_mesh.generateLightTextures(gpa, &game.world);
+    // try game.world_mesh.generateCommands(gpa);
 
-    game.world_mesh.uploadMesh();
-    game.world_mesh.uploadCommands();
-
-    while (true) {
-        const err = gl.GetError();
-        if (err == gl.NO_ERROR) break;
-
-        std.log.err("{}", .{err});
-    }
+    // game.world_mesh.uploadMesh();
+    // game.world_mesh.uploadCommands();
 
     var delta_time: gl.float = 1.0 / 60.0;
     var timer: std.time.Timer = try .start();
@@ -996,6 +1040,8 @@ pub fn main() !void {
             .selector_changed = false,
             .action = .none,
         };
+
+        game.camera.prev_position = game.camera.position;
 
         try game.processWindowEvents(delta_time, &shared_flags);
         game.processInput(delta_time, &shared_flags);

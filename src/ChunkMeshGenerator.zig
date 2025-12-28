@@ -9,7 +9,7 @@ const Dir = @import("dir.zig").Dir;
 const World = @import("World.zig");
 const NeighborChunks6 = World.NeighborChunks6;
 
-const ChunkMesh = @This();
+const ChunkMeshGenerator = @This();
 
 layers: [BlockLayer.len]ChunkMeshLayer,
 
@@ -29,9 +29,9 @@ pub const PerFaceData = packed struct(u64) {
     _: u28 = 0,
 };
 
-pub const empty: ChunkMesh = .{ .layers = @splat(.empty) };
+pub const empty: ChunkMeshGenerator = .{ .layers = @splat(.empty) };
 
-pub fn generate(chunk_mesh: *ChunkMesh, gpa: std.mem.Allocator, chunk: *Chunk, neighbor_chunks: *const NeighborChunks6) !void {
+pub fn generate(chunk_mesh: *ChunkMeshGenerator, gpa: std.mem.Allocator, chunk: *Chunk, neighbor_chunks: NeighborChunks6) !void {
     var chunk_mesh_layer: *ChunkMeshLayer = undefined;
 
     for (0..Chunk.SIZE) |x| {

@@ -2,35 +2,18 @@
 
 #extension GL_ARB_bindless_texture : require
 
-layout (binding = 16, std430) readonly buffer ssbo16 {
-    sampler3D sLightTextures[];
-};
-
 in vec2 pTextureUV;
 flat in uint pTextureIdx;
 flat in uint pIndirectLightTintIdx;
 flat in uint pNormal;
-flat in int pDrawId;
+flat in sampler3D pLightTexture;
 
 in vec3 pLocalModelPosition;
 in vec3 pWorldPosition;
 
 layout (location = 0) out vec4 oColor;
 layout (binding = 0) uniform sampler2DArray uTexture;
-// layout (binding = 3) uniform sampler3D uLightTexture; // temporary
-layout (binding = 4) uniform sampler2D uIndirectLightTexture;
 uniform vec3 uCameraPosition;
-
-vec4 linearFog(vec4 inColor, float vertexDistance, float fogStart, float fogEnd, vec4 fogColor) {
-    if (vertexDistance <= fogStart) {
-        return inColor;
-    }
-
-    float fogValue = vertexDistance < fogEnd ? smoothstep(fogStart, fogEnd, vertexDistance) : 1.0;
-    return vec4(mix(inColor.rgb, fogColor.rgb, fogValue * fogColor.a), inColor.a);
-}
-
-const vec4 FogColor = vec4(0.47843137254901963, 0.6588235294117647, 0.9921568627450981, 1.0);
 
 const float[6] NormalLight = float[](
     0.6,
@@ -64,10 +47,20 @@ const vec3[2] IndirectLightTint = vec3[](
     vec3(207, 221, 255) / 255.0
 );
 
+const vec4 FOG_COLOR = vec4(vec3(122, 168, 253) / 255.0, 1.0);
 const float CHUNK_SIZE = 32.0;
 const float OVERLAP_WIDTH = 1.0;
 const float LIGHT_TEXTURE_SIZE = CHUNK_SIZE + OVERLAP_WIDTH * 2.0;
 const float LIGHT_TEXTURE_SIZE_INVERSE = 1.0 / LIGHT_TEXTURE_SIZE;
+
+vec4 linearFog(vec4 inColor, float vertexDistance, float fogStart, float fogEnd, vec4 fogColor) {
+    if (vertexDistance <= fogStart) {
+        return inColor;
+    }
+
+    float fogValue = vertexDistance < fogEnd ? smoothstep(fogStart, fogEnd, vertexDistance) : 1.0;
+    return vec4(mix(inColor.rgb, fogColor.rgb, fogValue * fogColor.a), inColor.a);
+}
 
 void main() {
     float normalLight;
@@ -79,8 +72,7 @@ void main() {
     }
 
     vec4 texColor = texture(uTexture, vec3(pTextureUV, pTextureIdx));
-    vec4 light = texture(sLightTextures[pDrawId], (pLocalModelPosition + NormalOffset[pNormal] + OVERLAP_WIDTH) * LIGHT_TEXTURE_SIZE_INVERSE, 0).abgr;
-    // vec4 light = texture(uLightTexture, (pLocalModelPosition + NormalOffset[pNormal] + OVERLAP_WIDTH) * LIGHT_TEXTURE_SIZE_INVERSE, 0).abgr;
+    vec4 light = texture(pLightTexture, (pLocalModelPosition + NormalOffset[pNormal] + OVERLAP_WIDTH) * LIGHT_TEXTURE_SIZE_INVERSE, 0).abgr;
 
     vec3 blockLight = light.rgb;
     vec3 indirectLightTint = IndirectLightTint[pIndirectLightTintIdx];
@@ -89,7 +81,7 @@ void main() {
 
     vec4 color = vec4(texColor.rgb * newLight * normalLight, texColor.a);
 
-    oColor = linearFog(color, distance(uCameraPosition, pWorldPosition), 153.6, 691.2, FogColor);
+    oColor = linearFog(color, distance(uCameraPosition, pWorldPosition), 153.6, 691.2, FOG_COLOR);
 }
 
 // oXXX for output

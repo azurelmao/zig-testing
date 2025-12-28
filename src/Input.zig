@@ -5,14 +5,14 @@ const Input = @This();
 
 bindings: std.AutoHashMapUnmanaged(KeyBinding, KeyAction),
 
-/// Pressed keys will be held until they are released
-/// This is what continuous actions like movement should use
-/// Valid states are true (.press) and false (.release)
+/// Pressed keys will be held until they are released.
+/// This is what continuous actions like movement should use.
+/// Valid states are true (.press) and false (.release).
 cached_keys: std.EnumArray(KeyAction, bool),
 
-/// Pressed keys will be held until the next frame
-/// This is what text input or one-time actions like toggles should use
-/// Valid states are .press, .repeat, and .release
+/// Pressed keys will be held until the next frame.
+/// This is what text input or one-time actions like toggles should use.
+/// Valid states are .press, .repeat, and .release.
 uncached_keys: std.EnumArray(KeyAction, glfw.Action),
 
 pub fn init(gpa: std.mem.Allocator) !Input {
@@ -69,10 +69,16 @@ pub fn set(self: *Input, key_or_button: KeyOrButton, action: glfw.Action) void {
     }
 }
 
+/// Pressed keys will be held until they are released.
+/// This is what continuous actions like movement should use.
+/// Valid states are true (.press) and false (.release).
 pub fn getCached(self: *Input, key_action: KeyAction) bool {
     return self.cached_keys.get(key_action);
 }
 
+/// Pressed keys will be held until the next frame.
+/// This is what text input or one-time actions like toggles should use.
+/// Valid states are .press, .repeat, and .release.
 pub fn getUncached(self: *Input, key_action: KeyAction) glfw.Action {
     return self.uncached_keys.get(key_action);
 }

@@ -84,9 +84,12 @@ pub fn build(self: *TextManager, gpa: std.mem.Allocator, window_width: gl.sizei,
         }
     }
 
-    self.vertices.ssbo.upload(self.vertices.data.items) catch {
-        self.vertices.ssbo.resize(self.vertices.data.items.len, 6 * 20);
-        self.vertices.ssbo.upload(self.vertices.data.items) catch unreachable;
+    self.vertices.ssbo.upload(self.vertices.data.items) catch |err| switch (err) {
+        error.DataTooLarge => {
+            self.vertices.ssbo.resize(self.vertices.data.items.len, 6 * 20);
+            self.vertices.ssbo.upload(self.vertices.data.items) catch unreachable;
+        },
+        else => unreachable,
     };
 
     self.vertices.ssbo.bind(14);

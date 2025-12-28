@@ -9,6 +9,7 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
         len: usize,
         capacity: usize,
         flags: gl.bitfield,
+        stride: gl.sizei,
 
         pub fn init(capacity: usize, flags: gl.bitfield) Self {
             var handle: gl.uint = undefined;
@@ -25,6 +26,7 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
                 .len = 0,
                 .capacity = capacity,
                 .flags = flags,
+                .stride = @sizeOf(T),
             };
         }
 
@@ -50,6 +52,7 @@ pub fn ShaderStorageBuffer(comptime T: type) type {
                 .len = data.len,
                 .capacity = data.len,
                 .flags = flags,
+                .stride = @sizeOf(T),
             };
         }
 
@@ -121,6 +124,11 @@ pub fn ShaderStorageBufferWithArrayList(comptime T: type) type {
                 .data = try .initCapacity(gpa, capacity),
                 .ssbo = .initAndBind(index, capacity, flags),
             };
+        }
+
+        pub fn clearRetainingCapacity(self: *Self) void {
+            self.data.clearRetainingCapacity();
+            self.ssbo.len = 0;
         }
     };
 }

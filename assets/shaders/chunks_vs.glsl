@@ -15,9 +15,38 @@ layout (binding = 1, std430) readonly buffer ssbo1 {
     PerFaceData sPerFace[];
 };
 
-layout (binding = 2, std430) readonly buffer ssbo2 {
-    vec3 sChunkMeshPos[];
+struct PerCommandData {
+    uint count;
+    uint instanceCount;
+    uint firstVertex;
+    uint baseInstance;
+    
+    vec3 chunkMeshPosition;
+    float _pad1;
+
+    sampler3D lightTexture;
+    vec2 _pad2;
 };
+
+layout (binding = 2, std430) readonly buffer ssbo2 {
+    PerCommandData sPerCommandData[];
+};
+
+// per draw data
+layout (binding = 0, std140) uniform ubo0 {
+    mat4 uViewProjection;
+    vec3 uSelectedBlockPosition;
+    vec3 uSelectorPosition;
+};
+
+out vec2 pTextureUV;
+flat out uint pTextureIdx;
+flat out uint pIndirectLightTintIdx;
+flat out uint pNormal;
+flat out sampler3D pLightTexture;
+
+out vec3 pLocalModelPosition;
+out vec3 pWorldPosition;
 
 vec3 unpackLocalPosition(uint data) {
     float x = bitfieldExtract(data, 0, 5);
@@ -66,22 +95,11 @@ uint unpackTextureIdx(uint data) {
     return textureIdx;
 }
 
-layout (binding = 0, std140) uniform ubo0 {
-    mat4 uViewProjection;
-    vec3 uSelectedBlockPosition;
-};
-
-out vec2 pTextureUV;
-flat out uint pTextureIdx;
-flat out uint pNormal;
-flat out uint pIndirectLightTintIdx;
-flat out uint pLightTextureIdx;
-flat out int pDrawId;
-
-out vec3 pLocalModelPosition;
-out vec3 pWorldPosition;
-
 void main() {
+    PerCommandData perCommandData = sPerCommandData[gl_DrawID];
+    vec3 chunkMeshPosition = perCommandData.chunkMeshPosition;
+    sampler3D lightTexture = perCommandData.lightTexture;
+
     uint faceIdx = gl_VertexID / 6;
     PerFaceData perFaceData = sPerFace[faceIdx];
     
@@ -91,24 +109,24 @@ void main() {
     uint normal = unpackNormal(perFaceData.data2);
 
     uint vertexIdx = modelFaceIdx + (gl_VertexID % 6);
-
     uint perVertexData = sPerVertex[vertexIdx];
+
     vec3 modelPosition = unpackModelPosition(perVertexData) / 16.0;
     vec2 textureUV = unpackTextureUV(perVertexData);
     uint textureIdx = unpackTextureIdx(sPerVertex[modelFaceIdx + 6]); // because textureIdx is the 7th value for every face
     
+    vec3 localModelPosition = modelPosition + localPosition;
+    vec3 worldPosition = localModelPosition + chunkMeshPosition;
+
     pTextureUV = textureUV / 16.0;
     pTextureIdx = textureIdx;
     pIndirectLightTintIdx = indirectLightTintIdx;
-    pLightTextureIdx = gl_BaseInstance;
     pNormal = normal;
-    pDrawId = gl_DrawID;
+    pLightTexture = lightTexture;
 
-    vec4 worldPosition = vec4(modelPosition + localPosition + sChunkMeshPos[gl_DrawID], 1.0);
-
-    pLocalModelPosition = modelPosition + localPosition;
-    pWorldPosition = worldPosition.xyz;
-    gl_Position = uViewProjection * worldPosition;
+    pLocalModelPosition = localModelPosition;
+    pWorldPosition = worldPosition;
+    gl_Position = uViewProjection * vec4(worldPosition, 1);
 }
 
 // iXXX for input

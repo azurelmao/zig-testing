@@ -7,6 +7,7 @@ layout (binding = 0, std430) readonly buffer ssbo0 {
 layout (binding = 0, std140) uniform ubo0 {
     mat4 uViewProjection;
     vec3 uSelectedBlockPosition;
+    vec3 uSelectorPosition;
 };
 
 uniform uint uFaceIdx;

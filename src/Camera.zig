@@ -7,6 +7,7 @@ const Chunk = @import("Chunk.zig");
 const Camera = @This();
 
 position: Vec3f,
+prev_position: Vec3f,
 direction: Vec3f,
 horizontal_direction: Vec3f,
 right: Vec3f,
@@ -64,6 +65,7 @@ pub fn init(position: Vec3f, yaw: gl.float, pitch: gl.float, aspect_ratio: gl.fl
     }
 
     return .{
+        .prev_position = position,
         .position = position,
         .direction = direction,
         .horizontal_direction = horizontal_direction,
