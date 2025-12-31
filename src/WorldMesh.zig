@@ -13,13 +13,13 @@ const Dir = @import("dir.zig").Dir;
 const Light = @import("light.zig").Light;
 const LightTexture = @import("LightTexture.zig");
 const debug = @import("debug.zig");
-const DedupArraylist = @import("dedup_arraylist.zig").DedupArraylist;
+const DedupArrayList = @import("dedup_arraylist.zig").DedupArrayList;
 
 const WorldMesh = @This();
 
 chunk_mesh_generator: ChunkMeshGenerator,
 layers: [BlockLayer.len]WorldMeshLayer,
-chunk_meshes_which_need_to_upload_light_texture_overlaps: DedupArraylist(Chunk.Pos),
+chunk_meshes_which_need_to_upload_light_texture_overlaps: DedupArrayList(Chunk.Pos),
 visible_chunk_meshes: std.ArrayListUnmanaged(VisibleChunkMesh),
 chunk_meshes: std.AutoArrayHashMapUnmanaged(Chunk.Pos, ChunkMesh),
 
@@ -75,10 +75,11 @@ pub const WorldMeshLayer = struct {
     const SIX_CHUNK_MESHES = 6;
     const SIX_FACES = 6;
     const AVERAGE_CHUNK_MESH_SIZE = 3000;
+    const AVERAGE_WORLD_VOLUME = 8 * 8 * 4;
 
-    pub const INITIAL_MESH_SIZE = World.VOLUME * AVERAGE_CHUNK_MESH_SIZE;
+    pub const INITIAL_MESH_SIZE = AVERAGE_WORLD_VOLUME * AVERAGE_CHUNK_MESH_SIZE;
     pub const MESH_INCREMENT_SIZE = SIX_CHUNK_MESHES * AVERAGE_CHUNK_MESH_SIZE;
-    pub const INITIAL_COMMAND_SIZE = World.VOLUME * 2 * SIX_FACES;
+    pub const INITIAL_COMMAND_SIZE = AVERAGE_WORLD_VOLUME * SIX_FACES;
     pub const COMMAND_INCREMENT_SIZE = SIX_CHUNK_MESHES * SIX_FACES;
 
     const Suballocation = struct {
@@ -95,7 +96,7 @@ pub const WorldMeshLayer = struct {
         };
     }
 
-    pub fn suballoc(world_mesh: *WorldMeshLayer, gpa: std.mem.Allocator, chunk_mesh_layer: *ChunkMeshLayer, chunk_pos: Chunk.Pos) !void {
+    pub fn suballoc(world_mesh_layer: *WorldMeshLayer, gpa: std.mem.Allocator, chunk_mesh_layer: *ChunkMeshLayer, chunk_pos: Chunk.Pos) !void {
         var total_suballocation_size: usize = 0;
         for (chunk_mesh_layer.faces) |chunk_mesh_face| {
             total_suballocation_size += chunk_mesh_face.items.len;
@@ -103,16 +104,16 @@ pub const WorldMeshLayer = struct {
 
         if (total_suballocation_size == 0) return;
 
-        const virtual_alloc = world_mesh.virtual_block.alloc(.{ .size = @intCast(total_suballocation_size) }) catch expr: {
-            try world_mesh.resize(gpa, world_mesh.mesh.data.items.len + total_suballocation_size + MESH_INCREMENT_SIZE);
+        const virtual_alloc = world_mesh_layer.virtual_block.alloc(.{ .size = @intCast(total_suballocation_size) }) catch expr: {
+            try world_mesh_layer.resize(gpa, world_mesh_layer.mesh.data.items.len + total_suballocation_size + MESH_INCREMENT_SIZE);
 
-            break :expr world_mesh.virtual_block.alloc(.{ .size = @intCast(total_suballocation_size) }) catch unreachable;
+            break :expr world_mesh_layer.virtual_block.alloc(.{ .size = @intCast(total_suballocation_size) }) catch unreachable;
         };
 
-        const virtual_alloc_info = world_mesh.virtual_block.allocInfo(virtual_alloc);
+        const virtual_alloc_info = world_mesh_layer.virtual_block.allocInfo(virtual_alloc);
 
-        if (virtual_alloc_info.offset + total_suballocation_size > world_mesh.mesh.data.items.len) {
-            try world_mesh.mesh.data.resize(gpa, virtual_alloc_info.offset + total_suballocation_size);
+        if (virtual_alloc_info.offset + total_suballocation_size > world_mesh_layer.mesh.data.items.len) {
+            try world_mesh_layer.mesh.data.resize(gpa, virtual_alloc_info.offset + total_suballocation_size);
         }
 
         var face_sizes: [6]usize = undefined;
@@ -121,7 +122,7 @@ pub const WorldMeshLayer = struct {
             const face_size = chunk_mesh_face.items.len;
 
             if (chunk_mesh_face.items.len > 0) {
-                @memcpy(world_mesh.mesh.data.items[offset .. offset + face_size], chunk_mesh_face.items);
+                @memcpy(world_mesh_layer.mesh.data.items[offset .. offset + face_size], chunk_mesh_face.items);
                 offset += face_size;
             }
 
@@ -133,20 +134,20 @@ pub const WorldMeshLayer = struct {
             .face_sizes = face_sizes,
         };
 
-        try world_mesh.chunk_pos_to_suballoc.put(gpa, chunk_pos, suballocation);
+        try world_mesh_layer.chunk_pos_to_suballoc.put(gpa, chunk_pos, suballocation);
     }
 
-    fn resize(world_mesh: *WorldMeshLayer, gpa: std.mem.Allocator, len: usize) !void {
+    fn resize(world_mesh_layer: *WorldMeshLayer, gpa: std.mem.Allocator, len: usize) !void {
         const new_virtual_block: vma.VirtualBlock = .init(.{ .size = len });
         const new_mesh_data = try gpa.alloc(ChunkMeshGenerator.PerFaceData, len);
         var new_chunk_pos_to_suballoc: std.AutoArrayHashMapUnmanaged(Chunk.Pos, Suballocation) = .empty;
 
-        var iter = world_mesh.chunk_pos_to_suballoc.iterator();
+        var iter = world_mesh_layer.chunk_pos_to_suballoc.iterator();
         while (iter.next()) |entry| {
             const chunk_pos = entry.key_ptr;
             const old_suballocation = entry.value_ptr;
 
-            const old_virtual_alloc_info = world_mesh.virtual_block.allocInfo(old_suballocation.virtual_alloc);
+            const old_virtual_alloc_info = world_mesh_layer.virtual_block.allocInfo(old_suballocation.virtual_alloc);
             const old_offset = old_virtual_alloc_info.offset;
             const size = old_virtual_alloc_info.size;
 
@@ -155,7 +156,7 @@ pub const WorldMeshLayer = struct {
             const new_virtual_alloc_info = new_virtual_block.allocInfo(new_virtual_alloc);
             const new_offset = new_virtual_alloc_info.offset;
 
-            @memcpy(new_mesh_data[new_offset .. new_offset + size], world_mesh.mesh.data.items[old_offset .. old_offset + size]);
+            @memcpy(new_mesh_data[new_offset .. new_offset + size], world_mesh_layer.mesh.data.items[old_offset .. old_offset + size]);
 
             const new_suballocation: Suballocation = .{
                 .virtual_alloc = new_virtual_alloc,
@@ -165,20 +166,20 @@ pub const WorldMeshLayer = struct {
             try new_chunk_pos_to_suballoc.put(gpa, chunk_pos.*, new_suballocation);
         }
 
-        world_mesh.virtual_block.deinit();
-        world_mesh.mesh.data.deinit(gpa);
-        world_mesh.chunk_pos_to_suballoc.deinit(gpa);
+        world_mesh_layer.virtual_block.deinit();
+        world_mesh_layer.mesh.data.deinit(gpa);
+        world_mesh_layer.chunk_pos_to_suballoc.deinit(gpa);
 
-        world_mesh.mesh.data = .fromOwnedSlice(new_mesh_data);
+        world_mesh_layer.mesh.data = .fromOwnedSlice(new_mesh_data);
 
-        world_mesh.virtual_block = new_virtual_block;
-        world_mesh.chunk_pos_to_suballoc = new_chunk_pos_to_suballoc;
+        world_mesh_layer.virtual_block = new_virtual_block;
+        world_mesh_layer.chunk_pos_to_suballoc = new_chunk_pos_to_suballoc;
     }
 
-    pub fn free(world_mesh: *WorldMeshLayer, chunk_pos: Chunk.Pos) void {
-        if (world_mesh.chunk_pos_to_suballoc.get(chunk_pos)) |suballocation| {
-            world_mesh.virtual_block.free(suballocation.virtual_alloc);
-            _ = world_mesh.chunk_pos_to_suballoc.orderedRemove(chunk_pos);
+    pub fn free(world_mesh_layer: *WorldMeshLayer, chunk_pos: Chunk.Pos) void {
+        if (world_mesh_layer.chunk_pos_to_suballoc.get(chunk_pos)) |suballocation| {
+            world_mesh_layer.virtual_block.free(suballocation.virtual_alloc);
+            _ = world_mesh_layer.chunk_pos_to_suballoc.orderedRemove(chunk_pos);
         }
     }
 };
@@ -304,6 +305,8 @@ pub fn invalidateChunkMesh(world_mesh: *WorldMesh, chunk_pos: Chunk.Pos) void {
     for (&world_mesh.layers) |*world_mesh_layer| {
         world_mesh_layer.free(chunk_pos);
     }
+
+    world_mesh.getChunkMesh(chunk_pos).light_texture.deinit();
 }
 
 pub fn generateVisibleChunkMeshes(world_mesh: *WorldMesh, gpa: std.mem.Allocator, world: World, camera: Camera) !void {

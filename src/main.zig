@@ -25,6 +25,7 @@ const Light = @import("light.zig").Light;
 const ShaderStorageBufferWithArrayList = @import("shader_storage_buffer.zig").ShaderStorageBufferWithArrayList;
 const Vec3f = @import("vec3f.zig").Vec3f;
 const LightTexture = @import("LightTexture.zig");
+const HashArrayList = @import("hash_arraylist.zig").HashArrayList;
 
 pub const std_options: std.Options = .{
     .log_level = .debug,
@@ -57,6 +58,7 @@ const Game = struct {
     offscreen_framebuffer: Framebuffer,
     text_manager: TextManager,
 
+    chunk_volume: HashArrayList(Chunk.Pos),
     world: World,
     world_mesh: WorldMesh,
 
@@ -115,6 +117,7 @@ const Game = struct {
             .offscreen_framebuffer = offscreen_framebuffer,
             .text_manager = text_manager,
 
+            .chunk_volume = .empty,
             .world = world,
             .world_mesh = world_mesh,
 
@@ -255,13 +258,40 @@ const Game = struct {
         return inventory.items;
     }
 
+    fn generateChunkVolume(game: *Game, gpa: std.mem.Allocator, camera: Camera) !void {
+        const prev_camera_chunk_pos = camera.prev_position.toChunkPos();
+        const camera_chunk_pos = camera.position.toChunkPos();
+
+        if (game.chunk_volume.count() != 0 and prev_camera_chunk_pos.equal(camera_chunk_pos)) return;
+
+        game.chunk_volume.clearRetainingCapacity();
+
+        const render_distance_usize: usize = 2;
+        const render_distance: i11 = @intCast(render_distance_usize);
+
+        for (0..render_distance_usize * 2) |x_usize| {
+            const x = @as(i11, @intCast(x_usize)) - render_distance;
+
+            for (0..render_distance_usize * 2) |z_usize| {
+                const z = @as(i11, @intCast(z_usize)) - render_distance;
+
+                for (0..render_distance_usize * 2) |y_usize| {
+                    const y = @as(i11, @intCast(y_usize)) - render_distance;
+                    const chunk_pos: Chunk.Pos = camera_chunk_pos.add(.{ .x = x, .y = y, .z = z });
+
+                    try game.chunk_volume.append(gpa, chunk_pos);
+                }
+            }
+        }
+    }
+
     fn appendRaycastText(game: *Game, gpa: std.mem.Allocator, original_line: i32) !i32 {
         const world_pos = game.selected_block.world_pos;
-        const dir = game.selected_block.dir;
+        const raycast_dir = game.selected_block.dir;
 
         var line = original_line;
 
-        switch (dir) {
+        switch (raycast_dir) {
             else => {
                 try game.text_manager.append(gpa, .{
                     .pixel_x = 0,
@@ -270,7 +300,7 @@ const Game = struct {
                         world_pos.x,
                         world_pos.y,
                         world_pos.z,
-                        @tagName(dir),
+                        @tagName(raycast_dir),
                     }),
                 });
                 line += 1;
@@ -284,7 +314,7 @@ const Game = struct {
                 });
                 line += 1;
 
-                if (game.world.getLightOrNull(world_pos.add(World.Pos.OFFSETS[dir.idx()]))) |light| {
+                if (game.world.getLightOrNull(world_pos.add(.getOffset(raycast_dir.toDir())))) |light| {
                     try game.text_manager.append(gpa, .{
                         .pixel_x = 0,
                         .pixel_y = line * 6,
@@ -316,7 +346,7 @@ const Game = struct {
                         world_pos.x,
                         world_pos.y,
                         world_pos.z,
-                        @tagName(dir),
+                        @tagName(raycast_dir),
                     }),
                 });
                 line += 1;
@@ -349,7 +379,7 @@ const Game = struct {
                         world_pos.x,
                         world_pos.y,
                         world_pos.z,
-                        @tagName(dir),
+                        @tagName(raycast_dir),
                     }),
                 });
                 line += 1;
@@ -692,7 +722,7 @@ const Game = struct {
                 const selected_dir = game.selected_block.dir;
                 if (selected_dir == .out_of_bounds or selected_dir == .inside) break :skip;
 
-                const world_pos = game.selected_block.world_pos.add(World.Pos.OFFSETS[selected_dir.idx()]);
+                const world_pos = game.selected_block.world_pos.add(.getOffset(selected_dir.toDir()));
                 if (game.world.getChunkOrNull(world_pos.toChunkPos()) == null) break :skip;
 
                 const block = game.inventory[game.selected_slot];
@@ -745,12 +775,14 @@ const Game = struct {
             debug.upload_nodes = false;
         }
 
-        try game.world.generateChunks(gpa, game.camera);
+        try game.generateChunkVolume(gpa, game.camera);
 
-        const upload_mesh = game.world.chunks_which_need_to_generate_meshes.count() != 0;
+        try game.world.generateChunks(gpa, game.chunk_volume);
 
-        for (game.world.chunks_which_need_to_generate_meshes.items()) |chunk_pos| {
-            _ = game.world.getChunk(chunk_pos);
+        var upload_mesh = false;
+
+        for (game.world.chunks_to_be_loaded.items()) |chunk_pos| {
+            std.debug.assert(game.world.hasChunk(chunk_pos));
 
             if (game.world_mesh.hasChunkMesh(chunk_pos)) {
                 game.world_mesh.invalidateChunkMesh(chunk_pos);
@@ -759,14 +791,19 @@ const Game = struct {
             }
 
             try game.world_mesh.generateChunkMesh(gpa, &game.world, chunk_pos);
+            upload_mesh = true;
         }
+
+        // for (game.world.chunks_to_be_unloaded.items()) |chunk_pos| {
+        //     game.world_mesh.invalidateChunkMesh(chunk_pos);
+        // }
 
         if (upload_mesh) {
             try game.world.propagateLightRemoval(gpa);
             try game.world.propagateLightAddition(gpa);
         }
 
-        for (game.world.chunks_which_need_to_generate_meshes.items()) |chunk_pos| {
+        for (game.world.chunks_to_be_loaded.items()) |chunk_pos| {
             for (0..3) |x_usize| {
                 const x = @as(i11, @intCast(x_usize)) - 1;
 
@@ -778,7 +815,7 @@ const Game = struct {
 
                         const neighbor_chunk_pos = chunk_pos.add(.{ .x = x, .y = y, .z = z });
 
-                        if (game.world.chunks_which_need_to_generate_meshes.contains(neighbor_chunk_pos)) continue;
+                        if (game.world.chunks_to_be_loaded.contains(neighbor_chunk_pos)) continue;
                         if (!game.world.hasChunk(neighbor_chunk_pos)) continue;
 
                         try game.world_mesh.chunk_meshes_which_need_to_upload_light_texture_overlaps.append(gpa, neighbor_chunk_pos);
@@ -793,7 +830,8 @@ const Game = struct {
             try game.world_mesh.uploadLightTextureOverlaps(game.world, chunk_pos);
         }
 
-        game.world.chunks_which_need_to_generate_meshes.clearRetainingCapacity();
+        game.world.chunks_to_be_loaded.clearRetainingCapacity();
+        game.world.chunks_to_be_unloaded.clearRetainingCapacity();
         game.world_mesh.chunk_meshes_which_need_to_upload_light_texture_overlaps.clearRetainingCapacity();
 
         if (shared_flags.calc_projection_matrix or shared_flags.calc_view_matrix or shared_flags.action != .none) {

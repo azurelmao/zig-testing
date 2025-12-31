@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn DedupArrayList(T: type) type {
+pub fn HashArrayList(T: type) type {
     return struct {
         array: std.AutoArrayHashMapUnmanaged(T, void),
 
@@ -27,7 +27,6 @@ pub fn DedupArrayList(T: type) type {
         }
 
         pub fn append(self: *Self, gpa: std.mem.Allocator, val: T) !void {
-            if (self.array.contains(val)) return;
             try self.array.put(gpa, val, {});
         }
 

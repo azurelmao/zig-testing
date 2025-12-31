@@ -16,8 +16,6 @@ pub const CENTER = SIZE / 2;
 pub const RADIUS: f32 = CENTER * std.math.sqrt(3.0);
 pub const EDGE = SIZE - 1;
 
-pos: Pos,
-
 block_to_index: std.HashMapUnmanaged(Block, u15, Block.Context, 80),
 index_to_block: std.AutoHashMapUnmanaged(u15, Block),
 blocks: []u8,
@@ -29,12 +27,12 @@ air_bitset: *[AREA]u32,
 water_bitset: *[AREA]u32,
 num_of_air: u16,
 
-pub const Pos = struct {
+const ChunkPos = struct {
     x: i11,
     y: i11,
     z: i11,
 
-    pub const OFFSETS = std.EnumArray(Dir, Pos).init(
+    pub const OFFSETS = std.EnumArray(Dir, ChunkPos).init(
         .{
             .west = .{ .x = -1, .y = 0, .z = 0 },
             .east = .{ .x = 1, .y = 0, .z = 0 },
@@ -45,70 +43,75 @@ pub const Pos = struct {
         },
     );
 
-    pub fn toWorldPos(self: Pos) World.Pos {
+    pub fn toWorldPos(chunk_pos: ChunkPos) World.Pos {
         return .{
-            .x = @as(i16, @intCast(self.x)) << BIT_SIZE,
-            .y = @as(i16, @intCast(self.y)) << BIT_SIZE,
-            .z = @as(i16, @intCast(self.z)) << BIT_SIZE,
+            .x = @as(i16, @intCast(chunk_pos.x)) << BIT_SIZE,
+            .y = @as(i16, @intCast(chunk_pos.y)) << BIT_SIZE,
+            .z = @as(i16, @intCast(chunk_pos.z)) << BIT_SIZE,
         };
     }
 
-    pub fn toVec3f(self: Pos) Vec3f {
+    pub fn toVec3f(chunk_pos: ChunkPos) Vec3f {
         return .{
-            .x = @floatFromInt(@as(i16, @intCast(self.x)) << BIT_SIZE),
-            .y = @floatFromInt(@as(i16, @intCast(self.y)) << BIT_SIZE),
-            .z = @floatFromInt(@as(i16, @intCast(self.z)) << BIT_SIZE),
+            .x = @floatFromInt(@as(i16, @intCast(chunk_pos.x)) << BIT_SIZE),
+            .y = @floatFromInt(@as(i16, @intCast(chunk_pos.y)) << BIT_SIZE),
+            .z = @floatFromInt(@as(i16, @intCast(chunk_pos.z)) << BIT_SIZE),
         };
     }
 
-    pub fn add(self: Pos, other: Pos) Pos {
+    pub fn add(chunk_pos: ChunkPos, other_chunk_pos: ChunkPos) ChunkPos {
         return .{
-            .x = self.x + other.x,
-            .y = self.y + other.y,
-            .z = self.z + other.z,
+            .x = chunk_pos.x + other_chunk_pos.x,
+            .y = chunk_pos.y + other_chunk_pos.y,
+            .z = chunk_pos.z + other_chunk_pos.z,
         };
     }
 
-    pub fn subtract(self: Pos, other: Pos) Pos {
+    pub fn subtract(chunk_pos: ChunkPos, other_chunk_pos: ChunkPos) ChunkPos {
         return .{
-            .x = self.x - other.x,
-            .y = self.y - other.y,
-            .z = self.z - other.z,
+            .x = chunk_pos.x - other_chunk_pos.x,
+            .y = chunk_pos.y - other_chunk_pos.y,
+            .z = chunk_pos.z - other_chunk_pos.z,
         };
     }
 
-    pub fn equal(self: Pos, other: Pos) bool {
-        return self.x == other.x and self.y == other.y and self.z == other.z;
+    pub fn equal(chunk_pos: ChunkPos, other_chunk_pos: ChunkPos) bool {
+        return chunk_pos.x == other_chunk_pos.x and chunk_pos.y == other_chunk_pos.y and chunk_pos.z == other_chunk_pos.z;
     }
 
-    pub fn notEqual(self: Pos, other: Pos) bool {
-        return self.x != other.x or self.y != other.y or self.z != other.z;
+    pub fn notEqual(chunk_pos: ChunkPos, other_chunk_pos: ChunkPos) bool {
+        return chunk_pos.x != other_chunk_pos.x or chunk_pos.y != other_chunk_pos.y or chunk_pos.z != other_chunk_pos.z;
     }
 };
+
+pub const Pos = ChunkPos;
 
 pub const LocalPos = packed struct(u15) {
     x: u5,
     y: u5,
     z: u5,
 
-    pub fn idx(self: LocalPos) u15 {
-        return @bitCast(self);
+    pub fn idx(local_pos: LocalPos) u15 {
+        return @bitCast(local_pos);
     }
 };
 
-pub fn init(gpa: std.mem.Allocator, pos: Pos) !Chunk {
+pub fn init(gpa: std.mem.Allocator) !Chunk {
+    const idx = 0;
+    const block: Block = .initNone(.air);
+
     var block_to_index = std.HashMapUnmanaged(Block, u15, Block.Context, 80).empty;
     try block_to_index.put(
         gpa,
-        .init(.air, .{ .none = {} }),
-        0,
+        block,
+        idx,
     );
 
     var index_to_block = std.AutoHashMapUnmanaged(u15, Block).empty;
     try index_to_block.put(
         gpa,
-        0,
-        .init(.air, .{ .none = {} }),
+        idx,
+        block,
     );
 
     const light = try gpa.create([VOLUME]Light);
@@ -121,8 +124,6 @@ pub fn init(gpa: std.mem.Allocator, pos: Pos) !Chunk {
     @memset(water_bitset, 0);
 
     return .{
-        .pos = pos,
-
         .block_to_index = block_to_index,
         .index_to_block = index_to_block,
         .blocks = &.{},
@@ -136,21 +137,21 @@ pub fn init(gpa: std.mem.Allocator, pos: Pos) !Chunk {
     };
 }
 
-pub fn getLight(self: *Chunk, pos: LocalPos) Light {
-    return self.light[pos.idx()];
+pub fn getLight(self: *Chunk, local_pos: LocalPos) Light {
+    return self.light[local_pos.idx()];
 }
 
-pub fn setLight(self: *Chunk, pos: LocalPos, light: Light) void {
-    self.light[pos.idx()] = light;
+pub fn setLight(self: *Chunk, local_pos: LocalPos, light: Light) void {
+    self.light[local_pos.idx()] = light;
 }
 
-pub fn getBlock(self: Chunk, pos: LocalPos) Block {
+pub fn getBlock(self: Chunk, local_pos: LocalPos) Block {
     switch (self.index_bit_size) {
-        0 => return .initNone(.air),
+        0 => return self.index_to_block.get(0) orelse unreachable,
 
         inline else => |bit_size| {
             const int_type = std.meta.Int(.unsigned, bit_size);
-            const bit_offset = @as(usize, @intCast(pos.idx())) * @as(usize, @intCast(bit_size));
+            const bit_offset = @as(usize, @intCast(local_pos.idx())) * @as(usize, @intCast(bit_size));
 
             const block_index: u15 = @intCast(std.mem.readPackedIntNative(int_type, self.blocks, bit_offset));
             const block = self.index_to_block.get(block_index).?;
@@ -160,9 +161,9 @@ pub fn getBlock(self: Chunk, pos: LocalPos) Block {
     }
 }
 
-pub fn setBlock(self: *Chunk, gpa: std.mem.Allocator, pos: LocalPos, block: Block) !void {
-    const x: usize = @intCast(pos.x);
-    const z: usize = @intCast(pos.z);
+pub fn setBlock(self: *Chunk, gpa: std.mem.Allocator, local_pos: LocalPos, block: Block) !void {
+    const x: usize = @intCast(local_pos.x);
+    const z: usize = @intCast(local_pos.z);
     const idx = x * SIZE + z;
 
     if (!self.block_to_index.contains(block)) {
@@ -223,7 +224,7 @@ pub fn setBlock(self: *Chunk, gpa: std.mem.Allocator, pos: LocalPos, block: Bloc
 
         inline else => |bit_size| {
             const int_type = std.meta.Int(.unsigned, bit_size);
-            const bit_offset = @as(usize, @intCast(pos.idx())) * @as(usize, @intCast(bit_size));
+            const bit_offset = @as(usize, @intCast(local_pos.idx())) * @as(usize, @intCast(bit_size));
 
             const prev_block_index = std.mem.readPackedIntNative(int_type, self.blocks, bit_offset);
             const prev_block = self.index_to_block.get(prev_block_index).?;
@@ -233,18 +234,18 @@ pub fn setBlock(self: *Chunk, gpa: std.mem.Allocator, pos: LocalPos, block: Bloc
                     self.num_of_air += 1;
                 }
 
-                self.air_bitset[idx] &= ~(@as(u32, 1) << pos.y); // sets bit at `pos.y` to 0
-                self.water_bitset[idx] &= ~(@as(u32, 1) << pos.y); // sets bit at `pos.y` to 0
+                self.air_bitset[idx] &= ~(@as(u32, 1) << local_pos.y); // sets bit at `pos.y` to 0
+                self.water_bitset[idx] &= ~(@as(u32, 1) << local_pos.y); // sets bit at `pos.y` to 0
             } else if (block.kind == .water) {
-                self.air_bitset[idx] |= (@as(u32, 1) << pos.y); // sets bit at `pos.y` to 1
-                self.water_bitset[idx] |= (@as(u32, 1) << pos.y); // sets bit at `pos.y` to 1
+                self.air_bitset[idx] |= (@as(u32, 1) << local_pos.y); // sets bit at `pos.y` to 1
+                self.water_bitset[idx] |= (@as(u32, 1) << local_pos.y); // sets bit at `pos.y` to 1
             } else {
                 if (prev_block.kind == .air) {
                     self.num_of_air -= 1;
                 }
 
-                self.air_bitset[idx] |= (@as(u32, 1) << pos.y); // sets bit at `pos.y` to 1
-                self.water_bitset[idx] &= ~(@as(u32, 1) << pos.y); // sets bit at `pos.y` to 0
+                self.air_bitset[idx] |= (@as(u32, 1) << local_pos.y); // sets bit at `pos.y` to 1
+                self.water_bitset[idx] &= ~(@as(u32, 1) << local_pos.y); // sets bit at `pos.y` to 0
             }
 
             std.mem.writePackedIntNative(int_type, self.blocks, bit_offset, @intCast(block_index));

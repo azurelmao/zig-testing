@@ -1,13 +1,14 @@
 const std = @import("std");
 const znoise = @import("znoise");
 const Chunk = @import("Chunk.zig");
+const ChunkGenerator = @import("ChunkGenerator.zig");
 const Light = @import("light.zig").Light;
 const LightNode = @import("light.zig").LightNode;
 const Block = @import("block.zig").Block;
 const BlockExtendedData = @import("block.zig").BlockExtendedData;
 const BlockVolumeScheme = @import("block.zig").BlockVolumeScheme;
 const Dir = @import("dir.zig").Dir;
-const DedupArraylist = @import("dedup_arraylist.zig").DedupArraylist;
+const HashArrayList = @import("hash_arraylist.zig").HashArrayList;
 const Vec3f = @import("vec3f.zig").Vec3f;
 const Camera = @import("Camera.zig");
 const debug = @import("debug.zig");
@@ -16,10 +17,10 @@ const World = @This();
 
 prng: std.Random.Xoshiro256,
 seed: i32,
+chunk_generator: ChunkGenerator,
 chunks: std.AutoArrayHashMapUnmanaged(Chunk.Pos, Chunk),
-
-/// This should never have chunk positions which don't exist
-chunks_which_need_to_generate_meshes: DedupArraylist(Chunk.Pos),
+chunks_to_be_loaded: HashArrayList(Chunk.Pos),
+chunks_to_be_unloaded: HashArrayList(Chunk.Pos),
 block_extended_data_store: std.ArrayListUnmanaged(BlockExtendedData),
 
 light_addition_queue: Queue(LightNode),
@@ -28,15 +29,6 @@ light_removal_queue: Queue(LightNode),
 pub fn Queue(comptime T: type) type {
     return std.fifo.LinearFifo(T, .Dynamic);
 }
-
-pub const WIDTH = 1;
-pub const HEIGHT = 4;
-pub const VOLUME = (WIDTH * 2) * (WIDTH * 2) * HEIGHT;
-pub const ABOVE_HEIGHT = 2;
-pub const BELOW_HEIGHT = ABOVE_HEIGHT - HEIGHT;
-pub const BOTTOM_OF_THE_WORLD = BELOW_HEIGHT * Chunk.SIZE;
-pub const SEA_LEVEL = 0;
-pub const SEA_LEVEL_DEEP = SEA_LEVEL - 16;
 
 pub fn init(gpa: std.mem.Allocator, seed: i32) !World {
     const prng = std.Random.DefaultPrng.init(expr: {
@@ -48,8 +40,10 @@ pub fn init(gpa: std.mem.Allocator, seed: i32) !World {
     return .{
         .prng = prng,
         .seed = seed,
+        .chunk_generator = .init(seed),
         .chunks = .empty,
-        .chunks_which_need_to_generate_meshes = .empty,
+        .chunks_to_be_loaded = .empty,
+        .chunks_to_be_unloaded = .empty,
         .block_extended_data_store = .empty,
 
         .light_addition_queue = .init(gpa),
@@ -57,21 +51,27 @@ pub fn init(gpa: std.mem.Allocator, seed: i32) !World {
     };
 }
 
-pub const Pos = packed struct {
+const WorldPos = packed struct {
     x: i16,
     y: i16,
     z: i16,
 
-    pub const OFFSETS = [6]Pos{
-        .{ .x = -1, .y = 0, .z = 0 },
-        .{ .x = 1, .y = 0, .z = 0 },
-        .{ .x = 0, .y = -1, .z = 0 },
-        .{ .x = 0, .y = 1, .z = 0 },
-        .{ .x = 0, .y = 0, .z = -1 },
-        .{ .x = 0, .y = 0, .z = 1 },
-    };
+    const OFFSETS = std.EnumArray(Dir, WorldPos).init(
+        .{
+            .west = .{ .x = -1, .y = 0, .z = 0 },
+            .east = .{ .x = 1, .y = 0, .z = 0 },
+            .bottom = .{ .x = 0, .y = -1, .z = 0 },
+            .top = .{ .x = 0, .y = 1, .z = 0 },
+            .north = .{ .x = 0, .y = 0, .z = -1 },
+            .south = .{ .x = 0, .y = 0, .z = 1 },
+        },
+    );
 
-    pub fn from(chunk_pos: Chunk.Pos, local_pos: Chunk.LocalPos) Pos {
+    pub fn getOffset(dir: Dir) WorldPos {
+        return OFFSETS.get(dir);
+    }
+
+    pub fn from(chunk_pos: Chunk.Pos, local_pos: Chunk.LocalPos) WorldPos {
         return .{
             .x = (@as(i16, @intCast(chunk_pos.x)) << Chunk.BIT_SIZE) | @as(i16, @intCast(local_pos.x)),
             .y = (@as(i16, @intCast(chunk_pos.y)) << Chunk.BIT_SIZE) | @as(i16, @intCast(local_pos.y)),
@@ -79,56 +79,56 @@ pub const Pos = packed struct {
         };
     }
 
-    pub fn toChunkPos(world: Pos) Chunk.Pos {
+    pub fn toChunkPos(world_pos: WorldPos) Chunk.Pos {
         return .{
-            .x = @intCast(world.x >> Chunk.BIT_SIZE),
-            .y = @intCast(world.y >> Chunk.BIT_SIZE),
-            .z = @intCast(world.z >> Chunk.BIT_SIZE),
+            .x = @intCast(world_pos.x >> Chunk.BIT_SIZE),
+            .y = @intCast(world_pos.y >> Chunk.BIT_SIZE),
+            .z = @intCast(world_pos.z >> Chunk.BIT_SIZE),
         };
     }
 
-    pub fn toLocalPos(world: Pos) Chunk.LocalPos {
+    pub fn toLocalPos(world_pos: WorldPos) Chunk.LocalPos {
         return .{
-            .x = @intCast(world.x & Chunk.BIT_MASK),
-            .y = @intCast(world.y & Chunk.BIT_MASK),
-            .z = @intCast(world.z & Chunk.BIT_MASK),
+            .x = @intCast(world_pos.x & Chunk.BIT_MASK),
+            .y = @intCast(world_pos.y & Chunk.BIT_MASK),
+            .z = @intCast(world_pos.z & Chunk.BIT_MASK),
         };
     }
 
-    pub fn toVec3f(world: Pos) Vec3f {
+    pub fn toVec3f(world_pos: WorldPos) Vec3f {
         return .{
-            .x = @floatFromInt(world.x),
-            .y = @floatFromInt(world.y),
-            .z = @floatFromInt(world.z),
+            .x = @floatFromInt(world_pos.x),
+            .y = @floatFromInt(world_pos.y),
+            .z = @floatFromInt(world_pos.z),
         };
     }
 
-    pub fn add(world: Pos, other: Pos) Pos {
+    pub fn add(world_pos: WorldPos, other_world_pos: WorldPos) Pos {
         return .{
-            .x = world.x + other.x,
-            .y = world.y + other.y,
-            .z = world.z + other.z,
+            .x = world_pos.x + other_world_pos.x,
+            .y = world_pos.y + other_world_pos.y,
+            .z = world_pos.z + other_world_pos.z,
         };
     }
 
-    pub fn subtract(world: Pos, other: Pos) Pos {
+    pub fn subtract(world_pos: WorldPos, other_world_pos: WorldPos) WorldPos {
         return .{
-            .x = world.x - other.x,
-            .y = world.y - other.y,
-            .z = world.z - other.z,
+            .x = world_pos.x - other_world_pos.x,
+            .y = world_pos.y - other_world_pos.y,
+            .z = world_pos.z - other_world_pos.z,
         };
     }
 
-    pub fn equal(world: Pos, other: Pos) bool {
-        return world.x == other.x and world.y == other.y and world.z == other.z;
+    pub fn equal(world_pos: WorldPos, other_world_pos: WorldPos) bool {
+        return world_pos.x == other_world_pos.x and world_pos.y == other_world_pos.y and world_pos.z == other_world_pos.z;
     }
 
-    pub fn notEqual(world: Pos, other: Pos) bool {
-        return world.x != other.x or world.y != other.y or world.z != other.z;
+    pub fn notEqual(world_pos: WorldPos, other_world_pos: WorldPos) bool {
+        return world_pos.x != other_world_pos.x or world_pos.y != other_world_pos.y or world_pos.z != other_world_pos.z;
     }
 };
 
-const WorldPos = Pos;
+pub const Pos = WorldPos;
 
 pub fn hasChunk(world: World, chunk_pos: Chunk.Pos) bool {
     return world.chunks.contains(chunk_pos);
@@ -191,8 +191,8 @@ pub fn placeBlock(world: *World, gpa: std.mem.Allocator, world_pos: WorldPos, bl
 
     switch (block.kind) {
         .lamp => {
-            for (Dir.indices) |dir_idx| {
-                const neighbor_world_pos = world_pos.add(World.WorldPos.OFFSETS[dir_idx]);
+            for (Dir.values) |dir| {
+                const neighbor_world_pos = world_pos.add(.getOffset(dir));
                 _ = try world.addLight(neighbor_world_pos, block.data.lamp.light);
             }
         },
@@ -201,12 +201,12 @@ pub fn placeBlock(world: *World, gpa: std.mem.Allocator, world_pos: WorldPos, bl
 
     try world.propagateLightAddition(gpa);
 
-    for (Dir.indices) |dir_idx| {
-        const neighbor_world_pos = world_pos.add(WorldPos.OFFSETS[dir_idx]);
+    for (Dir.values) |dir| {
+        const neighbor_world_pos = world_pos.add(.getOffset(dir));
         const neighbor_chunk_pos = neighbor_world_pos.toChunkPos();
 
         if (world.hasChunk(neighbor_chunk_pos)) {
-            try world.chunks_which_need_to_generate_meshes.append(gpa, neighbor_chunk_pos);
+            try world.chunks_to_be_loaded.append(gpa, neighbor_chunk_pos);
         }
     }
 }
@@ -220,16 +220,16 @@ pub fn breakBlock(world: *World, gpa: std.mem.Allocator, world_pos: WorldPos, bl
 
     switch (block.kind) {
         .lamp => {
-            for (Dir.indices) |dir_idx| {
-                const neighbor_world_pos = world_pos.add(World.WorldPos.OFFSETS[dir_idx]);
+            for (Dir.values) |dir| {
+                const neighbor_world_pos = world_pos.add(.getOffset(dir));
                 _ = try world.removeLight(neighbor_world_pos);
             }
         },
         else => {},
     }
 
-    for (Dir.indices) |dir_idx| {
-        const neighbor_world_pos = world_pos.add(World.WorldPos.OFFSETS[dir_idx]);
+    for (Dir.values) |dir| {
+        const neighbor_world_pos = world_pos.add(.getOffset(dir));
         const neighbor_block = world.getBlockOrNull(neighbor_world_pos) orelse continue;
 
         try world.onNeighborUpdate(neighbor_world_pos, neighbor_block, world_pos, block);
@@ -241,12 +241,12 @@ pub fn breakBlock(world: *World, gpa: std.mem.Allocator, world_pos: WorldPos, bl
     try world.propagateLightRemoval(gpa);
     try world.propagateLightAddition(gpa);
 
-    for (Dir.indices) |dir_idx| {
-        const neighbor_world_pos = world_pos.add(WorldPos.OFFSETS[dir_idx]);
+    for (Dir.values) |dir| {
+        const neighbor_world_pos = world_pos.add(.getOffset(dir));
         const neighbor_chunk_pos = neighbor_world_pos.toChunkPos();
 
         if (world.hasChunk(neighbor_chunk_pos)) {
-            try world.chunks_which_need_to_generate_meshes.append(gpa, neighbor_chunk_pos);
+            try world.chunks_to_be_loaded.append(gpa, neighbor_chunk_pos);
         }
     }
 }
@@ -389,112 +389,25 @@ pub fn raycast(world: World, origin: Vec3f, direction: Vec3f) RaycastResult {
     };
 }
 
-pub fn generateChunks(world: *World, gpa: std.mem.Allocator, camera: Camera) !void {
-    if (world.chunks.count() != 0) {
-        if (camera.prev_position.toChunkPos().notEqual(camera.position.toChunkPos())) {
-            // gen/load new chunks and unload old chunks
-        }
-    } else {
-        const gen1 = znoise.FnlGenerator{
-            .noise_type = .opensimplex2,
-            .seed = world.seed,
-            .frequency = 1.0 / 16.0 / 16.0 / 16.0,
-            // .lacunarity = 4,
-            // .gain = 16,
-            // .octaves = 8,
-        };
+pub fn generateChunks(world: *World, gpa: std.mem.Allocator, chunk_volume: HashArrayList(Chunk.Pos)) !void {
+    for (chunk_volume.items()) |chunk_pos| {
+        if (!world.chunks.contains(chunk_pos)) {
+            try world.chunks_to_be_loaded.append(gpa, chunk_pos);
 
-        const gen2 = znoise.FnlGenerator{
-            .noise_type = .opensimplex2,
-            .seed = world.seed,
-            .frequency = 1.0 / 16.0 / 16.0,
-            // .lacunarity = 8,
-            // .gain = 1,
-            // .octaves = 8,
-        };
-
-        const gen3 = znoise.FnlGenerator{
-            .noise_type = .opensimplex2,
-            .seed = world.seed,
-            .frequency = 1.0 / 16.0,
-            // .lacunarity = 16,
-            // .gain = 1.0 / 16.0,
-            // .octaves = 8,
-        };
-
-        const sea_rift_gen = znoise.FnlGenerator{
-            .noise_type = .opensimplex2,
-            .seed = world.seed,
-            .frequency = 0.05,
-            .fractal_type = .ridged,
-            .octaves = 6,
-            .lacunarity = 0.37,
-            .gain = 10,
-            .weighted_strength = 0.94,
-        };
-
-        const cave_gen = znoise.FnlGenerator{
-            .noise_type = .opensimplex2,
-            .seed = world.seed,
-            .frequency = 0.01,
-            .fractal_type = .fbm,
-            .octaves = 5,
-            .lacunarity = 2,
-            .gain = 0.4,
-            .weighted_strength = -1,
-        };
-
-        const camera_chunk_pos = camera.position.toChunkPos();
-        // const render_distance_usize = @as(usize, @intFromFloat(@floor(camera.far))) >> Chunk.BIT_SIZE;
-        const render_distance_usize: usize = 2;
-        const render_distance: i11 = @intCast(render_distance_usize);
-
-        var height_map = try gpa.create([Chunk.AREA]i16);
-
-        for (0..render_distance_usize * 2) |chunk_x_| {
-            for (0..render_distance_usize * 2) |chunk_z_| {
-                var min_height: ?i16 = null;
-                var max_height: ?i16 = null;
-
-                for (0..Chunk.SIZE) |x_| {
-                    for (0..Chunk.SIZE) |z_| {
-                        const x: f32 = @floatFromInt((chunk_x_ << Chunk.BIT_SIZE) + x_);
-                        const z: f32 = @floatFromInt((chunk_z_ << Chunk.BIT_SIZE) + z_);
-                        const height_idx = x_ * Chunk.SIZE + z_;
-
-                        const height = getHeight(&gen1, &gen2, &gen3, &sea_rift_gen, x, z);
-                        height_map[height_idx] = height;
-
-                        if (min_height) |value| min_height = @min(value, height) else min_height = height;
-                        if (max_height) |value| max_height = @max(value, height) else max_height = height;
-                    }
-                }
-
-                const min_chunk_height: i11 = @intCast((min_height.? >> Chunk.BIT_SIZE) - 1);
-                const max_chunk_height: i11 = @intCast(max_height.? >> Chunk.BIT_SIZE);
-
-                for (0..render_distance_usize * 2) |chunk_y_| {
-                    const chunk_x = @as(i11, @intCast(chunk_x_)) - render_distance - camera_chunk_pos.x;
-                    const chunk_y = @as(i11, @intCast(chunk_y_)) - render_distance - camera_chunk_pos.y;
-                    const chunk_z = @as(i11, @intCast(chunk_z_)) - render_distance - camera_chunk_pos.z;
-                    const chunk_pos: Chunk.Pos = .{ .x = chunk_x, .y = chunk_y, .z = chunk_z };
-
-                    try world.chunks.put(gpa, chunk_pos, try .init(gpa, chunk_pos));
-                    const chunk = world.getChunk(chunk_pos);
-
-                    if (chunk_y >= min_chunk_height and chunk_y <= max_chunk_height) {
-                        try generateNoise2D(gpa, chunk, height_map);
-                    } else if (chunk_y < min_chunk_height) {
-                        try generateFillWithStone(gpa, chunk);
-                    }
-
-                    try generateNoise3D(world, gpa, chunk, &cave_gen, world.prng.random());
-
-                    try world.chunks_which_need_to_generate_meshes.append(gpa, chunk.pos);
-                }
-            }
+            const chunk = try world.chunk_generator.generateChunk(gpa, chunk_pos);
+            try world.chunks.put(gpa, chunk_pos, chunk);
         }
     }
+
+    for (world.chunks.keys()) |chunk_pos| {
+        if (!chunk_volume.contains(chunk_pos)) {
+            try world.chunks_to_be_unloaded.append(gpa, chunk_pos);
+        }
+    }
+
+    // for (world.chunks_to_be_unloaded.items()) |chunk_pos| {
+    //     _ = world.chunks.swapRemove(chunk_pos);
+    // }
 }
 
 // pub fn generate(world: *World, gpa: std.mem.Allocator) !void {
@@ -619,153 +532,6 @@ pub fn generateChunks(world: *World, gpa: std.mem.Allocator, camera: Camera) !vo
 //         }
 //     }
 // }
-
-pub fn getHeight(gen1: *const znoise.FnlGenerator, gen2: *const znoise.FnlGenerator, gen3: *const znoise.FnlGenerator, sea_rift_gen: *const znoise.FnlGenerator, x: f32, z: f32) i16 {
-    const noise1 = gen1.noise2(x, z) * 64;
-    const noise2 = gen2.noise2(x, z) * 20;
-    const noise3 = gen3.noise2(x, z);
-
-    var height = SEA_LEVEL + noise1 + noise2 + noise3;
-
-    if (height < SEA_LEVEL_DEEP) {
-        var sea_noise1 = @abs(sea_rift_gen.noise2(x, z)) * 16;
-        const sea_noise2 = @abs(sea_rift_gen.noise2(x / 2, z / 2)) * 16;
-        const sea_noise3 = @abs(sea_rift_gen.noise2(x / 10, z / 10)) * 16;
-
-        if (sea_noise1 < 3) {
-            sea_noise1 = 1;
-        }
-
-        const sea_noise = sea_noise1 + sea_noise2 + sea_noise3;
-
-        if (SEA_LEVEL_DEEP - sea_noise > height) {
-            height = SEA_LEVEL_DEEP - sea_noise;
-        }
-    }
-
-    return @max(BOTTOM_OF_THE_WORLD, @as(i16, @intFromFloat(@floor(height))));
-}
-
-pub fn generateNoise2D(gpa: std.mem.Allocator, chunk: *Chunk, height_map: *[Chunk.AREA]i16) !void {
-    for (0..Chunk.SIZE) |x_| {
-        for (0..Chunk.SIZE) |z_| {
-            const x: u5 = @intCast(x_);
-            const z: u5 = @intCast(z_);
-
-            const height_idx = x_ * Chunk.SIZE + z_;
-            const height = height_map[height_idx];
-
-            for (0..Chunk.SIZE) |y_| {
-                const y: u5 = @intCast(y_);
-                const local_pos: Chunk.LocalPos = .{ .x = x, .y = y, .z = z };
-                const world_pos: WorldPos = .from(chunk.pos, local_pos);
-
-                if (world_pos.y < height) {
-                    if (world_pos.y == height - 1) {
-                        if (world_pos.y < SEA_LEVEL) {
-                            try chunk.setBlock(gpa, local_pos, .initNone(.sand));
-                        } else {
-                            try chunk.setBlock(gpa, local_pos, .initNone(.grass));
-                        }
-                    } else {
-                        try chunk.setBlock(gpa, local_pos, .initNone(.stone));
-                    }
-                } else {
-                    if (world_pos.y == BOTTOM_OF_THE_WORLD) {
-                        try chunk.setBlock(gpa, local_pos, .initNone(.stone));
-                    } else if (world_pos.y < SEA_LEVEL) {
-                        try chunk.setBlock(gpa, local_pos, .initNone(.water));
-                    }
-                }
-            }
-        }
-    }
-}
-
-pub fn generateFillWithStone(gpa: std.mem.Allocator, chunk: *Chunk) !void {
-    for (0..Chunk.SIZE) |x_| {
-        const x: u5 = @intCast(x_);
-
-        for (0..Chunk.SIZE) |z_| {
-            const z: u5 = @intCast(z_);
-
-            for (0..Chunk.SIZE) |y_| {
-                const y: u5 = @intCast(y_);
-                const local_pos: Chunk.LocalPos = .{ .x = x, .y = y, .z = z };
-
-                try chunk.setBlock(gpa, local_pos, .initNone(.stone));
-            }
-        }
-    }
-}
-
-pub fn caveThreshold(height: f32) f32 {
-    const xmin = BOTTOM_OF_THE_WORLD;
-    const xmax = 128;
-
-    const ymax: f32 = 1.0;
-
-    return (-ymax / (xmin - xmax)) * (height - xmax) + ymax;
-}
-
-pub fn generateNoise3D(world: *World, gpa: std.mem.Allocator, chunk: *Chunk, gen: *const znoise.FnlGenerator, random: std.Random) !void {
-    for (0..Chunk.SIZE) |x_| {
-        const x: u5 = @intCast(x_);
-
-        for (0..Chunk.SIZE) |z_| {
-            const z: u5 = @intCast(z_);
-
-            for (0..Chunk.SIZE) |y_| {
-                const y: u5 = @intCast(y_);
-                const local_pos: Chunk.LocalPos = .{ .x = x, .y = y, .z = z };
-                const world_pos: WorldPos = .from(chunk.pos, local_pos);
-                const noise_pos = world_pos.toVec3f();
-
-                const density = gen.noise3(noise_pos.x, noise_pos.y, noise_pos.z);
-                const threshold = caveThreshold(noise_pos.y);
-
-                if (density < -threshold) {
-                    if (world_pos.y == BOTTOM_OF_THE_WORLD) {
-                        try chunk.setBlock(gpa, local_pos, .initNone(.bedrock));
-                    } else if (world_pos.y == BOTTOM_OF_THE_WORLD + 1) {
-                        try chunk.setBlock(gpa, local_pos, .initNone(.lava));
-
-                        var light_pos = world_pos;
-                        light_pos.y += 1;
-
-                        const light: Light = .{
-                            .red = 15,
-                            .green = 6,
-                            .blue = 1,
-                            .indirect = 0,
-                        };
-
-                        try world.light_addition_queue.writeItem(.{
-                            .world_pos = light_pos,
-                            .light = light,
-                        });
-
-                        chunk.setLight(local_pos, light);
-                    } else {
-                        const prev_block = chunk.getBlock(local_pos);
-                        if (prev_block.kind != .water and prev_block.kind != .sand) {
-                            try chunk.setBlock(gpa, local_pos, .initNone(.air));
-
-                            if (random.uintAtMost(u32, 1000) == 0) {
-                                _ = try world.addLight(world_pos, .{
-                                    .red = random.uintAtMost(u4, 15),
-                                    .green = random.uintAtMost(u4, 15),
-                                    .blue = random.uintAtMost(u4, 15),
-                                    .indirect = 0,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
 // pub fn generateIndirectLight(chunk: *Chunk, indirect_light_bitset: *[Chunk.AREA]u32) !void {
 //     for (0..Chunk.SIZE) |x| {
@@ -1208,8 +974,7 @@ pub fn propagateLightAddition(world: *World, gpa: std.mem.Allocator) !void {
         const node_light = node.light;
 
         inline for (Dir.values) |dir| skip: {
-            const dir_idx = dir.idx();
-            const neighbor_world_pos = world_pos.add(WorldPos.OFFSETS[dir_idx]);
+            const neighbor_world_pos = world_pos.add(.getOffset(dir));
             const neighbor_chunk_pos = neighbor_world_pos.toChunkPos();
 
             const neighbor_chunk = expr: {
@@ -1266,7 +1031,7 @@ pub fn propagateLightAddition(world: *World, gpa: std.mem.Allocator) !void {
                     .light = light_to_enqueue_and_set,
                 });
 
-                try world.chunks_which_need_to_generate_meshes.append(gpa, neighbor_chunk.pos);
+                try world.chunks_to_be_loaded.append(gpa, neighbor_chunk_pos);
             }
         }
     }
@@ -1278,8 +1043,7 @@ pub fn propagateLightRemoval(world: *World, gpa: std.mem.Allocator) !void {
         const node_light = node.light;
 
         inline for (Dir.values) |dir| skip: {
-            const dir_idx = dir.idx();
-            const neighbor_world_pos = world_pos.add(WorldPos.OFFSETS[dir_idx]);
+            const neighbor_world_pos = world_pos.add(.getOffset(dir));
             const neighbor_chunk_pos = neighbor_world_pos.toChunkPos();
 
             const neighbor_chunk = expr: {
@@ -1325,7 +1089,7 @@ pub fn propagateLightRemoval(world: *World, gpa: std.mem.Allocator) !void {
                     .light = neighbor_light,
                 });
 
-                try world.chunks_which_need_to_generate_meshes.append(gpa, neighbor_chunk.pos);
+                try world.chunks_to_be_loaded.append(gpa, neighbor_chunk_pos);
 
                 try debug.removal_nodes.data.append(gpa, neighbor_world_pos.toVec3f());
             }
@@ -1336,7 +1100,7 @@ pub fn propagateLightRemoval(world: *World, gpa: std.mem.Allocator) !void {
                     .light = light_to_enqueue_at_addition,
                 });
 
-                try world.chunks_which_need_to_generate_meshes.append(gpa, neighbor_chunk.pos);
+                try world.chunks_to_be_loaded.append(gpa, neighbor_chunk_pos);
 
                 try debug.addition_nodes.data.append(gpa, neighbor_world_pos.toVec3f());
             }

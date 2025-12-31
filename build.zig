@@ -91,6 +91,21 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("znoise", znoise.module("root"));
     exe.linkLibrary(znoise.artifact("FastNoiseLite"));
 
+    const tracy_enable =
+        b.option(bool, "tracy_enable", "Enable profiling") orelse
+        if (optimize == .Debug) true else false;
+
+    const tracy = b.dependency("tracy", .{
+        .target = target,
+        .optimize = optimize,
+        .tracy_enable = tracy_enable,
+    });
+    exe.root_module.addImport("tracy", tracy.module("tracy"));
+    if (tracy_enable) {
+        exe.root_module.linkLibrary(tracy.artifact("tracy"));
+        exe.root_module.link_libcpp = true;
+    }
+
     // const vulkan = b.dependency("vulkan_zig", .{
     //     .registry = vulkan_headers.path("registry/vk.xml"),
     // });

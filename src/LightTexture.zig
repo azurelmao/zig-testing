@@ -29,6 +29,11 @@ pub fn init() LightTexture {
     };
 }
 
+pub fn deinit(light_texture: *LightTexture) void {
+    gl.MakeTextureHandleNonResidentARB(light_texture.descriptor);
+    gl.DeleteTextures(0, @ptrCast(&light_texture.handle));
+}
+
 pub fn uploadMainVolume(light_texture: LightTexture, chunk: *Chunk) void {
     gl.TextureSubImage3D(
         light_texture.handle,

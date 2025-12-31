@@ -53,6 +53,9 @@
             .url = "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/archive/e1bdbca9baf4d682fb6066b380f4aa4a7bdbb58a.tar.gz",
             .hash = "N-V-__8AAHCvOgDoVv6p36uCYiChFV3SZ6Yh36X-oPl2b596",
         },
+        .tracy = .{
+            .path = "../",
+        },
     },
     .paths = .{
         "build.zig",
